@@ -260,13 +260,18 @@ class InfoBarWidget(QWidget):
 class LyricCardWidget(QWidget):
     # Define a signal that will be emitted when the widget is clicked
     clicked = Signal()
+    # Define a signal to request editing the song this card belongs to
+    edit_song_requested = Signal(str) # Emits the song_key
+    # Define a signal to request editing this specific section
+    edit_section_requested = Signal(str) # Emits the button_id (songkey_sectionname)
 
     # Add card_background_color parameter
-    def __init__(self, button_id="", slide_number=0, section_name="", lyrics="", background_image_path=None, template_settings=None, card_background_color="#000000", parent=None):
+    def __init__(self, button_id="", slide_number=0, section_name="", song_title="", lyrics="", background_image_path=None, template_settings=None, card_background_color="#000000", parent=None): # Added song_title
         super().__init__(parent)
 
         self.button_id = button_id # Store button_id for external reference
         self._slide_number = slide_number
+        self.song_title = song_title # Store the song title
         self.lyric_text = lyrics # Store original lyrics text
         self._card_background_color_hex = card_background_color # Store hex just in case
         self._is_clicked = False # State for external highlighting
@@ -384,6 +389,22 @@ class LyricCardWidget(QWidget):
     def contextMenuEvent(self, event):
         """Handles right-click events to show a context menu."""
         menu = QMenu(self)
+
+        # --- Edit Song Action ---
+        # Extract song_key from button_id (using '__' as delimiter)
+        song_key = self.button_id.split('__', 1)[0] if '__' in self.button_id else self.button_id
+        if song_key:
+            edit_song_action = QAction(f"Edit Song: {self.song_title}", self) # Use self.song_title
+            # Use lambda to emit the signal with the song_key
+            edit_song_action.triggered.connect(lambda checked=False, sk=song_key: self.edit_song_requested.emit(sk))
+            menu.addAction(edit_song_action)
+            menu.addSeparator()
+
+        # --- Edit Section Action ---
+        edit_section_action = QAction(f"Edit Section: {self.info_bar.section_name}", self)
+        # Emit the signal with the full button_id for this specific section card
+        edit_section_action.triggered.connect(lambda checked=False, bid=self.button_id: self.edit_section_requested.emit(bid))
+        menu.addAction(edit_section_action)
 
         # --- Color Submenu ---
         color_menu = menu.addMenu("Set Bar Color")

@@ -22,6 +22,8 @@ from settings_dialog import SettingsDialog # Import the new dialog
 # from custom_widgets import DraggableButton # No longer using DraggableButton
 from button_remake import LyricCardWidget # Assuming button_remake.py contains the updated LyricCardWidget
 from song_list_widget import SongListWidget # Import the new song list widget
+from song_section_editor_window import SongSectionEditorWindow # Import the new section editor window
+from song_metadata_editor_window import SongMetadataEditorWindow # Import the new metadata editor window
 from PySide6.QtWidgets import QSplashScreen # Import QSplashScreen
 
 # --- Main Window Class ---
@@ -36,6 +38,7 @@ class MainWindow(QMainWindow):
         self.app_settings = {} # Dictionary for persistent app settings (screen, colors, etc.)
         self.load_stats = {} # Dictionary to store loading times
         self._button_id_to_widget_map = {} # Map button_id to LyricCardWidget instance
+        self._editor_windows = {} # To keep references to open editor windows (key: ('song', song_key) or ('section', button_id))
 
         # --- Basic UI Structure Setup (moved data loading out) ---
         # ButtonGridWidget now primarily acts as a container for the grid layout
@@ -194,10 +197,6 @@ class MainWindow(QMainWindow):
         self.settings_button.clicked.connect(self.open_settings_dialog)
         top_button_layout.addWidget(self.settings_button)
 
-        self.set_background_button = QPushButton("Set Background Image")
-        self.set_background_button.clicked.connect(self.select_background_image)
-        top_button_layout.addWidget(self.set_background_button)
-
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self._refresh_data_and_ui)
         top_button_layout.addWidget(self.refresh_button)
@@ -228,6 +227,7 @@ class MainWindow(QMainWindow):
         self.song_list = SongListWidget()
         self.song_list.section_selected.connect(self._handle_song_list_selection)
         self.song_list.song_title_selected.connect(self._handle_song_title_selection) # Connect new signal
+        self.song_list.edit_song_requested.connect(self._open_song_editor) # Connect edit signal
 
         # --- Scroll Area (containing button grid) ---
         self.scroll_area = QScrollArea()
@@ -407,7 +407,8 @@ class MainWindow(QMainWindow):
                     if isinstance(section, dict):
                         section_name = section.get("name", f"Section {i+1}")
                         lyric_text = section.get("lyrics", "")
-                        button_id = f"{song_key}_{section_name.replace(' ', '_').replace('-', '_').lower()}"
+                        section_name_key = section_name.replace(' ', '_').replace('-', '_').lower()
+                        button_id = f"{song_key}__{section_name_key}" # Use double underscore as delimiter
                         background_path = section.get("background_image") # Get the background image path
                         unique_button_object_name = f"btn_{button_id}_{i}" # Add index for uniqueness
                         card_bg_color = self.app_settings.get("card_background_color", "#000000") # Get color from settings
@@ -419,6 +420,7 @@ class MainWindow(QMainWindow):
                             button_id=button_id,
                             slide_number=i + 1,
                             section_name=section_name,
+                            song_title=song_title, # Pass the song title
                             lyrics=lyric_text,
                             background_image_path=background_path,
                             template_settings=self.lyric_template_settings, # Pass the loaded template settings
@@ -434,6 +436,10 @@ class MainWindow(QMainWindow):
                         new_button.clicked.connect(
                             lambda btn=new_button: self._handle_button_click(btn)
                         )
+                        # Connect the edit song signal from the card
+                        new_button.edit_song_requested.connect(self._open_song_editor)
+                        # Connect the edit section signal from the card
+                        new_button.edit_section_requested.connect(self._open_section_editor)
 
                         # Store the widget reference in the map
                         self._button_id_to_widget_map[button_id] = new_button
@@ -644,23 +650,218 @@ class MainWindow(QMainWindow):
             self._update_all_card_backgrounds(new_card_bg_color) # Apply new color to existing cards
             self._save_app_settings() # Save updated settings to file
 
+    def _open_song_editor(self, song_key):
+        """Opens the SongMetadataEditorWindow for the specified song."""
+        print(f"Opening song metadata editor for song key: {song_key}")
+        editor_key = ('song', song_key) # Use tuple as key
 
-    # --- Slot to Select Background Image ---
-    def select_background_image(self):
-        """Opens a file dialog to select a background image and sets it."""
-        filter_options = "Images (*.png *.jpg *.jpeg *.bmp *.gif);;All Files (*)"
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Background Image",
-            "", # Start directory (empty means default/last used)
-            filter_options
-        )
+        # Avoid opening multiple editors for the same song
+        if editor_key in self._editor_windows and self._editor_windows[editor_key].isVisible():
+            self._editor_windows[editor_key].activateWindow() # Bring existing window to front
+            return
+        
+        # --- Find the song data ---
+        song_data = self.songs_data.get(song_key)
+        if not song_data:
+            print(f"Error: Song data not found for key '{song_key}' when trying to open editor.")
+            QMessageBox.warning(self, "Error", f"Could not find song data for '{song_key}'.")
+            return
 
-        if file_path:
-            print(f"Selected background image: {file_path}")
-            self.lyric_window.set_background_image(file_path)
+        # --- Create and show the editor window ---
+        try:
+            # Pass the song_key and the full song_data dictionary
+            editor_window = SongMetadataEditorWindow(song_key, song_data, parent=self)
+            editor_window.metadata_saved.connect(self._handle_song_metadata_saved) # Connect the save signal
+            # Add a close connection to remove from tracking dict
+            editor_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            editor_window.destroyed.connect(lambda: self._editor_windows.pop(editor_key, None))
+            editor_window.show()
+            self._editor_windows[editor_key] = editor_window # Store reference using tuple key
+        except ImportError as e:
+             print(f"Error importing song metadata editor components: {e}")
+             QMessageBox.critical(self, "Import Error", "Could not load the song metadata editor component. Please ensure 'song_metadata_editor_widget.py' exists.")
+        except Exception as e:
+            print(f"Error creating song metadata editor window: {e}")
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred while opening the song editor: {e}")
+
+        # Add a close connection to remove from tracking dict
+        editor_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        editor_window.destroyed.connect(lambda: self._editor_windows.pop(editor_key, None))
+        editor_window.show()
+        self._editor_windows[editor_key] = editor_window # Store reference using tuple key
+
+    def _open_section_editor(self, button_id):
+        """Opens the SongSectionEditorWindow for the specified section."""
+        print(f"DEBUG: _open_section_editor called with button_id: '{button_id}'") # Enhanced print
+        editor_key = ('section', button_id) # Use tuple as key
+
+        # Avoid opening multiple editors for the same section
+        if editor_key in self._editor_windows and self._editor_windows[editor_key].isVisible():
+            self._editor_windows[editor_key].activateWindow()
+            return
+
+        # --- Find the section data ---
+        try:
+            song_key, section_name_key = button_id.split('__', 1) # Split using double underscore
+            print(f"  DEBUG: Parsed song_key: '{song_key}', section_name_key: '{section_name_key}'") # Added print
+        except ValueError:
+            print(f"Error: Could not parse song_key and section_name from button_id '{button_id}'")
+            QMessageBox.warning(self, "Error", f"Could not identify section from ID '{button_id}'.")
+            return
+
+        # Check if the key exists *before* getting the data
+        if song_key not in self.songs_data:
+             print(f"  DEBUG: Error - Song key '{song_key}' NOT FOUND in self.songs_data keys: {list(self.songs_data.keys())}") # Added print
+             QMessageBox.warning(self, "Error", f"Could not find song data for key '{song_key}'.") # Keep this message specific
+             return
+
+        song_data = self.songs_data.get(song_key)
+        # Check if song_data is valid (has 'sections')
+        if not song_data or "sections" not in song_data:
+            print(f"  DEBUG: Error - Song data found for key '{song_key}' but it's invalid or missing 'sections'. Data: {song_data}") # Modified print
+            QMessageBox.warning(self, "Error", f"Could not find valid section data within song '{song_key}'.") # Modified message
+            return
+
+        target_section_data = None
+        for idx, section in enumerate(song_data["sections"]):
+            # Reconstruct the key part used in button_id for comparison
+            current_section_name_key = section.get("name", f"Section {idx+1}").replace(' ', '_').replace('-', '_').lower()
+            if current_section_name_key == section_name_key:
+                target_section_data = section
+                section_index = idx
+                break
+
+        if target_section_data is None:
+            print(f"  DEBUG: Error - Section '{section_name_key}' not found within song '{song_key}' after checking {len(song_data.get('sections',[]))} sections.") # Enhanced print
+            QMessageBox.warning(self, "Error", f"Could not find section data for '{button_id}'.")
+            return
+
+        # --- Create and show the editor window ---
+        try:
+            # Pass the original button_id and the found section data
+            editor_window = SongSectionEditorWindow(button_id, target_section_data, parent=self)
+            editor_window.section_data_saved.connect(self._handle_section_data_saved)
+            # Add a close connection to remove from tracking dict
+            editor_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            editor_window.destroyed.connect(lambda: self._editor_windows.pop(editor_key, None))
+            editor_window.show()
+            self._editor_windows[editor_key] = editor_window # Store reference
+        except ImportError as e:
+             print(f"Error importing section editor components: {e}")
+             QMessageBox.critical(self, "Import Error", "Could not load the section editor component. Please ensure 'section_editor_widget.py' exists.")
+        except Exception as e:
+            print(f"Error creating section editor window: {e}")
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred while opening the section editor: {e}")
+
+    def _handle_section_data_saved(self, button_id, updated_data):
+        """Handles the data saved from the SongSectionEditorWindow."""
+        print(f"Received saved data for section: {button_id}")
+
+        try:
+            song_key, section_name_key = button_id.split('__', 1) # Split using double underscore
+        except ValueError:
+            print(f"Error: Could not parse song_key/section_name from button_id '{button_id}' during save.")
+            return
+
+        # --- Update self.songs_data ---
+        if song_key in self.songs_data and "sections" in self.songs_data[song_key]:
+            found = False
+            for idx, section in enumerate(self.songs_data[song_key]["sections"]):
+                current_section_name_key = section.get("name", f"Section {idx+1}").replace(' ', '_').replace('-', '_').lower()
+                if current_section_name_key == section_name_key:
+                    # Update the section in the list
+                    self.songs_data[song_key]["sections"][idx] = updated_data
+                    found = True
+                    break
+            if not found:
+                print(f"Error: Could not find section '{section_name_key}' in song '{song_key}' data to update.")
+                return # Stop if section wasn't found in data
         else:
-            print("No background image selected.")
+            print(f"Error: Song data for '{song_key}' not found or invalid during save.")
+            return # Stop if song data is missing
+
+        # --- Save updated song data to JSON file ---
+        song_file_path = os.path.join("songs", f"{song_key}.json")
+        try:
+            with open(song_file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.songs_data[song_key], f, indent=2, ensure_ascii=False)
+            print(f"Successfully saved updated data to {song_file_path}")
+        except Exception as e:
+            print(f"Error saving updated song file {song_file_path}: {e}")
+            QMessageBox.warning(self, "Save Error", f"Could not save changes to {song_file_path}:\n{e}")
+            # Decide if you want to revert self.songs_data here or leave it modified in memory
+
+        # --- Update the corresponding LyricCardWidget ---
+        target_widget = self._button_id_to_widget_map.get(button_id)
+        if target_widget:
+            new_section_name = updated_data.get("name", "Section ?")
+            new_lyrics = updated_data.get("lyrics", "")
+            new_background = updated_data.get("background_image")
+
+            target_widget.set_lyrics(new_lyrics)
+            target_widget.info_bar.set_data(target_widget._slide_number, new_section_name) # Update info bar name
+            target_widget.content_area.set_background(new_background) # Update background image
+
+            # If this card was the last clicked, update the main display too
+            if self._last_clicked_button == target_widget:
+                self.lyric_window.display_lyric(new_lyrics)
+                self.lyric_window.set_background_image(new_background)
+
+            print(f"Updated UI for card {button_id}")
+        else:
+            print(f"Warning: Could not find widget for button_id '{button_id}' to update UI.")
+
+        # --- Refresh Song List (in case section name changed) ---
+        # This is a simple refresh, could be optimized to only update the specific song/section item
+        self.song_list.populate(self.songs_data)
+        print("Refreshed song list.")
+
+    def _handle_song_metadata_saved(self, song_key, updated_metadata):
+        """Handles the metadata saved from the SongMetadataEditorWindow."""
+        print(f"Received saved metadata for song: {song_key}")
+
+        # --- Update self.songs_data ---
+        if song_key in self.songs_data:
+            # Preserve the existing 'sections' data
+            existing_sections = self.songs_data[song_key].get("sections", [])
+            # Update the song data dictionary with the new metadata
+            self.songs_data[song_key].update(updated_metadata)
+            # Ensure 'sections' is put back if it was overwritten by update()
+            self.songs_data[song_key]["sections"] = existing_sections
+        else:
+            print(f"Error: Song data for '{song_key}' not found during metadata save.")
+            return # Stop if song data is missing
+
+        # --- Save updated song data to JSON file ---
+        song_file_path = os.path.join("songs", f"{song_key}.json")
+        try:
+            with open(song_file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.songs_data[song_key], f, indent=2, ensure_ascii=False)
+            print(f"Successfully saved updated metadata to {song_file_path}")
+        except Exception as e:
+            print(f"Error saving updated song file {song_file_path}: {e}")
+            QMessageBox.warning(self, "Save Error", f"Could not save metadata changes to {song_file_path}:\n{e}")
+            # Consider reverting self.songs_data here if save fails
+
+        # --- Update UI Elements ---
+        new_song_title = updated_metadata.get("title", song_key)
+
+        # Update relevant LyricCardWidget titles
+        for button_id, widget in self._button_id_to_widget_map.items():
+            try:
+                widget_song_key, _ = button_id.split('__', 1) # Split using double underscore
+            except ValueError:
+                continue # Skip if button_id format is unexpected
+            if widget_song_key == song_key:
+                widget.song_title = new_song_title
+                # If the card's context menu relies on song_title, it will now be updated
+                # No visual update needed on the card itself unless you display the song title there
+
+        # Refresh Song List to reflect the potential title change
+        self.song_list.populate(self.songs_data)
+        print("Refreshed song list after metadata save.")
+
+
     def _update_all_card_backgrounds(self, hex_color):
         """Iterates through all created LyricCardWidgets and updates their background color."""
         print(f"Updating card backgrounds to: {hex_color}")

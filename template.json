@@ -2,16 +2,16 @@
   "template_name": "Default Lower Third",
   "description": "A simple template for displaying lyrics as a lower third.",
   "font": {
-    "family": "MingLiU-ExtB",
+    "family": "Futura PT",
     "size": 50,
     "bold": true,
     "italic": false,
     "underline": false
   },
-  "color": "#ffffff",
+  "color": "#1f2070",
   "position": {
     "x": "50%",
-    "y": "60%"
+    "y": "55%"
   },
   "alignment": "center",
   "vertical_alignment": "top",
