@@ -1,0 +1,117 @@
+# Ignore virtual environment directory
+venv/
+
+# Ignore Python bytecode files
+__pycache__/
+
+# Ignore Rope project files
+.ropeproject/
+
+# Add other common Python ignores
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Distribution / packaging
+.Python
+env/
+build/
+develop-eggs/
+dist/
+eggs/
+*.egg-info/
+.installed.cfg
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# IPython notebook checkpoint directory
+.ipynb_checkpoints
+
+# Environment variables file
+.env
+.flaskenv
+
+# mypy cache
+.mypy_cache/
+
+# pytest
+.pytest_cache/
+
+# pyenv
+.python-version
+
+# Readthedocs
+.readthedocs.yaml
+
+# Jupyter Lab
+.jupyter/
+
+# For testing
+.coverage.*
+
+# celery beat file
+celerybeat-schedule
+
+# SageMath output
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project files
+.spyproject/
+
+# mkdocs documentation
+/site
+
+# Sphinx documentation
+/docs/_build
+
+# pybuilder
+.pybuilder/
+target/
+
+# dotdee files
+.d/.gitignore
+
+# PyInstaller
+__pyinstaller__/
+*.spec
+
+# Downloaded wheels
+*.whl
+
+# Custom
+*.log
+*.tmp

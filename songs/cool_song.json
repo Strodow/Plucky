@@ -1,0 +1,26 @@
+{
+  "title": "My Awesome Song 1",
+  "artist": "The Prototypers",
+  "sections": [
+    {
+      "name": "Verse 1",
+      "lyrics": "When the day is dawning\nAnd the birds are singing..."
+    },
+    {
+      "name": "Chorus",
+      "lyrics": "Oh, the sun is shining bright\nFilling everything with light!"
+    },
+    {
+      "name": "Verse 2",
+      "lyrics": "Through the fields we wander\nBeneath the sky so blue..."
+    },
+    {
+      "name": "Bridge",
+      "lyrics": "A moment of reflection\nA peaceful, quiet view."
+    },
+    {
+      "name": "Outro",
+      "lyrics": "Fading light now calls us home Until we meet again. A moment of reflection A peaceful, quiet view. A moment of reflection A peaceful, quiet view."
+    }
+  ]
+}

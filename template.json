@@ -1,0 +1,31 @@
+{
+  "template_name": "Default Lower Third",
+  "description": "A simple template for displaying lyrics as a lower third.",
+  "font": {
+    "family": "Arial",
+    "size": 58,
+    "bold": true,
+    "italic": false,
+    "underline": false
+  },
+  "color": "#ff00ff",
+  "position": {
+    "x": "50%",
+    "y": "30%"
+  },
+  "alignment": "center",
+  "vertical_alignment": "top",
+  "max_width": "90%",
+  "outline": {
+    "enabled": true,
+    "color": "#000000",
+    "width": 2
+  },
+  "shadow": {
+    "enabled": false,
+    "color": "#000000",
+    "offset_x": 3,
+    "offset_y": 3,
+    "blur_radius": 5
+  }
+}
