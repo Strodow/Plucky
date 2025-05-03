@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
         # --- Store current screen index ---
         self.current_screen_index = 0
         self._last_clicked_button = None # Track the highlighted button
+        self.app_settings = {} # Dictionary for persistent app settings (screen, colors, etc.)
         self.load_stats = {} # Dictionary to store loading times
         self._button_id_to_widget_map = {} # Map button_id to LyricCardWidget instance
 
@@ -48,7 +49,8 @@ class MainWindow(QMainWindow):
     def perform_initial_load(self, splash=None):
         """Performs data loading and UI population, updating the splash screen."""
         overall_start_time = time.time()
-
+        self._update_splash(splash, "Loading application settings...")
+        self.load_stats['app_settings_load_time'] = self._load_app_settings() # Load app settings first
         self._update_splash(splash, "Loading template settings...")
         self.load_stats['template_load_time'] = self._load_template_settings()
 
@@ -63,7 +65,37 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------------------------------
     # Initialization Helper Methods
     # --------------------------------------------------------------------------
+    def _load_app_settings(self):
+        """Loads persistent application settings (screen index, colors, etc.)."""
+        start_time = time.time()
+        default_settings = {
+            "output_screen_index": 0,
+            "card_background_color": "#000000" # Default to black
+        }
+        settings_file_path = "app_settings.json"
+        if os.path.exists(settings_file_path):
+            try:
+                with open(settings_file_path, "r", encoding="utf-8") as f:
+                    loaded_settings = json.load(f)
+                    # Merge loaded settings with defaults to ensure all keys exist
+                    self.app_settings = {**default_settings, **loaded_settings}
+                print(f"Successfully loaded app settings from {settings_file_path}")
+            except json.JSONDecodeError:
+                print(f"Error: Could not decode {settings_file_path}. Using default settings.")
+                self.app_settings = default_settings
+            except Exception as e:
+                print(f"An unexpected error occurred while loading app settings: {e}")
+                print("Using default settings.")
+                self.app_settings = default_settings
+        else:
+            print(f"Warning: App settings file not found at {settings_file_path}.")
+            print("Using default settings.")
+            self.app_settings = default_settings
 
+        self.current_screen_index = self.app_settings.get("output_screen_index", 0) # Update current index from loaded/default settings
+        return time.time() - start_time
+    
+    
     def _load_template_settings(self):
         """Loads lyric display template settings from template.json."""
         start_time = time.time()
@@ -229,6 +261,7 @@ class MainWindow(QMainWindow):
         self.song_list.populate(self.songs_data)
         # _populate_button_grid now returns its own time and image time
         grid_time, image_time = self._populate_button_grid(splash)
+        # Card background color is applied during _populate_button_grid
         self.load_stats['grid_population_time'] = grid_time
         self.load_stats['image_load_time'] = image_time
 
@@ -237,7 +270,7 @@ class MainWindow(QMainWindow):
         self.lyric_window = LyricDisplayWindow()
         screens = QApplication.screens()
         if len(screens) > 1:
-            target_screen_index = 1 # Try secondary screen first
+            target_screen_index = self.current_screen_index # Use loaded/default index
             try:
                 self.lyric_window.set_fullscreen_on_screen(target_screen_index)
                 self.current_screen_index = target_screen_index # Store the used index
@@ -253,22 +286,86 @@ class MainWindow(QMainWindow):
         self.lyric_window.set_template_settings(self.lyric_template_settings)
 
     def _clear_button_grid(self):
-        """Removes all widgets from the button grid layout."""
+        """Removes all widgets from the button grid layout and disconnects signals."""
         if not hasattr(self.button_area, 'grid_layout'):
             print("Error: button_area does not have grid_layout.")
             return
 
+        print("Clearing button grid...")
+        # Explicitly clear the last clicked button reference first
+        self._last_clicked_button = None
+
         # Iterate backwards while removing items
-        while (item := self.button_area.grid_layout.takeAt(0)) is not None:
-            if item.widget():
-                item.widget().deleteLater() # Delete the widget
-            elif item.layout():
-                # If the item is a layout, clear it recursively (important for row_container_widget)
-                while (sub_item := item.layout().takeAt(0)) is not None:
-                    # print(f"  Clearing sub-item: {sub_item}")
+        items_to_remove = []
+        for i in range(self.button_area.grid_layout.count()):
+            items_to_remove.append(self.button_area.grid_layout.itemAt(i))
+
+        for item in reversed(items_to_remove): # Remove in reverse order
+            widget = item.widget()
+            layout_item = item.layout()
+
+            if widget:
+                # Check if it's a row container widget holding LyricCardWidgets
+                if isinstance(widget, QWidget) and widget.layout() is not None and isinstance(widget.layout(), QHBoxLayout):
+                    row_layout = widget.layout()
+                    # Clear widgets within the row container
+                    sub_items_to_remove = []
+                    for j in range(row_layout.count()):
+                        sub_items_to_remove.append(row_layout.itemAt(j))
+
+                    for sub_item in reversed(sub_items_to_remove):
+                        sub_widget = sub_item.widget()
+                        if sub_widget:
+                            # Disconnect if it's a LyricCardWidget
+                            if isinstance(sub_widget, LyricCardWidget):
+                                try:
+                                    # Disconnect all slots connected to the clicked signal
+                                    sub_widget.clicked.disconnect()
+                                except RuntimeError as e:
+                                    # This might happen if it was already disconnected or somehow invalid
+                                    print(f"  Warning: Could not disconnect signal for {sub_widget.objectName()}: {e}")
+                                except TypeError:
+                                    # PySide6 might raise TypeError if no connections exist
+                                    pass # Ignore if no connections
+                            # This should be at the same level as the 'if sub_widget:' check
+                            sub_widget.deleteLater()
+                        elif sub_item.spacerItem():
+                            row_layout.removeItem(sub_item) # Remove spacer item
+
+                # Also handle the clear button container
+                elif widget.objectName() == "clear_lyrics_button_container":
+                    clear_layout = widget.layout()
+                    if clear_layout and clear_layout.count() > 1: # Check layout exists and has items
+                        # Assuming button is at index 1 between stretches
+                        clear_button_item = clear_layout.itemAt(1)
+                        if clear_button_item and clear_button_item.widget():
+                            try:
+                                clear_button_item.widget().clicked.disconnect()
+                            except (RuntimeError, TypeError): pass # Ignore errors
+                            clear_button_item.widget().deleteLater()
+
+                # Delete the widget itself (row container, title label, separator, clear container)
+                widget.deleteLater()
+
+            elif layout_item:
+                 # This case shouldn't happen with the current structure, but good to have
+                 print(f"Warning: Found layout item directly in grid - clearing recursively.")
+                 while (sub_item := layout_item.takeAt(0)) is not None:
                     if sub_item.widget():
+                        # Disconnect if LyricCardWidget
+                        if isinstance(sub_item.widget(), LyricCardWidget):
+                            try: sub_item.widget().clicked.disconnect()
+                            except (RuntimeError, TypeError): pass
                         sub_item.widget().deleteLater()
-                item.layout().deleteLater() # Delete the layout itself
+                 layout_item.deleteLater()
+            elif item.spacerItem():
+                 # Remove the main vertical spacer
+                 self.button_area.grid_layout.removeItem(item)
+
+            # Remove the item from the main grid layout (important!) - This should be outside the if/elif/else for widget/layout/spacer
+            self.button_area.grid_layout.removeItem(item)
+
+        print("Button grid cleared.")
 
     def _populate_button_grid(self, splash=None):
         """Populates the button grid with songs and sections, ensuring consistent button size."""
@@ -313,12 +410,20 @@ class MainWindow(QMainWindow):
                         button_id = f"{song_key}_{section_name.replace(' ', '_').replace('-', '_').lower()}"
                         background_path = section.get("background_image") # Get the background image path
                         unique_button_object_name = f"btn_{button_id}_{i}" # Add index for uniqueness
+                        card_bg_color = self.app_settings.get("card_background_color", "#000000") # Get color from settings
                         # self._update_splash(splash, f"  Loading: {section_name}") # Option for more detail
 
                         # --- Create LyricCardWidget ---
                        # Pass all relevant info: id, number, name, lyrics, background
-                        # Pass the accumulator dictionary (or just the key) if needed, or rely on return value
-                        new_button = LyricCardWidget(button_id=button_id, slide_number=i + 1, section_name=section_name, lyrics=lyric_text, background_image_path=background_path)
+                        new_button = LyricCardWidget(
+                            button_id=button_id,
+                            slide_number=i + 1,
+                            section_name=section_name,
+                            lyrics=lyric_text,
+                            background_image_path=background_path,
+                            template_settings=self.lyric_template_settings, # Pass the loaded template settings
+                            card_background_color=card_bg_color # Pass the card background color
+                        )
                         total_image_load_time += new_button.get_last_image_load_time() # Get time from the widget
                         new_button.setObjectName(unique_button_object_name) # Set unique object name
                         # The size policy is now set within the LyricCardWidget itself to Fixed
@@ -377,6 +482,7 @@ class MainWindow(QMainWindow):
         clear_layout.setContentsMargins(0, 0, 0, 0)
 
         clear_container_widget = QWidget()
+        clear_container_widget.setObjectName("clear_lyrics_button_container") # Set object name here
         clear_container_widget.setLayout(clear_layout)
         clear_container_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
 
@@ -439,6 +545,19 @@ class MainWindow(QMainWindow):
         self.lyric_window.set_template_settings(self.lyric_template_settings) # Re-apply template
         #self._handle_button_click(None) # Clear lyric display and highlight
         print("--- Refresh Complete ---")
+    def _save_app_settings(self):
+        """Saves the current app settings to the JSON file."""
+        settings_file_path = "app_settings.json"
+        print(f"Saving app settings to: {settings_file_path}")
+        try:
+            # Update the settings dict with current values before saving
+            self.app_settings["output_screen_index"] = self.current_screen_index
+            # self.app_settings["card_background_color"] is updated when dialog closes
+            with open(settings_file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.app_settings, f, indent=2) # Use indent for readability
+            print("App settings saved successfully.")
+        except Exception as e:
+            print(f"Error saving app settings file: {e}")
     # --------------------------------------------------------------------------
     # Event Handlers / Slots
     # --------------------------------------------------------------------------
@@ -487,8 +606,9 @@ class MainWindow(QMainWindow):
             # Always display the lyric text
             self.lyric_window.display_lyric(button_object.lyric_text)
             # ONLY set the background if the clicked card has one specified
-            if button_object._background_image_path:
-                self.lyric_window.set_background_image(button_object._background_image_path)
+            # Access the path via the content_area child widget
+            if button_object.content_area._background_image_path:
+                self.lyric_window.set_background_image(button_object.content_area._background_image_path)
             # Apply highlight to the new card
             button_object.set_highlight(True)
             self._last_clicked_button = button_object # Store reference
@@ -503,15 +623,26 @@ class MainWindow(QMainWindow):
     # --- Slot to Open Settings Dialog ---
     def open_settings_dialog(self):
         """Opens the settings dialog and applies changes if accepted."""
-        dialog = SettingsDialog(self.current_screen_index, self.load_stats, self) # Pass load_stats dict, then self as parent
+        # Pass current settings values to the dialog constructor
+        dialog = SettingsDialog(
+            current_screen_index=self.app_settings.get("output_screen_index", 0),
+            current_card_bg_color=self.app_settings.get("card_background_color", "#000000"),
+            load_stats=self.load_stats,
+            parent=self
+        )
         if dialog.exec(): # Show the dialog modally, returns True if accepted
             new_index = dialog.get_selected_screen_index()
+            new_card_bg_color = dialog.get_selected_card_background_color() # Get selected color
             if new_index != self.current_screen_index:
                 print(f"Changing output screen to index: {new_index}")
                 self.lyric_window.set_fullscreen_on_screen(new_index)
                 self.current_screen_index = new_index # Update stored index
-            else:
-                print("Screen selection unchanged.")
+                self.app_settings["output_screen_index"] = new_index # Update settings dict
+
+            # Update settings dict and apply the new color
+            self.app_settings["card_background_color"] = new_card_bg_color # Update settings dict
+            self._update_all_card_backgrounds(new_card_bg_color) # Apply new color to existing cards
+            self._save_app_settings() # Save updated settings to file
 
 
     # --- Slot to Select Background Image ---
@@ -530,6 +661,11 @@ class MainWindow(QMainWindow):
             self.lyric_window.set_background_image(file_path)
         else:
             print("No background image selected.")
+    def _update_all_card_backgrounds(self, hex_color):
+        """Iterates through all created LyricCardWidgets and updates their background color."""
+        print(f"Updating card backgrounds to: {hex_color}")
+        for button_widget in self._button_id_to_widget_map.values():
+            button_widget.set_card_background_color(hex_color) # Call method on widget
 
     # --- Method to Show Load Stats ---
     def _show_load_stats(self):
@@ -539,6 +675,7 @@ class MainWindow(QMainWindow):
             return
 
         stats_message = "Initial Load Times:\n\n"
+        stats_message += f"- App Settings Load: {self.load_stats.get('app_settings_load_time', 0):.4f} seconds\n"
         stats_message += f"- Template Load: {self.load_stats.get('template_load_time', 0):.4f} seconds\n"
         stats_message += f"- Song Data Load: {self.load_stats.get('song_data_load_time', 0):.4f} seconds\n"
         stats_message += f"- Grid Population: {self.load_stats.get('grid_population_time', 0):.4f} seconds\n"

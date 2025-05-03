@@ -4,59 +4,38 @@ import json # Import json for loading template
 import logging # Added for better error handling
 import time # Import time for measuring image load
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy, QMenu
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QTextDocument, QPainterPath, QAction
-from PySide6.QtCore import Qt, QRect, QSize, QPoint, Signal
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QTextDocument, QPainterPath, QAction, QTextOption, QFontInfo, QFontMetrics, QPen
+from PySide6.QtCore import Qt, QRect, QSize, QPoint, Signal, QRectF
 
 from template_editor import TemplateEditorWindow # Import the new editor window
 
 
-class LyricCardWidget(QWidget):
-    # Define a signal that will be emitted when the widget is clicked
-    clicked = Signal()
-
-    def __init__(self, button_id="", slide_number=0, section_name="", lyrics="", background_image_path=None, parent=None):
+class ContentAreaWidget(QWidget):
+    """Widget responsible for drawing the background and lyrics content."""
+    # Add card_background_color parameter with default
+    def __init__(self, template_settings=None, background_path=None, initial_lyrics="", card_background_color="#000000", parent=None):
         super().__init__(parent)
+        self.template_settings = template_settings if template_settings else {}
+        self._background_image_path = background_path
+        self.lyric_text = initial_lyrics
+        self._card_background_color = QColor(card_background_color) # Store as QColor
+        self._background_pixmap = QPixmap()
+        self._last_image_load_time = 0.0
 
-        self.button_id = button_id # Store button_id for external reference
-        self._slide_number = slide_number
-        self.lyric_text = lyrics # Store original lyrics text
-        self.section_name = section_name # Store the section name
-        self._is_clicked = False # State for external highlighting
-        self._background_image_path = background_image_path
-        self._background_pixmap = QPixmap() # Pixmap for the background image
-        self._last_image_load_time = 0.0 # Store time taken for the last image load attempt
-        self._bar_color = QColor(0, 120, 215) # Default blue color for the bottom bar
+        self._load_background_image()
 
-        # --- Configuration --- (Moved from global scope for clarity)
-        self.CONFIG_DIR = os.path.dirname(os.path.abspath(__file__)) # Get script's directory
-        self.TEMPLATE_FILE = os.path.join(self.CONFIG_DIR, 'template.json')
-        # --- Logging Setup --- (Moved from global scope for clarity)
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-        self._lyrics_pixmap = QPixmap() # Pixmap to hold rendered lyrics
-
-        # Define a base size for rendering the lyrics pixmap.
-        # This is the "logical" resolution of the text content before scaling.
-        # Adjust this size to control the "resolution" and potential pixelation.
-        # It doesn't strictly need to be 16x9, but a reasonable size for text rendering.
-        self._base_lyrics_render_size = QSize(640, 300) # Base size for rendering text
-
-
-        # Initial render of the lyrics pixmap
-        self._render_lyrics_to_pixmap()
-        self._load_background_image() # Load the background image if path provided
-
-
-    def set_slide_number(self, number):
-        """Sets the slide number displayed in the bottom left."""
-        self._slide_number = number
-        self.update() # Trigger repaint to show the new number/name combo
+    def set_template_settings(self, settings):
+        self.template_settings = settings if settings else {}
+        self.update()
 
     def set_lyrics(self, lyrics):
-        """Sets the lyrics text and re-renders the lyrics pixmap."""
         self.lyric_text = lyrics
-        self._render_lyrics_to_pixmap() # Re-render pixmap when lyrics change
-        self.update() # Repaint
+        self.update()
+
+    def set_background(self, path):
+        self._background_image_path = path
+        self._load_background_image()
+        self.update()
 
     def _load_background_image(self):
         """Loads the background image from the stored path."""
@@ -68,114 +47,201 @@ class LyricCardWidget(QWidget):
             if not loaded_pixmap.isNull():
                 self._background_pixmap = loaded_pixmap
                 load_successful = True
-                print(f"Successfully loaded background for {self.button_id}: {self._background_image_path}")
+                # print(f"Successfully loaded background: {self._background_image_path}") # Optional logging
             else:
-                print(f"Warning: Failed to load background image for {self.button_id} from {self._background_image_path}")
+                logging.warning(f"Failed to load background image from {self._background_image_path}")
                 self._background_image_path = None # Clear path if loading failed
-        # No need to call self.update() here, as it's called during init or when path changes externally (if needed)
         self._last_image_load_time = time.time() - start_time
 
     def get_last_image_load_time(self):
-        """Returns the time taken for the last background image load attempt."""
         return self._last_image_load_time
 
-    def _render_lyrics_to_pixmap(self):
-        """Renders the current lyrics to a QPixmap of the base render size."""
-        # Ensure base render size is valid and there's text to render
-        if self._base_lyrics_render_size.isEmpty() or not self.lyric_text:
-            # Create a transparent pixmap of the base size even if empty,
-            # so paintEvent doesn't try to draw a null pixmap.
-            self._lyrics_pixmap = QPixmap(self._base_lyrics_render_size)
-            self._lyrics_pixmap.fill(QColor(0, 0, 0, 0))
-            return
-
-        # Create a pixmap of the defined base render size
-        pixmap = QPixmap(self._base_lyrics_render_size)
-        # Fill with a transparent background so the black widget background shows through
-        pixmap.fill(QColor(0, 0, 0, 0))
-
-        painter = QPainter(pixmap)
-        # Use Antialiasing for smoother text edges when rendering to the pixmap
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # Set up text document for rendering to handle wrapping and alignment
-        text_document = QTextDocument()
-        # Use HTML for color and centering, handle newlines with <br>
-        # Set text color directly in HTML for the document
-        html_content = f"<p style='color: white; text-align: center; margin: 0;'>{self.lyric_text.replace('\n', '<br>')}</p>"
-        text_document.setHtml(html_content)
-
-        # Set the default font for the document
-        # Adjust font size relative to the base pixmap height for consistent rendering
-        font = QFont("Arial", int(self._base_lyrics_render_size.height() * 0.15)) # Font size scaled to base height (adjusted factor)
-        text_document.setDefaultFont(font)
-
-        # Set the text width for wrapping within the base pixmap size
-        text_document.setTextWidth(self._base_lyrics_render_size.width())
-
-        # Calculate the drawing rectangle within the pixmap to center the text vertically
-        # Get the actual size of the text layout after wrapping
-        text_layout_size = text_document.size().toSize()
-        # Ensure the text drawing rectangle doesn't exceed the pixmap bounds
-        text_draw_rect = QRect(0, (self._base_lyrics_render_size.height() - text_layout_size.height()) // 2,
-                               self._base_lyrics_render_size.width(), text_layout_size.height())
-        # Clamp the height to the pixmap height
-        text_draw_rect.setHeight(min(text_draw_rect.height(), self._base_lyrics_render_size.height()))
-
-
-        # Draw the text document onto the pixmap
-        text_document.drawContents(painter, text_draw_rect)
-
-        painter.end() # End painting on the pixmap
-
-        self._lyrics_pixmap = pixmap # Store the generated pixmap
-
+    def set_card_background_color(self, hex_color):
+        """Sets the background color used when no image is present."""
+        self._card_background_color = QColor(hex_color) # Update the color
+        self.update() # Trigger repaint
 
     def paintEvent(self, event):
-        """Handles the custom drawing of the widget, maintaining 16x9 aspect ratio, rounded corners, and scaling number font."""
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing) # Enable antialiasing for smooth corners
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        widget_rect = self.rect() # The actual bounds of the widget
+        content_rect = self.rect() # Use the widget's full rect
 
-        # --- Calculate the 16x9 target rectangle for the content ---
-        # When using QSizePolicy.Fixed, the widget's size should be close to sizeHint().
-        # We'll draw the content to fill the widget's actual rectangle, which should be consistent.
-        content_rect = widget_rect
-
-        # --- Create a QPainterPath for rounded corners ---
-        corner_radius = 10 # Adjust the radius as needed
+        # --- Create Rounded Path for Top Corners ---
+        corner_radius = 10 # Same radius as parent
         path = QPainterPath()
-        path.addRoundedRect(content_rect, corner_radius, corner_radius)
+        # Add a rect with only top corners rounded
+        path.moveTo(content_rect.left(), content_rect.bottom())
+        path.lineTo(content_rect.left(), content_rect.top() + corner_radius)
+        path.arcTo(content_rect.left(), content_rect.top(), corner_radius * 2, corner_radius * 2, 180, -90)
+        path.lineTo(content_rect.right() - corner_radius, content_rect.top())
+        path.arcTo(content_rect.right() - corner_radius * 2, content_rect.top(), corner_radius * 2, corner_radius * 2, 90, -90)
+        path.lineTo(content_rect.right(), content_rect.bottom())
+        path.closeSubpath()
+        painter.setClipPath(path) # Clip this widget's drawing
 
-        # --- Clip the painter to the rounded path ---
-        painter.setClipPath(path)
-
-        # --- Draw Background Image or Color within the content area (now clipped) ---
+        # --- Draw Background Image or Color ---
         if not self._background_pixmap.isNull():
-            # Draw the background image scaled to fill the content_rect (aspect ratio ignored)
+            # Draw background *after* setting clip path
             painter.drawPixmap(content_rect, self._background_pixmap)
         else:
-            # Draw the default black background if no image is loaded
-            painter.fillRect(content_rect, QColor(0, 0, 0)) # Black background
+            # Draw background color *after* setting clip path
+            painter.fillRect(content_rect, self._card_background_color) # Use the stored background color
 
-        # --- Draw Bottom Blue Bar within the content area (now clipped) ---
-        # Scale the blue bar height relative to the content height
-        # Assuming the original blue bar was about 25px in a 150px tall area (from original image/design)
-        # Ratio: 25 / 150 = 1/6
-        scaled_blue_bar_height = int(content_rect.height() / 6) # Scale height based on content area
-        # Ensure minimum height for visibility
-        scaled_blue_bar_height = max(scaled_blue_bar_height, 10) # Minimum height
+        # --- Draw Scaled Lyrics Text (will also be clipped by the path set above) ---
+        if not content_rect.isEmpty() and self.lyric_text:
+            # --- Get Template Settings (Moved here to ensure they are always defined if text is drawn) ---
+            font_settings = self.template_settings.get("font", {})
+            font_family = font_settings.get("family", "Arial") # Get family from font_settings dict
+            font_size_setting = font_settings.get("size", 58) # Get size from font_settings dict
+            font_bold = font_settings.get("bold", False)
+            font_italic = font_settings.get("italic", False)
+            font_underline = font_settings.get("underline", False)
+            font_color_hex = self.template_settings.get("color", "#FFFFFF")
+            alignment_setting = self.template_settings.get("alignment", "center")
+            vertical_alignment_setting = self.template_settings.get("vertical_alignment", "center")
+            position_settings = self.template_settings.get("position", {"y": "80%"})
+            outline_settings = self.template_settings.get("outline", {})
+            outline_enabled = outline_settings.get("enabled", False)
+            outline_color_hex = outline_settings.get("color", "#000000")
+            outline_width = outline_settings.get("width", 2)
+            shadow_settings = self.template_settings.get("shadow", {})
+            shadow_enabled = shadow_settings.get("enabled", False)
+            shadow_color_hex = shadow_settings.get("color", "#000000")
+            shadow_offset_x = shadow_settings.get("offset_x", 3)
+            shadow_offset_y = shadow_settings.get("offset_y", 3)
 
-        blue_bar_rect = QRect(content_rect.left(), content_rect.bottom() - scaled_blue_bar_height,
-                              content_rect.width(), scaled_blue_bar_height)
-        painter.fillRect(blue_bar_rect, self._bar_color) # Use the stored bar color
+            # --- Calculate Scaled Font Size (Copied) ---
+            actual_font_size_pt = 10
+            if isinstance(font_size_setting, (int, float)):
+                base_point_size = float(font_size_setting)
+                target_output_height = 1080
+                current_preview_height = content_rect.height() # Use this widget's height
+                if target_output_height > 0 and current_preview_height > 0:
+                    scaling_factor = current_preview_height / target_output_height
+                    actual_font_size_pt = int(base_point_size * scaling_factor)
+                else:
+                    actual_font_size_pt = int(base_point_size)
+                actual_font_size_pt = max(6, actual_font_size_pt)
 
-        # --- Draw Number and Section Name Text directly on the blue bar ---
+            # --- Set Font (Copied) ---
+            font = QFont()
+            font.setFamily(font_family)
+            if not QFontInfo(font).exactMatch():
+                 logging.warning(f"ContentArea: Font family '{font_family}' not found. Using default.")
+            font.setPointSize(actual_font_size_pt)
+            font.setBold(font_bold)
+            font.setItalic(font_italic)
+            font.setUnderline(font_underline)
+            painter.setFont(font)
+
+            # --- Set Text Options (Copied) ---
+            text_option = QTextOption()
+            h_align = Qt.AlignmentFlag.AlignHCenter
+            if alignment_setting == "left": h_align = Qt.AlignmentFlag.AlignLeft
+            elif alignment_setting == "right": h_align = Qt.AlignmentFlag.AlignRight
+            v_align = Qt.AlignmentFlag.AlignVCenter
+            if vertical_alignment_setting == "top": v_align = Qt.AlignmentFlag.AlignTop
+            elif vertical_alignment_setting == "bottom": v_align = Qt.AlignmentFlag.AlignBottom
+            text_option.setAlignment(h_align | v_align)
+            text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
+
+            # --- Calculate Text Bounding Box (Copied) ---
+            anchor_y = content_rect.top() + content_rect.height() * 0.8
+            pos_y_setting = position_settings.get("y", "80%")
+            try:
+                if isinstance(pos_y_setting, str) and pos_y_setting.endswith('%'):
+                    anchor_y = content_rect.top() + content_rect.height() * (float(pos_y_setting[:-1]) / 100.0)
+                elif isinstance(pos_y_setting, (int, float)):
+                    target_output_height = 1080
+                    scaling_factor = content_rect.height() / target_output_height if target_output_height > 0 else 1
+                    anchor_y = content_rect.top() + float(pos_y_setting) * scaling_factor
+            except ValueError:
+                logging.warning(f"Invalid position.y format: {pos_y_setting}. Using default.")
+
+            fm = QFontMetrics(font)
+            text_flags = Qt.TextFlag.TextWordWrap
+            if h_align == Qt.AlignmentFlag.AlignLeft: text_flags |= Qt.AlignmentFlag.AlignLeft
+            elif h_align == Qt.AlignmentFlag.AlignRight: text_flags |= Qt.AlignmentFlag.AlignRight
+            else: text_flags |= Qt.AlignmentFlag.AlignHCenter
+            calculation_rect = QRect(0, 0, content_rect.width(), 9999)
+            text_bounding_rect = fm.boundingRect(calculation_rect, text_flags, self.lyric_text)
+            text_height = text_bounding_rect.height()
+            text_width = text_bounding_rect.width()
+
+            final_top_y = anchor_y
+            if vertical_alignment_setting == "center": final_top_y = anchor_y - text_height / 2
+            elif vertical_alignment_setting == "bottom": final_top_y = anchor_y - text_height
+            final_left_x = content_rect.left()
+            if alignment_setting == "center": final_left_x = content_rect.center().x() - text_width / 2
+            elif alignment_setting == "right": final_left_x = content_rect.right() - text_width
+
+            final_draw_rect = QRectF(final_left_x, final_top_y, text_width, text_height)
+            final_draw_rect = final_draw_rect.intersected(QRectF(content_rect))
+
+            # --- Draw Text (Shadow, Outline, Main) (Copied) ---
+            if shadow_enabled:
+                shadow_rect = final_draw_rect.translated(shadow_offset_x, shadow_offset_y)
+                painter.setPen(QColor(shadow_color_hex))
+                painter.drawText(shadow_rect, self.lyric_text, text_option)
+            if outline_enabled and outline_width > 0:
+                painter.setPen(QColor(outline_color_hex))
+                for dx in range(-outline_width, outline_width + 1, outline_width):
+                     for dy in range(-outline_width, outline_width + 1, outline_width):
+                         if dx != 0 or dy != 0:
+                             offset_rect = final_draw_rect.translated(dx, dy)
+                             painter.drawText(offset_rect, self.lyric_text, text_option)
+            painter.setPen(QColor(font_color_hex))
+            painter.drawText(final_draw_rect, self.lyric_text, text_option)
+
+
+class InfoBarWidget(QWidget):
+    """Widget for the bottom info bar (slide number, section name)."""
+    def __init__(self, slide_number=0, section_name="", bar_color=QColor(0, 120, 215), parent=None):
+        super().__init__(parent)
+        self._slide_number = slide_number
+        self.section_name = section_name
+        self._bar_color = bar_color
+        # Set a fixed height based on the desired ratio (e.g., 1/6th of 135)
+        self.setFixedHeight(22) # 135 / 6 = 22.5, round down or up
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def set_data(self, slide_number, section_name):
+        self._slide_number = slide_number
+        self.section_name = section_name
+        self.update()
+
+    def set_bar_color(self, color):
+        self._bar_color = color
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        bar_rect = self.rect()
+
+        # --- Create Rounded Path for Bottom Corners ---
+        corner_radius = 10 # Same radius as parent
+        path = QPainterPath()
+        path.moveTo(bar_rect.left(), bar_rect.top())
+        path.lineTo(bar_rect.right(), bar_rect.top())
+        path.lineTo(bar_rect.right(), bar_rect.bottom() - corner_radius)
+        path.arcTo(bar_rect.right() - corner_radius * 2, bar_rect.bottom() - corner_radius * 2, corner_radius * 2, corner_radius * 2, 0, -90)
+        path.lineTo(bar_rect.left() + corner_radius, bar_rect.bottom())
+        path.arcTo(bar_rect.left(), bar_rect.bottom() - corner_radius * 2, corner_radius * 2, corner_radius * 2, 270, -90)
+        path.closeSubpath()
+        painter.setClipPath(path) # Clip this widget's drawing
+
+        # Draw Background Bar
+        painter.fillRect(bar_rect, self._bar_color)
+
+        # Draw Text (Slide Number and Section Name)
         painter.setPen(Qt.GlobalColor.white) # White text
 
-        # Calculate font size based on the scaled blue bar height
-        number_font_size = int(scaled_blue_bar_height * 0.65) # Adjusted scaling factor
+        # Calculate font size based on the fixed bar height
+        bar_height = bar_rect.height()
+        number_font_size = int(bar_height * 0.65) # Scale based on actual height
         number_font_size = max(number_font_size, 8) # Minimum font size
         number_font = QFont("Arial", number_font_size, QFont.Weight.Bold)
         painter.setFont(number_font)
@@ -184,34 +250,119 @@ class LyricCardWidget(QWidget):
         number_text = f"{self._slide_number} - {self.section_name}"
         number_margin = 8 # Margin from the left edge
 
+        # Define the rectangle within the blue bar for the text
+        text_draw_rect = QRect(bar_rect.left() + number_margin, bar_rect.top(),
+                               bar_rect.width() - number_margin * 2, bar_rect.height())
+        # Draw the text, left-aligned and vertically centered
+        painter.drawText(text_draw_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, number_text)
+
+
+class LyricCardWidget(QWidget):
+    # Define a signal that will be emitted when the widget is clicked
+    clicked = Signal()
+
+    # Add card_background_color parameter
+    def __init__(self, button_id="", slide_number=0, section_name="", lyrics="", background_image_path=None, template_settings=None, card_background_color="#000000", parent=None):
+        super().__init__(parent)
+
+        self.button_id = button_id # Store button_id for external reference
+        self._slide_number = slide_number
+        self.lyric_text = lyrics # Store original lyrics text
+        self._card_background_color_hex = card_background_color # Store hex just in case
+        self._is_clicked = False # State for external highlighting
+        self._last_image_load_time = 0.0 # Store time taken for the last image load attempt
+        self.template_settings = template_settings if template_settings else {} # Store template settings
+        self._bar_color = QColor(0, 120, 215) # Default blue color for the bottom bar
+
+        # --- Configuration --- (Moved from global scope for clarity)
+        self.CONFIG_DIR = os.path.dirname(os.path.abspath(__file__)) # Get script's directory
+        self.TEMPLATE_FILE = os.path.join(self.CONFIG_DIR, 'template.json')
+        # --- Logging Setup --- (Moved from global scope for clarity)
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+        # No longer need this as children handle their corners
+        # self.setAutoFillBackground(False)
+
+        # --- Create Child Widgets ---
+        self.content_area = ContentAreaWidget(
+            template_settings=self.template_settings,
+            background_path=background_image_path,
+            initial_lyrics=self.lyric_text,
+            card_background_color=card_background_color, # Pass color down
+            parent=self
+        )
+        self._last_image_load_time = self.content_area.get_last_image_load_time() # Get initial load time
+
+        self.info_bar = InfoBarWidget(
+            slide_number=self._slide_number,
+            section_name=section_name, # Pass section name here
+            bar_color=self._bar_color,
+            parent=self
+        )
+
+        # --- Layout ---
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0) # No margins around the children
+        layout.setSpacing(0) # No spacing between content and info bar
+        layout.addWidget(self.content_area, 1) # Content area takes available vertical space
+        layout.addWidget(self.info_bar, 0) # Info bar takes its fixed height
+
+        # --- Set Fixed Size for the entire card ---
+        self.setFixedSize(self.sizeHint()) # Use the fixed size hint
+
+
+    def set_slide_number(self, number):
+        """Sets the slide number displayed in the bottom left."""
+        self._slide_number = number
+        # Update the info bar directly (assuming section name doesn't change here)
+        self.info_bar.set_data(self._slide_number, self.info_bar.section_name)
+
+    def set_lyrics(self, lyrics):
+        """Sets the lyrics text and re-renders the lyrics pixmap."""
+        self.lyric_text = lyrics
+        self.content_area.set_lyrics(lyrics) # Update the content area
+
+    def set_card_background_color(self, hex_color):
+        """Updates the background color of the content area."""
+        self._card_background_color_hex = hex_color # Update stored hex if needed
+        self.content_area.set_card_background_color(hex_color) # Pass call to content area
+
+    def get_last_image_load_time(self):
+        """Returns the time taken for the last background image load attempt."""
+        # Could return the content_area's time, or keep the initial one stored
+        return self.content_area.get_last_image_load_time()
+
+    def paintEvent(self, event):
+        """Handles the custom drawing of the widget, maintaining 16x9 aspect ratio, rounded corners, and scaling number font."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing) # Enable antialiasing for smooth corners
+
+        # Use the widget's full rect for clipping and border
+        widget_rect = self.rect()
+        content_rect = widget_rect
+
+        # --- Create a QPainterPath for rounded corners ---
+        corner_radius = 10 # Adjust the radius as needed
+        path = QPainterPath()
+        path.addRoundedRect(content_rect, corner_radius, corner_radius)
+
+        # --- DO NOT Clip the painter here anymore ---
+        # painter.setClipPath(path)
+
         # The lyrics pixmap should fill the area above the blue bar within the content_rect
 
         # --- Draw Highlight Border if Clicked around the content area ---
         # Draw the border using the same rounded path
         if self._is_clicked:
             border_width = 3 # Adjust border thickness
-            painter.setPen(QColor(255, 255, 255)) # White border color
+            # Need to save painter state before changing pen/brush for border
+            painter.save()
+            pen = QPen(QColor(255, 255, 255), border_width) # White border color and width
+            painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush) # Don't fill the border rectangle
             # Draw the rounded rectangle border
             painter.drawPath(path)
-
-
-        # --- Draw Scaled Lyrics Pixmap within the content area (now clipped) ---
-        # The lyrics pixmap should fill the area above the blue bar within the content_rect
-        lyrics_area_in_content = QRect(content_rect.left(), content_rect.top(),
-                                       content_rect.width(), content_rect.height() - scaled_blue_bar_height)
-
-        if not lyrics_area_in_content.isEmpty() and not self._lyrics_pixmap.isNull():
-             # Draw the lyrics pixmap scaled to the calculated area within the content_rect
-             # Use SmoothTransformation for better scaling quality
-             painter.drawPixmap(lyrics_area_in_content, self._lyrics_pixmap)
-
-        # --- Draw Number/Name Text (after lyrics pixmap, so it's on top) ---
-        # Define the rectangle within the blue bar for the text, align text vertically centered
-        text_draw_rect = QRect(blue_bar_rect.left() + number_margin, blue_bar_rect.top(),
-                               blue_bar_rect.width() - number_margin * 2, blue_bar_rect.height())
-        # Draw the text, left-aligned and vertically centered
-        painter.drawText(text_draw_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, number_text)
+            painter.restore() # Restore painter state after drawing border
 
 
     def resizeEvent(self, event):
@@ -273,8 +424,8 @@ class LyricCardWidget(QWidget):
 
     def set_bar_color(self, color):
         """Sets the color of the bottom bar and triggers a repaint."""
-        self._bar_color = color # Store the new color
-        self.update() # Trigger a repaint to show the change
+        self._bar_color = color # Store locally if needed for context menu default
+        self.info_bar.set_bar_color(color) # Update the info bar widget
 
     def minimumSizeHint(self):
         """Provides a minimum size for the widget."""
