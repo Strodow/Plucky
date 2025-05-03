@@ -1,8 +1,14 @@
 import sys
 import os # Import os to check file existence
+import json # Import json for loading template
+import logging # Added for better error handling
+import time # Import time for measuring image load
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy, QMenu
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QTextDocument, QPainterPath, QAction
 from PySide6.QtCore import Qt, QRect, QSize, QPoint, Signal
+
+from template_editor import TemplateEditorWindow # Import the new editor window
+
 
 class LyricCardWidget(QWidget):
     # Define a signal that will be emitted when the widget is clicked
@@ -18,7 +24,14 @@ class LyricCardWidget(QWidget):
         self._is_clicked = False # State for external highlighting
         self._background_image_path = background_image_path
         self._background_pixmap = QPixmap() # Pixmap for the background image
+        self._last_image_load_time = 0.0 # Store time taken for the last image load attempt
         self._bar_color = QColor(0, 120, 215) # Default blue color for the bottom bar
+
+        # --- Configuration --- (Moved from global scope for clarity)
+        self.CONFIG_DIR = os.path.dirname(os.path.abspath(__file__)) # Get script's directory
+        self.TEMPLATE_FILE = os.path.join(self.CONFIG_DIR, 'template.json')
+        # --- Logging Setup --- (Moved from global scope for clarity)
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
         self._lyrics_pixmap = QPixmap() # Pixmap to hold rendered lyrics
 
@@ -47,18 +60,24 @@ class LyricCardWidget(QWidget):
 
     def _load_background_image(self):
         """Loads the background image from the stored path."""
+        start_time = time.time()
+        load_successful = False
         self._background_pixmap = QPixmap() # Clear existing pixmap first
         if self._background_image_path and os.path.exists(self._background_image_path):
             loaded_pixmap = QPixmap(self._background_image_path)
             if not loaded_pixmap.isNull():
                 self._background_pixmap = loaded_pixmap
+                load_successful = True
                 print(f"Successfully loaded background for {self.button_id}: {self._background_image_path}")
             else:
                 print(f"Warning: Failed to load background image for {self.button_id} from {self._background_image_path}")
                 self._background_image_path = None # Clear path if loading failed
         # No need to call self.update() here, as it's called during init or when path changes externally (if needed)
+        self._last_image_load_time = time.time() - start_time
 
-
+    def get_last_image_load_time(self):
+        """Returns the time taken for the last background image load attempt."""
+        return self._last_image_load_time
 
     def _render_lyrics_to_pixmap(self):
         """Renders the current lyrics to a QPixmap of the base render size."""
@@ -233,6 +252,11 @@ class LyricCardWidget(QWidget):
         blue_action.triggered.connect(lambda: self.set_bar_color(QColor(0, 120, 215)))
         color_menu.addAction(blue_action)
 
+        # --- Edit Template Action ---
+        menu.addSeparator() # Add a separator for visual distinction
+        edit_template_action = QAction("Edit Template", self)
+        edit_template_action.triggered.connect(self._handle_edit_template) # Connect to a new handler
+        menu.addAction(edit_template_action)
         # Show the menu at the cursor's global position
         menu.exec(event.globalPos())
 
@@ -256,6 +280,24 @@ class LyricCardWidget(QWidget):
         """Provides a minimum size for the widget."""
         # When using a Fixed policy, minimumSizeHint is often the same as sizeHint
         return self.sizeHint()
+
+    def _handle_edit_template(self):
+        """Placeholder handler for the 'Edit Template' action."""
+        logging.info(f"Edit Template action triggered for button: {self.button_id}")
+        try:
+            with open(self.TEMPLATE_FILE, 'r', encoding='utf-8') as f:
+                template_data = json.load(f)
+            # Create and show the editor window
+            # Pass 'self' or 'self.window()' as parent if needed for modality/behavior
+            self.editor_window = TemplateEditorWindow(template_data, self.window())
+            self.editor_window.exec() # Use exec() for a modal dialog
+
+        except FileNotFoundError:
+            logging.error(f"Template file not found: {self.TEMPLATE_FILE}")
+        except json.JSONDecodeError:
+            logging.error(f"Error decoding JSON from template file: {self.TEMPLATE_FILE}")
+        except Exception as e:
+            logging.error(f"An unexpected error occurred opening the template editor: {e}", exc_info=True)
 
 
 
