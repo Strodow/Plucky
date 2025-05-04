@@ -100,7 +100,6 @@ class LyricDisplayWindow(QWidget):
         outline_settings = self._template_settings.get("outline", {"enabled": False})
         shadow_settings = self._template_settings.get("shadow", {"enabled": False})
         # Bounding box stroke settings
-        force_caps = self._template_settings.get("force_caps", False) # Get force_caps setting
         bounding_box_settings = self._template_settings.get("bounding_box_stroke", {"enabled": False})
 
 
@@ -131,15 +130,11 @@ class LyricDisplayWindow(QWidget):
             except ValueError:
                 pass # Keep default max_width if percentage parsing fails
         elif isinstance(max_width_setting, (int, float)):
-            max_width = int(max_width_setting)
-
-        # --- Apply Force Caps ---
-        text_to_draw = self._current_lyric.upper() if force_caps else self._current_lyric
-        # --- End Apply Force Caps ---
+             max_width = int(max_width_setting)
 
         # Calculate bounding rectangle for the text, considering potential wrapping and max_width
         # We use a large height initially to allow for full text height calculation with wrapping
-        text_rect_size = font_metrics.boundingRect(0, 0, max_width, window_height * 2, Qt.TextFlag.TextWordWrap, text_to_draw) # Use text_to_draw
+        text_rect_size = font_metrics.boundingRect(0, 0, max_width, window_height * 2, Qt.TextFlag.TextWordWrap, self._current_lyric)
 
 
         # Calculate anchor point based on template position (pixels or percentages)
@@ -231,7 +226,7 @@ class LyricDisplayWindow(QWidget):
             # Draw text with shadow offset and determined alignment flags
             # Use the calculated drawing_rect, shifted by the shadow offset
             shadow_rect = QRect(drawing_rect.x() + shadow_offset_x, drawing_rect.y() + shadow_offset_y, drawing_rect.width(), drawing_rect.height())
-            painter.drawText(shadow_rect, text_alignment_flags, text_to_draw) # Use text_to_draw
+            painter.drawText(shadow_rect, text_alignment_flags, self._current_lyric)
             painter.setPen(color) # Restore original text color for subsequent drawing
 
 
@@ -248,15 +243,15 @@ class LyricDisplayWindow(QWidget):
             outline_pen = QPen(outline_color, outline_width * 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
             painter.setPen(outline_pen)
             # Draw text for the outline with determined alignment flags
-            # Use the calculated drawing_rect and text_to_draw
-            painter.drawText(drawing_rect, text_alignment_flags, text_to_draw) # Use text_to_draw
+            # Use the calculated drawing_rect
+            painter.drawText(drawing_rect, text_alignment_flags, self._current_lyric)
             painter.setPen(original_pen) # Restore original pen
 
 
         # --- Draw Main Text ---
         painter.setPen(color) # Ensure the correct text color is set for the main text
-        # Draw the main lyric text using the calculated drawing_rect, alignment flags, and text_to_draw
-        painter.drawText(drawing_rect, text_alignment_flags, text_to_draw) # Use text_to_draw
+        # Draw the main lyric text using the calculated drawing_rect and determined alignment flags
+        painter.drawText(drawing_rect, text_alignment_flags, self._current_lyric)
 
 
         painter.end() # End painting session

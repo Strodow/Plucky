@@ -3,7 +3,7 @@
   "description": "A simple template for displaying lyrics as a lower third.",
   "font": {
     "family": "Futura PT",
-    "size": 80,
+    "size": 50,
     "bold": true,
     "italic": false,
     "underline": false
@@ -11,7 +11,7 @@
   "color": "#24c6c1",
   "position": {
     "x": "50%",
-    "y": "35%"
+    "y": "55%"
   },
   "alignment": "center",
   "vertical_alignment": "top",
@@ -27,6 +27,5 @@
     "offset_x": 4,
     "offset_y": 3,
     "blur_radius": 5
-  },
-  "force_caps": true
+  }
 }
