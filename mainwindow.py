@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QFileDialog, QSlider,
     QSplitter, QMessageBox # Import QSplitter and QMessageBox
 )
-from PySide6.QtCore import Qt, QMimeData, QRect, QSize # Import QSize
+from PySide6.QtCore import Qt, QMimeData, QRect, QSize, QEvent # Import QSize, QEvent
 from PySide6.QtGui import QFont, QPixmap, QColor, QPainter # Removed QDrag, QMouseEvent, Added QPainter for splash
 
 # --- Local Imports ---
@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
         self.load_stats = {} # Dictionary to store loading times
         self._button_id_to_widget_map = {} # Map button_id to LyricCardWidget instance
         self._editor_windows = {} # To keep references to open editor windows (key: ('song', song_key) or ('section', button_id))
+        self._ordered_buttons = [] # List to store LyricCardWidgets in grid order
 
         # --- Basic UI Structure Setup (moved data loading out) ---
         # ButtonGridWidget now primarily acts as a container for the grid layout
@@ -46,6 +47,9 @@ class MainWindow(QMainWindow):
 
         # Setup main UI structure (without populating data yet)
         self._setup_main_ui_structure()
+
+        # Allow the main window to receive focus via click or tabbing
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self.setGeometry(100, 100, 800, 600)
 
@@ -252,6 +256,9 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.central_splitter, 1) # Add the QSplitter with stretch factor 1
         central_widget = QWidget()
         central_widget.setLayout(main_layout)
+
+        
+
         self.setCentralWidget(central_widget)
 
     def _populate_ui_elements(self, splash=None):
@@ -294,6 +301,7 @@ class MainWindow(QMainWindow):
         print("Clearing button grid...")
         # Explicitly clear the last clicked button reference first
         self._last_clicked_button = None
+        self._ordered_buttons.clear() # Clear the ordered list
 
         # Iterate backwards while removing items
         items_to_remove = []
@@ -374,6 +382,7 @@ class MainWindow(QMainWindow):
 
         self._update_splash(splash, "Clearing existing buttons...")
         self._button_id_to_widget_map.clear() # Clear the map before repopulating
+        self._ordered_buttons.clear() # Clear the ordered list before repopulating
         current_grid_row = 0
         for song_index, (song_key, song_data) in enumerate(self.songs_data.items()):
             song_title = song_data.get("title", song_key)
@@ -443,6 +452,7 @@ class MainWindow(QMainWindow):
 
                         # Store the widget reference in the map
                         self._button_id_to_widget_map[button_id] = new_button
+                        self._ordered_buttons.append(new_button) # Add to the ordered list
 
                         current_button_row_widgets.append(new_button)
                         button_count_in_row += 1
@@ -543,6 +553,7 @@ class MainWindow(QMainWindow):
         # 2. Clear existing UI elements dependent on data
         self._clear_button_grid()
         self._button_id_to_widget_map.clear() # Also clear the map
+        # self._ordered_buttons is cleared within _clear_button_grid
         self.song_list.clear()
 
         # 3. Repopulate UI elements (without splash, ignore returned times)
@@ -580,6 +591,8 @@ class MainWindow(QMainWindow):
             self.scroll_area.ensureWidgetVisible(target_widget)
             # Programmatically handle the click to update lyrics and highlight
             self._handle_button_click(target_widget)
+            # Set focus back to the main window to capture arrow keys
+            self.setFocus()
     # --------------------------------------------------------------------------
     def _handle_song_title_selection(self, first_section_button_id):
         """Handles clicks on song titles in the SongListWidget."""
@@ -595,6 +608,8 @@ class MainWindow(QMainWindow):
             if self._last_clicked_button:
                 self._last_clicked_button.set_highlight(False)
                 self._last_clicked_button = None
+            # Set focus back to the main window to capture arrow keys
+            self.setFocus()
     # --------------------------------------------------------------------------
 
     # Renamed from handle_button_with_lyric_clicked for clarity
@@ -625,6 +640,9 @@ class MainWindow(QMainWindow):
             self.lyric_window.display_lyric("") # Display empty lyric
             # self._last_clicked_button is already cleared or was handled above
 
+        # Set focus back to the main window after any click handling
+        # to ensure arrow key navigation keeps working.
+        self.setFocus()
 
     # --- Slot to Open Settings Dialog ---
     def open_settings_dialog(self):
@@ -867,6 +885,52 @@ class MainWindow(QMainWindow):
         print(f"Updating card backgrounds to: {hex_color}")
         for button_widget in self._button_id_to_widget_map.values():
             button_widget.set_card_background_color(hex_color) # Call method on widget
+            
+    def keyPressEvent(self, event: QEvent):
+        """Handles key presses for navigation."""
+        key = event.key()
+
+        if key == Qt.Key.Key_Right or key == Qt.Key.Key_Left:
+            if not self._ordered_buttons:
+                print("No buttons available for navigation.")
+                event.accept() # Consume the event even if nothing happens
+                return
+
+            current_index = -1
+            if self._last_clicked_button:
+                try:
+                    current_index = self._ordered_buttons.index(self._last_clicked_button)
+                except ValueError:
+                    print("Warning: Last clicked button not found in ordered list.")
+                    # Fallback: treat as if no button was selected
+                    current_index = -1
+
+            num_buttons = len(self._ordered_buttons)
+            next_index = -1
+
+            if key == Qt.Key.Key_Right:
+                if current_index == -1: # No button selected, go to the first one
+                    next_index = 0
+                else:
+                    next_index = (current_index + 1) % num_buttons # Wrap around
+            elif key == Qt.Key.Key_Left:
+                if current_index == -1: # No button selected, go to the last one
+                    next_index = num_buttons - 1
+                else:
+                    next_index = (current_index - 1 + num_buttons) % num_buttons # Wrap around
+
+            if 0 <= next_index < num_buttons:
+                target_widget = self._ordered_buttons[next_index]
+                print(f"Navigating {'Right' if key == Qt.Key.Key_Right else 'Left'} to button index {next_index}: {target_widget.button_id}")
+                self.scroll_area.ensureWidgetVisible(target_widget) # Scroll to the button
+                self._handle_button_click(target_widget) # Simulate click
+            else:
+                print(f"Could not determine valid next/previous index from current: {current_index}")
+
+            event.accept() # Indicate we've handled the arrow key
+        else:
+            super().keyPressEvent(event) # Pass other key presses to the base class
+
 
     # --- Method to Show Load Stats ---
     def _show_load_stats(self):
