@@ -63,8 +63,14 @@ class LyricDisplayWindow(QWidget):
 
     def display_lyric(self, lyric_text):
         """Sets the lyric text to be displayed and triggers a repaint."""
-        self._current_lyric = lyric_text
+        # --- Check for Force All Caps ---
+        force_caps = self._template_settings.get('font', {}).get('force_all_caps', False)
+        display_text = lyric_text.upper() if force_caps else lyric_text
+        # --- End Check ---
+
+        self._current_lyric = display_text # Store the potentially modified text
         self.update() # Request a repaint to show new lyrics
+
 
     def paintEvent(self, event):
         """Handles the painting of the window content."""

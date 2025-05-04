@@ -24,6 +24,7 @@ from button_remake import LyricCardWidget # Assuming button_remake.py contains t
 from song_list_widget import SongListWidget # Import the new song list widget
 from song_section_editor_window import SongSectionEditorWindow # Import the new section editor window
 from song_metadata_editor_window import SongMetadataEditorWindow # Import the new metadata editor window
+from template_editor import TemplateEditorWindow # Import the template editor
 from PySide6.QtWidgets import QSplashScreen # Import QSplashScreen
 
 # --- Main Window Class ---
@@ -156,7 +157,7 @@ class MainWindow(QMainWindow):
                 with open(order_file_path, "r", encoding="utf-8") as f:
                     ordered_keys = json.load(f)
                     if isinstance(ordered_keys, list):
-                        print(f"Successfully loaded song order from {order_file_path}")
+                        print(f"INFO: Successfully loaded song order from {order_file_path}")
                         order_applied = True
                     else:
                         print(f"Warning: Content of {order_file_path} is not a JSON list. Ignoring order file.")
@@ -454,6 +455,8 @@ class MainWindow(QMainWindow):
                         new_button.edit_section_requested.connect(self._open_section_editor)
                         # Connect the delete section signal from the card
                         new_button.delete_section_requested.connect(self._handle_delete_section_requested)
+                        # Connect the request to open the template editor
+                        new_button.open_template_editor_requested.connect(self._handle_open_template_editor_request)
 
                         # Store the widget reference in the map
                         self._button_id_to_widget_map[button_id] = new_button
@@ -705,7 +708,7 @@ class MainWindow(QMainWindow):
 
     def _handle_image_dropped_at_pos(self, drop_pos: QPoint, image_path: str):
         """Handles the signal emitted when an image is dropped between cards or in empty space."""
-        print(f"Image dropped at position {drop_pos} (relative to grid area). Path: {image_path}")
+        print(f"INFO: Image dropped at position {drop_pos} (relative to grid area). Path: {image_path}")
 
         target_song_key = None
         preceding_button_id = None # ID of the card *before* the insertion point
@@ -732,10 +735,10 @@ class MainWindow(QMainWindow):
                 if current_song_key:
                     last_processed_song_key = current_song_key
                     last_processed_button_id = None # Reset last button ID for new song
-                    print(f"  Processing row {row}, identified song: {last_processed_song_key} ('{title_text}')")
+                    # print(f"  Processing row {row}, identified song: {last_processed_song_key} ('{title_text}')") # Removed debug print
 
                 title_geom = title_item.geometry()
-                if title_geom.contains(drop_pos):
+                if title_geom.top() <= drop_pos.y() <= title_geom.bottom(): # Check vertical only for title context too
                     print(f"  Drop detected near title: {title_text}")
                     target_song_key = last_processed_song_key
                     insert_at_start_of_song = True
@@ -749,10 +752,10 @@ class MainWindow(QMainWindow):
                 row_layout = row_widget.layout()
                 if isinstance(row_layout, QHBoxLayout):
                     row_geom = row_container_item.geometry()
-                    print(f"  Checking row {row} container (geom: {row_geom}) against drop_pos {drop_pos}")
+                    # print(f"  Checking row {row} container (geom: {row_geom}) against drop_pos {drop_pos}") # Removed debug print
                     # --- Check only vertical bounds for row context ---
                     if row_geom.top() <= drop_pos.y() <= row_geom.bottom():
-                        print(f"  Drop is within vertical bounds of row {row}")
+                        # print(f"  Drop is within vertical bounds of row {row}") # Removed debug print
                         # Drop is vertically within this row of buttons. Check horizontally.
                         current_row_song_key = last_processed_song_key # Store song key for this specific row
                         target_song_key = last_processed_song_key # Song context is the last title seen
@@ -766,10 +769,10 @@ class MainWindow(QMainWindow):
                                 card_pos_in_grid = card_widget.mapTo(self.button_area, QPoint(0,0))
                                 card_global_rect = QRect(card_pos_in_grid, card_rect_in_grid.size())
 
-                                print(f"    Checking card {card_widget.button_id} (geom relative to grid: {card_global_rect})")
+                                # print(f"    Checking card {card_widget.button_id} (geom relative to grid: {card_global_rect})") # Removed debug print
 
                                 # Check if drop is to the left of this card
-                                if drop_pos.x() < card_global_rect.left():
+                                if drop_pos.x() < card_global_rect.left() + 5: # Add small tolerance
                                     print(f"    Drop is LEFT of card {card_widget.button_id}")
                                     # Insert before this card. Preceding is the last one processed.
                                     preceding_button_id = last_processed_button_id
@@ -786,7 +789,7 @@ class MainWindow(QMainWindow):
                         # If loop finished without finding a gap *between* cards,
                         # but we are vertically within this row's bounds,
                         # the drop must be after the last card in this row (or in an empty row).
-                        if not found_insertion_point_in_row and last_processed_button_id:
+                        elif not found_insertion_point_in_row: # Changed to elif
                              print(f"    Drop is RIGHT of the last card in row ({last_processed_button_id})")
                              target_song_key = current_row_song_key # Set the song key for this row
                              preceding_button_id = last_processed_button_id # Preceding is the last card processed overall up to this point
@@ -809,7 +812,7 @@ class MainWindow(QMainWindow):
         #      preceding_button_id = last_processed_button_id # Insert after the very last button of the song
         # --- Perform Insertion if Target Found ---
         if target_song_key:
-            print(f"Target determined: Song='{target_song_key}', Preceding ID='{preceding_button_id}', Insert at start={insert_at_start_of_song}")
+            print(f"INFO: Target determined: Song='{target_song_key}', Preceding ID='{preceding_button_id}', Insert at start={insert_at_start_of_song}")
             self._insert_new_section(target_song_key, preceding_button_id, image_path, insert_at_start_of_song)
         else:
             print("Could not determine target song or insertion point for the drop.")
@@ -839,6 +842,58 @@ class MainWindow(QMainWindow):
             self.app_settings["card_background_color"] = new_card_bg_color # Update settings dict
             self._update_all_card_backgrounds(new_card_bg_color) # Apply new color to existing cards
             self._save_app_settings() # Save updated settings to file
+
+    def _handle_open_template_editor_request(self):
+        """Handles the request from a LyricCardWidget to open the template editor."""
+        print("INFO: Request received to open template editor.")
+        editor_key = ('template', 'editor') # Unique key for tracking
+
+        # Avoid opening multiple template editors
+        if editor_key in self._editor_windows and self._editor_windows[editor_key].isVisible():
+             self._editor_windows[editor_key].activateWindow() # Bring existing window to front
+             return
+
+        try:
+            # Pass the current template settings to the editor
+            template_editor_window = TemplateEditorWindow(self.lyric_template_settings, parent=self)
+
+            # *** Connect the editor's save signal to MainWindow's handler ***
+            template_editor_window.template_saved.connect(self._handle_template_saved)
+
+            template_editor_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            template_editor_window.destroyed.connect(lambda: self._editor_windows.pop(editor_key, None))
+            template_editor_window.show()
+            self._editor_windows[editor_key] = template_editor_window
+
+        except Exception as e:
+             QMessageBox.critical(self, "Error", f"Error opening template editor: {e}")
+             print(f"ERROR: Error opening template editor: {e}")
+
+    def _handle_template_saved(self, updated_template_data):
+        """Handles the template_saved signal from the TemplateEditorWindow."""
+        print("INFO: Received updated template data from editor.")
+        self.lyric_template_settings = updated_template_data
+
+        # --- Save updated template data to JSON file ---
+        template_file_path = "template.json"
+        try:
+            with open(template_file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.lyric_template_settings, f, indent=2, ensure_ascii=False)
+            print(f"INFO: Successfully saved updated template to {template_file_path}")
+        except Exception as e:
+            print(f"Error saving updated template file {template_file_path}: {e}")
+            QMessageBox.warning(self, "Save Error", f"Could not save template changes to {template_file_path}:\n{e}")
+            # Optionally don't apply if save fails, or revert self.lyric_template_settings
+
+        # --- Apply new settings to the lyric window ---
+        if hasattr(self, 'lyric_window') and self.lyric_window:
+            self.lyric_window.set_template_settings(self.lyric_template_settings)
+            print("INFO: Applied updated template settings to lyric window.")
+
+        # --- Apply new settings to all existing LyricCardWidgets ---
+        print("INFO: Applying updated template settings to grid cards...")
+        for card_widget in self._button_id_to_widget_map.values():
+            card_widget.update_template_settings(self.lyric_template_settings)
 
     def _open_song_editor(self, song_key):
         """Opens the SongMetadataEditorWindow for the specified song."""
@@ -1133,11 +1188,11 @@ class MainWindow(QMainWindow):
             insert_index = len(sections)
 
         # --- Insert into Data Structure ---
-        print(f"Inserting new section '{new_section_name}' at index {insert_index} in song '{song_key}'")
+        print(f"INFO: Inserting new section '{new_section_name}' at index {insert_index} in song '{song_key}'")
         self.songs_data[song_key]["sections"].insert(insert_index, new_section_data)
 
         # --- Save updated song data to JSON file ---
-        self._save_song_data(song_key) # Use helper function
+        save_successful = self._save_song_data(song_key) # Use helper function, check result
         # --- Refresh UI ---
         print("Refreshing UI after inserting new section...")
         self._refresh_data_and_ui() # Easiest way is to just reload everything
@@ -1158,7 +1213,7 @@ class MainWindow(QMainWindow):
         try:
             with open(song_file_path, 'w', encoding='utf-8') as f:
                 json.dump(self.songs_data[song_key], f, indent=2, ensure_ascii=False)
-            print(f"Successfully saved data to {song_file_path}")
+            print(f"INFO: Successfully saved data to {song_file_path}")
             return True # Indicate success
         except Exception as e:
             print(f"Error saving updated song file {song_file_path}: {e}")

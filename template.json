@@ -6,7 +6,8 @@
     "size": 50,
     "bold": true,
     "italic": false,
-    "underline": false
+    "underline": false,
+    "force_all_caps": false
   },
   "color": "#24c6c1",
   "position": {

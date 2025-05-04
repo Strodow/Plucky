@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QColorDialog, QGroupBox, QScrollArea, QDialogButtonBox
 )
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QBrush, QFontDatabase, QTextOption, QFontInfo, QPalette
-from PySide6.QtCore import Qt, QRectF, QSize, QRect
+from PySide6.QtCore import Qt, QRectF, QSize, QRect, Signal # Import Signal
 import copy # For deep copying template data
 class TemplatePreviewWidget(QWidget):
     """Widget to display a visual preview of the template, maintaining a 16:9 aspect ratio."""
@@ -218,6 +218,12 @@ class TemplatePreviewWidget(QWidget):
             font.setItalic(font_italic)
             font.setUnderline(font_underline)
 
+            # --- Apply Force Caps ---
+            force_caps = font_settings.get('force_all_caps', False)
+            text_to_draw = self.sample_text.upper() if force_caps else self.sample_text
+            # --- End Apply Force Caps ---
+
+
             painter.setFont(font)
 
             # Set text alignment options
@@ -253,21 +259,21 @@ class TemplatePreviewWidget(QWidget):
             if shadow_enabled:
                 shadow_rect = bounding_rect.translated(shadow_offset_x, shadow_offset_y)
                 painter.setPen(QColor(shadow_color_hex))
-                painter.drawText(shadow_rect, self.sample_text, text_option)
+                painter.drawText(shadow_rect, text_to_draw, text_option) # Use text_to_draw
 
             # 2. Draw Outline (if enabled) - by drawing multiple offset versions
             if outline_enabled and outline_width > 0:
                 painter.setPen(QColor(outline_color_hex))
                 # Draw text slightly offset in multiple directions
                 for dx in range(-outline_width, outline_width + 1, outline_width):
-                     for dy in range(-outline_width, outline_width + 1, outline_width):
-                         if dx != 0 or dy != 0: # Don't redraw at the exact center
-                             offset_rect = bounding_rect.translated(dx, dy)
-                             painter.drawText(offset_rect, self.sample_text, text_option)
+                    for dy in range(-outline_width, outline_width + 1, outline_width):
+                        if dx != 0 or dy != 0: # Don't redraw at the exact center
+                            offset_rect = bounding_rect.translated(dx, dy)
+                            painter.drawText(offset_rect, text_to_draw, text_option) # Use text_to_draw
 
             # 3. Draw Main Text (on top)
             painter.setPen(QColor(font_color_hex)) # Set main text color
-            painter.drawText(bounding_rect, self.sample_text, text_option)
+            painter.drawText(bounding_rect, text_to_draw, text_option) # Use text_to_draw
 
             # **If clipping was enabled, remember to clear it**
             # painter.setClipping(False)
@@ -278,6 +284,8 @@ class TemplatePreviewWidget(QWidget):
 
 class TemplateEditorWindow(QDialog):
     """Window for editing template properties."""
+    # --- Signal to emit when template is saved ---
+    template_saved = Signal(dict) # Emits the updated template data dictionary
     def __init__(self, template_data, parent=None):
         super().__init__(parent)
         # Use a deep copy to avoid modifying the original dict until save
@@ -348,6 +356,9 @@ class TemplateEditorWindow(QDialog):
         self.font_underline_check = QCheckBox("Underline")
         self.font_underline_check.toggled.connect(lambda checked: self._update_setting(['font', 'underline'], checked))
 
+        self.force_caps_check = QCheckBox("Force All Caps") # Create the checkbox
+        self.force_caps_check.toggled.connect(lambda checked: self._update_setting(['font', 'force_all_caps'], checked)) # Connect its signal
+
         font_layout.addRow("Family:", self.font_family_combo)
         font_layout.addRow("Size:", self.font_size_input)
         font_style_layout = QHBoxLayout()
@@ -355,6 +366,7 @@ class TemplateEditorWindow(QDialog):
         font_style_layout.addWidget(self.font_italic_check)
         font_style_layout.addWidget(self.font_underline_check)
         font_layout.addRow("Style:", font_style_layout)
+        font_layout.addRow(self.force_caps_check) # Add the checkbox to the layout
         settings_layout.addWidget(font_group)
 
         # -- Color --
@@ -531,9 +543,8 @@ class TemplateEditorWindow(QDialog):
         # Set the final value
         data[keys[-1]] = value
 
-        # Refresh the preview
+        # Refresh the preview by telling the preview widget to use the updated data
         self.preview_widget.set_template_data(self.template_data)
-        # self.preview_widget.update() # set_template_data already calls update
 
     def _update_font_size(self, text):
         """Handles font size updates, converting to int if possible."""
@@ -601,6 +612,7 @@ class TemplateEditorWindow(QDialog):
             self.font_bold_check.setChecked(font_settings.get("bold", False))
             self.font_italic_check.setChecked(font_settings.get("italic", False))
             self.font_underline_check.setChecked(font_settings.get("underline", False))
+            self.force_caps_check.setChecked(font_settings.get("force_all_caps", False)) # Load the setting
 
             # Color
             main_color = self.template_data.get("color", "#FFFFFF")
@@ -659,4 +671,5 @@ class TemplateEditorWindow(QDialog):
     def _save_and_accept(self):
         """Saves the template and then closes the dialog."""
         self._save_template()
+        self.template_saved.emit(self.template_data) # Emit the signal with the data
         self.accept() # Close the dialog with accept status

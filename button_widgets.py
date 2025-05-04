@@ -251,15 +251,14 @@ class ButtonGridWidget(QFrame):
                     file_path = url.toLocalFile()
                     _, ext = os.path.splitext(file_path)
                     if ext.lower() in ['.png', '.jpg', '.jpeg', '.bmp', '.gif']: # Add more if needed
-                        print(f"Drag Enter Accepted: Found image {file_path}")
+                        print(f"INFO: Drag Enter Accepted: Found image {file_path}")
                         event.acceptProposedAction()
                         return # Accept as soon as one valid image is found
-        print("Drag Enter Ignored: No valid image URLs found.")
+        # print("Drag Enter Ignored: No valid image URLs found.") # Can comment this out too if desired
         event.ignore()
 
     def dragMoveEvent(self, event: QDragMoveEvent):
         """Update the visual indicator based on the current drag position."""
-        # print(f"Drag Move Event at: {event.position().toPoint()}") # Optional: Can be very noisy
         # Determine target and update indicator state
         self._update_drop_indicator(event.position().toPoint())
         event.acceptProposedAction() # Accept the move to allow dropEvent
@@ -285,13 +284,13 @@ class ButtonGridWidget(QFrame):
             event.ignore()
             return
 
-        print(f"Drop Accepted: Image path = {image_path}")
+        print(f"INFO: Drop Accepted: Image path = {image_path}")
         drop_pos = event.position().toPoint()
 
         # --- Determine Target ---
         # Use the same logic as dragMoveEvent used, based on the final position
         target_widget = self.childAt(drop_pos) # Find widget at final drop pos
-        print(f"Widget at drop position ({drop_pos}): {target_widget}")
+        # print(f"Widget at drop position ({drop_pos}): {target_widget}") # Debug print removed
 
         # Check if the target widget is one of our AspectRatioButtons
         # Note: This assumes AspectRatioButton is the direct child hit by childAt.
@@ -310,12 +309,12 @@ class ButtonGridWidget(QFrame):
         if card_widget:
             # --- Dropped ON an AspectRatioButton ---
             button_id = card_widget.button_id # Get the ID from the button
-            print(f"Drop detected ON card: {button_id}")
+            # print(f"Drop detected ON card: {button_id}") # Debug print removed
             self.image_dropped_on_card.emit(button_id, image_path)
             event.acceptProposedAction()
         else:
             # --- Dropped NOT on a specific card ---
-            print(f"Drop detected BETWEEN cards (or in empty space) at {drop_pos}. Image: {image_path}")
+            # print(f"Drop detected BETWEEN cards (or in empty space) at {drop_pos}. Image: {image_path}") # Debug print removed
             self.image_dropped_at_pos.emit(drop_pos, image_path)
             event.acceptProposedAction() # Accept for now, even if we don't emit perfectly yet
 
@@ -325,7 +324,7 @@ class ButtonGridWidget(QFrame):
 
     def dragLeaveEvent(self, event: QDragLeaveEvent):
         """Clear the visual indicator when the drag leaves the widget."""
-        print("Drag Leave Event")
+        # print("Drag Leave Event") # Debug print removed
         self._clear_indicator_state()
         self.update() # Trigger repaint to remove indicator
         event.accept()
@@ -333,7 +332,6 @@ class ButtonGridWidget(QFrame):
     def paintEvent(self, event: QPaintEvent):
         """Draw the widget and the drop indicator if active."""
         # First, draw the default widget content
-        # print("Paint Event triggered") # Optional: Can be noisy
         super().paintEvent(event)
 
         # Now, draw the indicator on top if needed
@@ -342,7 +340,7 @@ class ButtonGridWidget(QFrame):
 
         if self._indicator_rect:
             # Draw a highlight rectangle over a card
-            print(f"  Painting indicator rectangle: {self._indicator_rect}")
+            # print(f"  Painting indicator rectangle: {self._indicator_rect}") # Debug print removed
             highlight_color = QColor(0, 150, 255, 100) # Semi-transparent blue
             painter.setBrush(QBrush(highlight_color))
             painter.setPen(Qt.PenStyle.NoPen) # No border for the highlight itself
@@ -356,7 +354,7 @@ class ButtonGridWidget(QFrame):
 
         elif self._indicator_line_pos:
             # Draw an insertion line between cards
-            print(f"  Painting indicator line at: {self._indicator_line_pos}, height: {self._indicator_line_height}")
+            # print(f"  Painting indicator line at: {self._indicator_line_pos}, height: {self._indicator_line_height}") # Debug print removed
             line_color = QColor(0, 150, 255, 200) # Solid blue line
             pen = QPen(line_color, 3) # 3px thick line
             painter.setPen(pen)
@@ -375,7 +373,6 @@ class ButtonGridWidget(QFrame):
 
     def _update_drop_indicator(self, current_pos: QPoint):
         """Determines the drop target and updates indicator state, triggering repaint."""
-        # print(f"  Updating drop indicator for pos: {current_pos}") # Optional: Noisy
         # Reset state before checking
         new_rect = None
         new_line_pos = None
@@ -397,11 +394,11 @@ class ButtonGridWidget(QFrame):
 
         if card_widget:
             # --- Over a card: Set indicator rect ---
-            print(f"    Indicator target: Card {card_widget.button_id}")
+            # print(f"    Indicator target: Card {card_widget.button_id}") # Debug print removed
             # Get geometry relative to ButtonGridWidget
             card_pos_in_grid = card_widget.mapTo(self, QPoint(0, 0))
             new_rect = QRect(card_pos_in_grid, card_widget.size())
-            print(f"    Calculated card rect: {new_rect}")
+            # print(f"    Calculated card rect: {new_rect}") # Debug print removed
         else:
             # --- Between cards: Find closest gap and set indicator line ---
             # Iterate through the actual layout items to find LyricCardWidgets
@@ -410,7 +407,7 @@ class ButtonGridWidget(QFrame):
             min_dist_left = float('inf') # Distance from cursor to right edge of left card
             min_dist_right = float('inf') # Distance from cursor to left edge of right card
             target_row_geom = None # Store geometry of the row containing the cursor vertically
-            print(f"    Indicator target: Between cards (checking layout)") # Changed print message
+            # print(f"    Indicator target: Between cards (checking layout)") # Debug print removed
 
             layout = self.grid_layout
             for row in range(layout.rowCount()):
@@ -449,27 +446,28 @@ class ButtonGridWidget(QFrame):
 
             if closest_card_right_geom:
                  # Cursor is to the left of a card, draw line before it
-                 print(f"    Found closest card to the right with left edge at {closest_card_right_geom.left()}")
+                 # print(f"    Found closest card to the right with left edge at {closest_card_right_geom.left()}") # Debug print removed
                  # Draw line just to the left of this card
                  line_x = closest_card_right_geom.left() - spacing // 2 # Mid-spacing
                  new_line_pos = QPoint(line_x, closest_card_right_geom.top())
                  new_line_height = closest_card_right_geom.height()
-                 print(f"    Calculated line pos (before right card): {new_line_pos}, height: {new_line_height}")
+                 # print(f"    Calculated line pos (before right card): {new_line_pos}, height: {new_line_height}") # Debug print removed
             elif closest_card_left_geom:
                  # Cursor is to the right of a card, draw line after it
-                 print(f"    Found closest card to the left with right edge at {closest_card_left_geom.right()}")
+                 # print(f"    Found closest card to the left with right edge at {closest_card_left_geom.right()}") # Debug print removed
                  # Draw line just to the right of this card
                  line_x = closest_card_left_geom.right() + spacing // 2 # Mid-spacing
                  new_line_pos = QPoint(line_x, closest_card_left_geom.top())
                  new_line_height = closest_card_left_geom.height()
-                 print(f"    Calculated line pos: {new_line_pos}, height: {new_line_height}")
+                 # print(f"    Calculated line pos: {new_line_pos}, height: {new_line_height}") # Debug print removed
             else:
-                 print("    No card found immediately to the right in the same vertical range (or drop is far right).")
+                 pass # No line needed if no adjacent cards found in the row
+                 # print("    No adjacent card found in the same vertical range.") # Debug print removed
             # TODO: Add logic for dropping before the first card in a row, or near titles/separators
 
         # --- Update state only if changed and trigger repaint ---
         if self._indicator_rect != new_rect or self._indicator_line_pos != new_line_pos:
-            print(f"    Indicator state changed. Old: rect={self._indicator_rect}, line={self._indicator_line_pos}. New: rect={new_rect}, line={new_line_pos}. Triggering update.")
+            # print(f"    Indicator state changed. Old: rect={self._indicator_rect}, line={self._indicator_line_pos}. New: rect={new_rect}, line={new_line_pos}. Triggering update.") # Removed final debug print
             self._indicator_rect = new_rect
             self._indicator_line_pos = new_line_pos
             self._indicator_line_height = new_line_height

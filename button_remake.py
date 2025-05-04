@@ -111,6 +111,11 @@ class ContentAreaWidget(QWidget):
             shadow_offset_x = shadow_settings.get("offset_x", 3)
             shadow_offset_y = shadow_settings.get("offset_y", 3)
 
+            # --- Apply Force Caps ---
+            force_caps = font_settings.get('force_all_caps', False)
+            text_to_draw = self.lyric_text.upper() if force_caps else self.lyric_text
+            # --- End Apply Force Caps ---
+
             # --- Calculate Scaled Font Size (Copied) ---
             actual_font_size_pt = 10
             if isinstance(font_size_setting, (int, float)):
@@ -183,21 +188,21 @@ class ContentAreaWidget(QWidget):
             if shadow_enabled:
                 shadow_rect = final_draw_rect.translated(shadow_offset_x, shadow_offset_y)
                 painter.setPen(QColor(shadow_color_hex))
-                painter.drawText(shadow_rect, self.lyric_text, text_option)
+                painter.drawText(shadow_rect, text_to_draw, text_option) # Use text_to_draw
             if outline_enabled and outline_width > 0:
                 painter.setPen(QColor(outline_color_hex))
                 for dx in range(-outline_width, outline_width + 1, outline_width):
                      for dy in range(-outline_width, outline_width + 1, outline_width):
                          if dx != 0 or dy != 0:
                              offset_rect = final_draw_rect.translated(dx, dy)
-                             painter.drawText(offset_rect, self.lyric_text, text_option)
+                             painter.drawText(offset_rect, text_to_draw, text_option) # Use text_to_draw
             painter.setPen(QColor(font_color_hex))
-            painter.drawText(final_draw_rect, self.lyric_text, text_option)
+            painter.drawText(final_draw_rect, text_to_draw, text_option) # Use text_to_draw
 
 
 class InfoBarWidget(QWidget):
     """Widget for the bottom info bar (slide number, section name)."""
-    def __init__(self, slide_number=0, section_name="", bar_color=QColor(0, 120, 215), parent=None):
+    def __init__(self, slide_number=0, section_name="", template_settings=None, bar_color=QColor(0, 120, 215), parent=None): # Added template_settings
         super().__init__(parent)
         self._slide_number = slide_number
         self.section_name = section_name
@@ -205,11 +210,17 @@ class InfoBarWidget(QWidget):
         # Set a fixed height based on the desired ratio (e.g., 1/6th of 135)
         self.setFixedHeight(22) # 135 / 6 = 22.5, round down or up
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.template_settings = template_settings if template_settings else {} # Store template settings
 
     def set_data(self, slide_number, section_name):
         self._slide_number = slide_number
         self.section_name = section_name
+        # Apply caps immediately if needed when setting data
+        # force_caps = self.template_settings.get('font', {}).get('force_all_caps', False)
+        # display_name = self.section_name.upper() if force_caps else self.section_name
+        # Update the label text (assuming a label exists, otherwise update drawing logic)
         self.update()
+
 
     def set_bar_color(self, color):
         self._bar_color = color
@@ -246,8 +257,13 @@ class InfoBarWidget(QWidget):
         number_font = QFont("Arial", number_font_size, QFont.Weight.Bold)
         painter.setFont(number_font)
 
+        # --- Apply Force Caps to Section Name ---
+        force_caps = self.template_settings.get('font', {}).get('force_all_caps', False)
+        display_name = self.section_name.upper() if force_caps else self.section_name
+        # --- End Apply Force Caps ---
+
         # Combine slide number and section name
-        number_text = f"{self._slide_number} - {self.section_name}"
+        number_text = f"{self._slide_number} - {display_name}" # Use display_name
         number_margin = 8 # Margin from the left edge
 
         # Define the rectangle within the blue bar for the text
@@ -255,6 +271,11 @@ class InfoBarWidget(QWidget):
                                bar_rect.width() - number_margin * 2, bar_rect.height())
         # Draw the text, left-aligned and vertically centered
         painter.drawText(text_draw_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, number_text)
+
+    def update_template_settings(self, new_settings):
+        """Updates the template settings and triggers a repaint."""
+        self.template_settings = new_settings if new_settings else {}
+        self.update() # Trigger repaint to potentially update caps
 
 
 class LyricCardWidget(QWidget):
@@ -264,6 +285,7 @@ class LyricCardWidget(QWidget):
     edit_song_requested = Signal(str) # Emits the song_key
     # Define a signal to request editing this specific section
     edit_section_requested = Signal(str) # Emits the button_id (songkey_sectionname)
+    open_template_editor_requested = Signal() # Signal to request opening the template editor
     delete_section_requested = Signal(str) # Emits button_id
 
     # Add card_background_color parameter
@@ -301,7 +323,8 @@ class LyricCardWidget(QWidget):
 
         self.info_bar = InfoBarWidget(
             slide_number=self._slide_number,
-            section_name=section_name, # Pass section name here
+            section_name=section_name,
+            template_settings=self.template_settings, # Pass template settings
             bar_color=self._bar_color,
             parent=self
         )
@@ -315,6 +338,13 @@ class LyricCardWidget(QWidget):
 
         # --- Set Fixed Size for the entire card ---
         self.setFixedSize(self.sizeHint()) # Use the fixed size hint
+
+    def update_template_settings(self, new_settings):
+        """Updates template settings for this card and its children."""
+        self.template_settings = new_settings if new_settings else {}
+        # Pass updated settings down to children that need them
+        self.content_area.set_template_settings(self.template_settings)
+        self.info_bar.update_template_settings(self.template_settings)
 
 
     def set_slide_number(self, number):
@@ -432,7 +462,7 @@ class LyricCardWidget(QWidget):
         menu.addAction(edit_template_action)
         
         # --- Add Delete Section Action ---
-        action_delete_section = QAction("Delete Section", self)
+        action_delete_section = QAction("Delete Slide", self)
         action_delete_section.triggered.connect(lambda: self.delete_section_requested.emit(self.button_id))
         menu.addAction(action_delete_section)
         # Show the menu at the cursor's global position
