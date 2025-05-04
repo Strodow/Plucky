@@ -94,6 +94,7 @@ class TemplatePreviewWidget(QWidget):
 
         font_color_hex = self.template_data.get("color", "#FFFFFF") # Default white
         vertical_alignment_setting = self.template_data.get("vertical_alignment", "top") # Default top align
+        force_caps = self.template_data.get("force_caps", False) # Get force_caps setting
 
         # --- Calculate Box Width in Pixels ---
         box_width_pixels = preview_width # Default to full width
@@ -171,6 +172,9 @@ class TemplatePreviewWidget(QWidget):
 
         # --- Draw Sample Text ---
         if self.sample_text and bounding_rect.isValid():
+            # --- Apply Force Caps ---
+            text_to_draw = self.sample_text.upper() if force_caps else self.sample_text
+            # --- End Apply Force Caps --
             font = QFont()
             # Attempt to set font family
             font.setFamily(font_family)
@@ -253,7 +257,7 @@ class TemplatePreviewWidget(QWidget):
             if shadow_enabled:
                 shadow_rect = bounding_rect.translated(shadow_offset_x, shadow_offset_y)
                 painter.setPen(QColor(shadow_color_hex))
-                painter.drawText(shadow_rect, self.sample_text, text_option)
+                painter.drawText(shadow_rect, text_to_draw, text_option) # Use text_to_draw
 
             # 2. Draw Outline (if enabled) - by drawing multiple offset versions
             if outline_enabled and outline_width > 0:
@@ -263,11 +267,11 @@ class TemplatePreviewWidget(QWidget):
                      for dy in range(-outline_width, outline_width + 1, outline_width):
                          if dx != 0 or dy != 0: # Don't redraw at the exact center
                              offset_rect = bounding_rect.translated(dx, dy)
-                             painter.drawText(offset_rect, self.sample_text, text_option)
+                             painter.drawText(offset_rect, text_to_draw, text_option) # Use text_to_draw
 
             # 3. Draw Main Text (on top)
             painter.setPen(QColor(font_color_hex)) # Set main text color
-            painter.drawText(bounding_rect, self.sample_text, text_option)
+            painter.drawText(bounding_rect, text_to_draw, text_option) # Use text_to_draw
 
             # **If clipping was enabled, remember to clear it**
             # painter.setClipping(False)
@@ -347,13 +351,17 @@ class TemplateEditorWindow(QDialog):
         self.font_italic_check.toggled.connect(lambda checked: self._update_setting(['font', 'italic'], checked))
         self.font_underline_check = QCheckBox("Underline")
         self.font_underline_check.toggled.connect(lambda checked: self._update_setting(['font', 'underline'], checked))
-
+        # --- Add Force Caps Checkbox ---
+        self.force_caps_check = QCheckBox("Force Uppercase")
+        self.force_caps_check.toggled.connect(lambda checked: self._update_setting(['force_caps'], checked))
+        
         font_layout.addRow("Family:", self.font_family_combo)
         font_layout.addRow("Size:", self.font_size_input)
         font_style_layout = QHBoxLayout()
         font_style_layout.addWidget(self.font_bold_check)
         font_style_layout.addWidget(self.font_italic_check)
         font_style_layout.addWidget(self.font_underline_check)
+        font_style_layout.addWidget(self.force_caps_check) # Add to layout
         font_layout.addRow("Style:", font_style_layout)
         settings_layout.addWidget(font_group)
 
@@ -601,6 +609,7 @@ class TemplateEditorWindow(QDialog):
             self.font_bold_check.setChecked(font_settings.get("bold", False))
             self.font_italic_check.setChecked(font_settings.get("italic", False))
             self.font_underline_check.setChecked(font_settings.get("underline", False))
+            self.force_caps_check.setChecked(self.template_data.get("force_caps", False)) # Load force_caps setting
 
             # Color
             main_color = self.template_data.get("color", "#FFFFFF")

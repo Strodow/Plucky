@@ -34,6 +34,7 @@ class LyricPreviewWidget(QWidget):
         max_width_setting = self.template_settings.get("max_width", "100%") # Get max width
         outline_settings = self.template_settings.get("outline", {"enabled": False})
         shadow_settings = self.template_settings.get("shadow", {"enabled": False})
+        force_caps = self.template_settings.get("force_caps", False) # Get force_caps setting
 
         widget_width = self.width()
         widget_height = self.height()
@@ -61,8 +62,12 @@ class LyricPreviewWidget(QWidget):
             except ValueError:
                 pass # Use default preview_max_width
 
+        # --- Apply Force Caps ---
+        text_to_draw = self.lyric_text.upper() if force_caps else self.lyric_text
+        # --- End Apply Force Caps ---
+
         # --- Calculate Text Bounding Rect based on Wrapping ---
-        text_rect_size = font_metrics.boundingRect(0, 0, preview_max_width, widget_height * 5, Qt.TextFlag.TextWordWrap, self.lyric_text)
+        text_rect_size = font_metrics.boundingRect(0, 0, preview_max_width, widget_height * 5, Qt.TextFlag.TextWordWrap, text_to_draw) # Use text_to_draw
 
         # --- Calculate Drawing Position based on Alignment ---
         draw_rect_x = margin
@@ -102,7 +107,7 @@ class LyricPreviewWidget(QWidget):
             shadow_offset_y = max(1, shadow_settings.get("offset_y", 3) // 2)
             painter.setPen(shadow_color)
             shadow_rect = QRect(drawing_rect).translated(shadow_offset_x, shadow_offset_y)
-            painter.drawText(shadow_rect, text_alignment_flags, self.lyric_text)
+            painter.drawText(shadow_rect, text_alignment_flags, text_to_draw) # Use text_to_draw
 
         # --- Draw Outline (Simplified) ---
         if outline_settings.get("enabled", False):
@@ -112,14 +117,14 @@ class LyricPreviewWidget(QWidget):
             outline_pen = QPen(outline_color, outline_width * 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(outline_pen)
-            painter.drawText(drawing_rect, text_alignment_flags, self.lyric_text)
+            painter.drawText(drawing_rect, text_alignment_flags, text_to_draw) # Use text_to_draw
             painter.setPen(original_pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
 
         # --- Draw Main Text ---
         painter.setPen(color)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawText(drawing_rect, text_alignment_flags, self.lyric_text)
+        painter.drawText(drawing_rect, text_alignment_flags, text_to_draw) # Use text_to_draw
 
 
 # --- Draggable Button Class ---

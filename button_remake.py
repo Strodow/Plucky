@@ -110,6 +110,7 @@ class ContentAreaWidget(QWidget):
             shadow_color_hex = shadow_settings.get("color", "#000000")
             shadow_offset_x = shadow_settings.get("offset_x", 3)
             shadow_offset_y = shadow_settings.get("offset_y", 3)
+            force_caps = self.template_settings.get("force_caps", False) # Get force_caps setting
 
             # --- Calculate Scaled Font Size (Copied) ---
             actual_font_size_pt = 10
@@ -164,11 +165,15 @@ class ContentAreaWidget(QWidget):
             if h_align == Qt.AlignmentFlag.AlignLeft: text_flags |= Qt.AlignmentFlag.AlignLeft
             elif h_align == Qt.AlignmentFlag.AlignRight: text_flags |= Qt.AlignmentFlag.AlignRight
             else: text_flags |= Qt.AlignmentFlag.AlignHCenter
+
+            # --- Apply Force Caps ---
+            text_to_draw = self.lyric_text.upper() if force_caps else self.lyric_text
+            # --- End Apply Force Caps ---
+
             calculation_rect = QRect(0, 0, content_rect.width(), 9999)
-            text_bounding_rect = fm.boundingRect(calculation_rect, text_flags, self.lyric_text)
+            text_bounding_rect = fm.boundingRect(calculation_rect, text_flags, text_to_draw) # Use text_to_draw for calculation
             text_height = text_bounding_rect.height()
             text_width = text_bounding_rect.width()
-
             final_top_y = anchor_y
             if vertical_alignment_setting == "center": final_top_y = anchor_y - text_height / 2
             elif vertical_alignment_setting == "bottom": final_top_y = anchor_y - text_height
@@ -183,16 +188,16 @@ class ContentAreaWidget(QWidget):
             if shadow_enabled:
                 shadow_rect = final_draw_rect.translated(shadow_offset_x, shadow_offset_y)
                 painter.setPen(QColor(shadow_color_hex))
-                painter.drawText(shadow_rect, self.lyric_text, text_option)
+                painter.drawText(shadow_rect, text_to_draw, text_option) # Use text_to_draw
             if outline_enabled and outline_width > 0:
                 painter.setPen(QColor(outline_color_hex))
                 for dx in range(-outline_width, outline_width + 1, outline_width):
                      for dy in range(-outline_width, outline_width + 1, outline_width):
                          if dx != 0 or dy != 0:
                              offset_rect = final_draw_rect.translated(dx, dy)
-                             painter.drawText(offset_rect, self.lyric_text, text_option)
+                             painter.drawText(offset_rect, text_to_draw, text_option) # Use text_to_draw
             painter.setPen(QColor(font_color_hex))
-            painter.drawText(final_draw_rect, self.lyric_text, text_option)
+            painter.drawText(final_draw_rect, text_to_draw, text_option) # Use text_to_draw
 
 
 class InfoBarWidget(QWidget):
