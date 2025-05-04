@@ -4,8 +4,16 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QToolButton, QLabel, QFrame,
     QSizePolicy, QSpacerItem, QApplication
 )
-from PySide6.QtGui import QPixmap, QFont, QPainter, QColor
-from PySide6.QtCore import Qt, QSize, Signal, QRect
+from PySide6.QtGui import QPixmap, QFont, QPainter, QColor, QDragEnterEvent, QDropEvent, QDragMoveEvent, QPaintEvent, QPen, QBrush, QDragLeaveEvent # Import event types and drawing classes
+from PySide6.QtCore import Qt, QSize, Signal, QRect, QPoint # Import Signal, QPoint
+import os # To check file extensions
+
+# --- Local Import for Type Checking ---
+# Use a try-except block in case this file is run standalone or import structure changes
+try:
+    from button_remake import LyricCardWidget
+except ImportError:
+    LyricCardWidget = None # Define as None if import fails, check before use
 
 # --- Individual 16x9 Button Widget ---
 class AspectRatioButton(QToolButton):
@@ -139,8 +147,12 @@ class AspectRatioButton(QToolButton):
 
 # --- Container Widget for Buttons ---
 class ButtonGridWidget(QFrame):
-    # Signal to indicate a button was clicked and pass the lyric data
+    # Signal to indicate a button was clicked (original)
     button_clicked_with_lyric = Signal(str, str)
+
+    # --- Signals for Drag and Drop ---
+    image_dropped_on_card = Signal(str, str) # Emits: button_id, image_path
+    image_dropped_at_pos = Signal(QPoint, str) # Emits: drop_position (relative to ButtonGridWidget), image_path
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -157,6 +169,14 @@ class ButtonGridWidget(QFrame):
 
         self.setStyleSheet("QFrame { background-color: #333; border: 1px solid #555; }")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # --- Enable Drag and Drop ---
+        self.setAcceptDrops(True)
+
+        # --- Indicator State for Drag and Drop ---
+        self._indicator_rect = None # QRect of the card to highlight
+        self._indicator_line_pos = None # QPoint for insertion line (x, y of top point)
+        self._indicator_line_height = 0 # Height for the insertion line
 
         # Note: We are not dynamically clearing and repopulating the grid in this version.
 
@@ -219,3 +239,238 @@ class ButtonGridWidget(QFrame):
         print(f"Button clicked internally: {button_id}")
         self.button_clicked_with_lyric.emit(button_id, lyric_text)
 
+    # --- Drag and Drop Event Handlers ---
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Accept the drag event if it contains URLs pointing to image files."""
+        mime_data = event.mimeData()
+        if mime_data.hasUrls():
+            # Check if at least one URL is an image file
+            for url in mime_data.urls():
+                if url.isLocalFile():
+                    file_path = url.toLocalFile()
+                    _, ext = os.path.splitext(file_path)
+                    if ext.lower() in ['.png', '.jpg', '.jpeg', '.bmp', '.gif']: # Add more if needed
+                        print(f"Drag Enter Accepted: Found image {file_path}")
+                        event.acceptProposedAction()
+                        return # Accept as soon as one valid image is found
+        print("Drag Enter Ignored: No valid image URLs found.")
+        event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent):
+        """Update the visual indicator based on the current drag position."""
+        # print(f"Drag Move Event at: {event.position().toPoint()}") # Optional: Can be very noisy
+        # Determine target and update indicator state
+        self._update_drop_indicator(event.position().toPoint())
+        event.acceptProposedAction() # Accept the move to allow dropEvent
+
+    def dropEvent(self, event: QDropEvent):
+        """Handle the drop event, determine target, and emit signals."""
+        mime_data = event.mimeData()
+        if not mime_data.hasUrls():
+            event.ignore()
+            return
+
+        image_path = None
+        for url in mime_data.urls():
+            if url.isLocalFile():
+                file_path = url.toLocalFile()
+                _, ext = os.path.splitext(file_path)
+                if ext.lower() in ['.png', '.jpg', '.jpeg', '.bmp', '.gif']:
+                    image_path = file_path
+                    break # Use the first valid image found
+
+        if not image_path:
+            print("Drop Ignored: No valid image file path found in dropped URLs.")
+            event.ignore()
+            return
+
+        print(f"Drop Accepted: Image path = {image_path}")
+        drop_pos = event.position().toPoint()
+
+        # --- Determine Target ---
+        # Use the same logic as dragMoveEvent used, based on the final position
+        target_widget = self.childAt(drop_pos) # Find widget at final drop pos
+        print(f"Widget at drop position ({drop_pos}): {target_widget}")
+
+        # Check if the target widget is one of our AspectRatioButtons
+        # Note: This assumes AspectRatioButton is the direct child hit by childAt.
+        # If the button has internal widgets (like the QLabel), childAt might return those.
+        # A more robust check might involve traversing up the parent hierarchy like before.
+
+        card_widget = None
+        widget_at_pos = target_widget
+        while widget_at_pos is not None and widget_at_pos is not self:
+            # Check if the widget is an AspectRatioButton instance
+            if isinstance(widget_at_pos, AspectRatioButton):
+                card_widget = widget_at_pos
+                break
+            widget_at_pos = widget_at_pos.parentWidget() # Move up the hierarchy
+
+        if card_widget:
+            # --- Dropped ON an AspectRatioButton ---
+            button_id = card_widget.button_id # Get the ID from the button
+            print(f"Drop detected ON card: {button_id}")
+            self.image_dropped_on_card.emit(button_id, image_path)
+            event.acceptProposedAction()
+        else:
+            # --- Dropped NOT on a specific card ---
+            print(f"Drop detected BETWEEN cards (or in empty space) at {drop_pos}. Image: {image_path}")
+            self.image_dropped_at_pos.emit(drop_pos, image_path)
+            event.acceptProposedAction() # Accept for now, even if we don't emit perfectly yet
+
+        # --- Clear indicator after drop ---
+        self._clear_indicator_state()
+        self.update() # Trigger repaint to remove indicator
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent):
+        """Clear the visual indicator when the drag leaves the widget."""
+        print("Drag Leave Event")
+        self._clear_indicator_state()
+        self.update() # Trigger repaint to remove indicator
+        event.accept()
+
+    def paintEvent(self, event: QPaintEvent):
+        """Draw the widget and the drop indicator if active."""
+        # First, draw the default widget content
+        # print("Paint Event triggered") # Optional: Can be noisy
+        super().paintEvent(event)
+
+        # Now, draw the indicator on top if needed
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if self._indicator_rect:
+            # Draw a highlight rectangle over a card
+            print(f"  Painting indicator rectangle: {self._indicator_rect}")
+            highlight_color = QColor(0, 150, 255, 100) # Semi-transparent blue
+            painter.setBrush(QBrush(highlight_color))
+            painter.setPen(Qt.PenStyle.NoPen) # No border for the highlight itself
+            painter.drawRect(self._indicator_rect)
+            # Optionally draw a border around it too
+            border_color = QColor(0, 150, 255, 200)
+            pen = QPen(border_color, 2) # 2px solid border
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self._indicator_rect)
+
+        elif self._indicator_line_pos:
+            # Draw an insertion line between cards
+            print(f"  Painting indicator line at: {self._indicator_line_pos}, height: {self._indicator_line_height}")
+            line_color = QColor(0, 150, 255, 200) # Solid blue line
+            pen = QPen(line_color, 3) # 3px thick line
+            painter.setPen(pen)
+            x = self._indicator_line_pos.x()
+            y = self._indicator_line_pos.y()
+            height = self._indicator_line_height
+            painter.drawLine(x, y, x, y + height)
+
+        painter.end()
+
+    def _clear_indicator_state(self):
+        """Resets the indicator state variables."""
+        self._indicator_rect = None
+        self._indicator_line_pos = None
+        self._indicator_line_height = 0
+
+    def _update_drop_indicator(self, current_pos: QPoint):
+        """Determines the drop target and updates indicator state, triggering repaint."""
+        # print(f"  Updating drop indicator for pos: {current_pos}") # Optional: Noisy
+        # Reset state before checking
+        new_rect = None
+        new_line_pos = None
+        new_line_height = 0
+
+        # --- Check LyricCardWidget is importable ---
+        if not LyricCardWidget:
+             print("Warning: LyricCardWidget not imported, cannot update drop indicator.")
+             return # Cannot proceed without the class definition
+
+        target_widget = self.childAt(current_pos)
+        card_widget = None
+        widget_at_pos = target_widget
+        while widget_at_pos is not None and widget_at_pos is not self:
+            if isinstance(widget_at_pos, AspectRatioButton):
+                card_widget = widget_at_pos
+                break
+            widget_at_pos = widget_at_pos.parentWidget()
+
+        if card_widget:
+            # --- Over a card: Set indicator rect ---
+            print(f"    Indicator target: Card {card_widget.button_id}")
+            # Get geometry relative to ButtonGridWidget
+            card_pos_in_grid = card_widget.mapTo(self, QPoint(0, 0))
+            new_rect = QRect(card_pos_in_grid, card_widget.size())
+            print(f"    Calculated card rect: {new_rect}")
+        else:
+            # --- Between cards: Find closest gap and set indicator line ---
+            # Iterate through the actual layout items to find LyricCardWidgets
+            closest_card_left_geom = None
+            closest_card_right_geom = None
+            min_dist_left = float('inf') # Distance from cursor to right edge of left card
+            min_dist_right = float('inf') # Distance from cursor to left edge of right card
+            target_row_geom = None # Store geometry of the row containing the cursor vertically
+            print(f"    Indicator target: Between cards (checking layout)") # Changed print message
+
+            layout = self.grid_layout
+            for row in range(layout.rowCount()):
+                row_container_item = layout.itemAtPosition(row, 0)
+                if row_container_item and isinstance(row_container_item.widget(), QWidget):
+                    row_widget = row_container_item.widget()
+                    row_layout = row_widget.layout()
+                    if isinstance(row_layout, QHBoxLayout):
+                        # Check if cursor is vertically within this row's container
+                        row_container_geom = row_container_item.geometry()
+                        if row_container_geom.top() <= current_pos.y() <= row_container_geom.bottom():
+                            target_row_geom = row_container_geom # Found the target row vertically
+                            for i in range(row_layout.count()):
+                                item = row_layout.itemAt(i)
+                                if item and isinstance(item.widget(), LyricCardWidget):
+                                    card = item.widget()
+                                    card_pos = card.mapTo(self, QPoint(0,0))
+                                    card_rect = QRect(card_pos, card.size())
+
+                                    # Check if cursor is left of this card
+                                    dist_right = card_rect.left() - current_pos.x()
+                                    if 0 < dist_right < min_dist_right:
+                                        min_dist_right = dist_right
+                                        closest_card_right_geom = card_rect # This card is the closest one to the right
+
+                                    # Check if cursor is right of this card
+                                    dist_left = current_pos.x() - card_rect.right()
+                                    if 0 < dist_left < min_dist_left:
+                                        min_dist_left = dist_left
+                                        closest_card_left_geom = card_rect # This card is the closest one to the left
+                            # Break after processing the target row
+                            break
+
+            # --- Determine line position based on findings ---
+            spacing = self.grid_layout.spacing() if self.grid_layout else 10
+
+            if closest_card_right_geom:
+                 # Cursor is to the left of a card, draw line before it
+                 print(f"    Found closest card to the right with left edge at {closest_card_right_geom.left()}")
+                 # Draw line just to the left of this card
+                 line_x = closest_card_right_geom.left() - spacing // 2 # Mid-spacing
+                 new_line_pos = QPoint(line_x, closest_card_right_geom.top())
+                 new_line_height = closest_card_right_geom.height()
+                 print(f"    Calculated line pos (before right card): {new_line_pos}, height: {new_line_height}")
+            elif closest_card_left_geom:
+                 # Cursor is to the right of a card, draw line after it
+                 print(f"    Found closest card to the left with right edge at {closest_card_left_geom.right()}")
+                 # Draw line just to the right of this card
+                 line_x = closest_card_left_geom.right() + spacing // 2 # Mid-spacing
+                 new_line_pos = QPoint(line_x, closest_card_left_geom.top())
+                 new_line_height = closest_card_left_geom.height()
+                 print(f"    Calculated line pos: {new_line_pos}, height: {new_line_height}")
+            else:
+                 print("    No card found immediately to the right in the same vertical range (or drop is far right).")
+            # TODO: Add logic for dropping before the first card in a row, or near titles/separators
+
+        # --- Update state only if changed and trigger repaint ---
+        if self._indicator_rect != new_rect or self._indicator_line_pos != new_line_pos:
+            print(f"    Indicator state changed. Old: rect={self._indicator_rect}, line={self._indicator_line_pos}. New: rect={new_rect}, line={new_line_pos}. Triggering update.")
+            self._indicator_rect = new_rect
+            self._indicator_line_pos = new_line_pos
+            self._indicator_line_height = new_line_height
+            self.update() # Request repaint

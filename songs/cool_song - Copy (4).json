@@ -1,23 +1,22 @@
 {
-    "title": "My Awesome Song",
-    "sections": [
-      {
-        "name": "BG",
-        "lyrics": "",
-        "background_image": "backgrounds\\background.png"
-      },
-      {
-        "name": "Chorus",
-        "lyrics": "Sing it loud\nThis is the chorus!"
-      },
-      {
-        "name": "Verse 2",
-        "lyrics": "Another verse here\nWith different words."
-      },
-      {
-        "name": "Bridge",
-        "lyrics": "The bridge section..."
-      }
-    ]
-  }
-  
+  "title": "My Awesome Song",
+  "sections": [
+    {
+      "name": "BG",
+      "lyrics": "",
+      "background_image": "backgrounds\\background.png"
+    },
+    {
+      "name": "Chorus",
+      "lyrics": "Sing it loud\nThis is the chorus!"
+    },
+    {
+      "name": "Verse 2",
+      "lyrics": "Another verse here\nWith different words."
+    },
+    {
+      "name": "Bridge",
+      "lyrics": "The bridge section..."
+    }
+  ]
+}

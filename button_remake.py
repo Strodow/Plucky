@@ -264,6 +264,7 @@ class LyricCardWidget(QWidget):
     edit_song_requested = Signal(str) # Emits the song_key
     # Define a signal to request editing this specific section
     edit_section_requested = Signal(str) # Emits the button_id (songkey_sectionname)
+    delete_section_requested = Signal(str) # Emits button_id
 
     # Add card_background_color parameter
     def __init__(self, button_id="", slide_number=0, section_name="", song_title="", lyrics="", background_image_path=None, template_settings=None, card_background_color="#000000", parent=None): # Added song_title
@@ -429,6 +430,11 @@ class LyricCardWidget(QWidget):
         edit_template_action = QAction("Edit Template", self)
         edit_template_action.triggered.connect(self._handle_edit_template) # Connect to a new handler
         menu.addAction(edit_template_action)
+        
+        # --- Add Delete Section Action ---
+        action_delete_section = QAction("Delete Section", self)
+        action_delete_section.triggered.connect(lambda: self.delete_section_requested.emit(self.button_id))
+        menu.addAction(action_delete_section)
         # Show the menu at the cursor's global position
         menu.exec(event.globalPos())
 

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QFileDialog, QSlider,
     QSplitter, QMessageBox # Import QSplitter and QMessageBox
 )
-from PySide6.QtCore import Qt, QMimeData, QRect, QSize, QEvent # Import QSize, QEvent
+from PySide6.QtCore import Qt, QMimeData, QRect, QSize, QEvent, QPoint # Import QSize, QEvent, QPoint
 from PySide6.QtGui import QFont, QPixmap, QColor, QPainter # Removed QDrag, QMouseEvent, Added QPainter for splash
 
 # --- Local Imports ---
@@ -237,6 +237,9 @@ class MainWindow(QMainWindow):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setWidget(self.button_area)
+        # --- Connect Drag and Drop Signal ---
+        self.button_area.image_dropped_on_card.connect(self._handle_image_dropped_on_card)
+        self.button_area.image_dropped_at_pos.connect(self._handle_image_dropped_at_pos) # Connect new signal
 
         # --- Splitter for Song List and Button Grid ---
         self.central_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -449,6 +452,8 @@ class MainWindow(QMainWindow):
                         new_button.edit_song_requested.connect(self._open_song_editor)
                         # Connect the edit section signal from the card
                         new_button.edit_section_requested.connect(self._open_section_editor)
+                        # Connect the delete section signal from the card
+                        new_button.delete_section_requested.connect(self._handle_delete_section_requested)
 
                         # Store the widget reference in the map
                         self._button_id_to_widget_map[button_id] = new_button
@@ -643,6 +648,173 @@ class MainWindow(QMainWindow):
         # Set focus back to the main window after any click handling
         # to ensure arrow key navigation keeps working.
         self.setFocus()
+
+    def _handle_image_dropped_on_card(self, button_id, image_path):
+        """Handles the signal emitted when an image is dropped onto a LyricCardWidget."""
+        print(f"Image dropped on card: ID={button_id}, Path={image_path}")
+
+        # --- Find the section data ---
+        try:
+            song_key, section_name_key = button_id.split('__', 1)
+        except ValueError:
+            print(f"Error: Could not parse song_key/section_name from button_id '{button_id}' during drop.")
+            QMessageBox.warning(self, "Drop Error", f"Could not identify section from ID '{button_id}'.")
+            return
+
+        if song_key not in self.songs_data or "sections" not in self.songs_data[song_key]:
+            print(f"Error: Song data for '{song_key}' not found or invalid during drop.")
+            QMessageBox.warning(self, "Drop Error", f"Could not find song data for key '{song_key}'.")
+            return
+
+        target_section_data = None
+        section_index = -1
+        for idx, section in enumerate(self.songs_data[song_key]["sections"]):
+            current_section_name_key = section.get("name", f"Section {idx+1}").replace(' ', '_').replace('-', '_').lower()
+            if current_section_name_key == section_name_key:
+                target_section_data = section
+                section_index = idx
+                break
+
+        if target_section_data is None:
+            print(f"Error: Section '{section_name_key}' not found within song '{song_key}' during drop.")
+            QMessageBox.warning(self, "Drop Error", f"Could not find section data for '{button_id}'.")
+            return
+
+        # --- Update the section data ---
+        self.songs_data[song_key]["sections"][section_index]["background_image"] = image_path
+
+        # --- Save updated song data to JSON file ---
+        song_file_path = os.path.join("songs", f"{song_key}.json")
+        try:
+            with open(song_file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.songs_data[song_key], f, indent=2, ensure_ascii=False)
+            print(f"Successfully saved updated background image path to {song_file_path}")
+        except Exception as e:
+            print(f"Error saving updated song file {song_file_path}: {e}")
+            QMessageBox.warning(self, "Save Error", f"Could not save background image change to {song_file_path}:\n{e}")
+            # Optionally revert the change in self.songs_data if save fails
+
+        # --- Update the corresponding LyricCardWidget UI ---
+        target_widget = self._button_id_to_widget_map.get(button_id)
+        if target_widget:
+            target_widget.content_area.set_background(image_path) # Update background image on the card
+            # If this card was the last clicked, update the main display too
+            if self._last_clicked_button == target_widget:
+                self.lyric_window.set_background_image(image_path)
+            print(f"Updated UI background for card {button_id}")
+
+    def _handle_image_dropped_at_pos(self, drop_pos: QPoint, image_path: str):
+        """Handles the signal emitted when an image is dropped between cards or in empty space."""
+        print(f"Image dropped at position {drop_pos} (relative to grid area). Path: {image_path}")
+
+        target_song_key = None
+        preceding_button_id = None # ID of the card *before* the insertion point
+        insert_at_start_of_song = False
+
+        # --- Iterate through the grid layout to find the drop location ---
+        layout = self.button_area.grid_layout
+        last_processed_song_key = None
+        last_processed_button_id = None
+
+        for row in range(layout.rowCount()):
+            # Check for song title label first (spans all columns)
+            title_item = layout.itemAtPosition(row, 0)
+            if title_item and isinstance(title_item.widget(), QLabel):
+                # Found a song title label
+                # Extract song key - this relies on how titles are added in _populate_button_grid
+                # We need to find the corresponding song key from self.songs_data based on title text
+                title_text = title_item.widget().text()
+                current_song_key = None
+                for sk, s_data in self.songs_data.items():
+                    if s_data.get("title", sk) == title_text:
+                        current_song_key = sk
+                        break
+                if current_song_key:
+                    last_processed_song_key = current_song_key
+                    last_processed_button_id = None # Reset last button ID for new song
+                    print(f"  Processing row {row}, identified song: {last_processed_song_key} ('{title_text}')")
+
+                title_geom = title_item.geometry()
+                if title_geom.contains(drop_pos):
+                    print(f"  Drop detected near title: {title_text}")
+                    target_song_key = last_processed_song_key
+                    insert_at_start_of_song = True
+                    preceding_button_id = None # Insert at the beginning
+                    break # Found target
+
+            # Check for row container widget (also spans columns)
+            row_container_item = layout.itemAtPosition(row, 0) # Assuming row container is at col 0
+            if row_container_item and isinstance(row_container_item.widget(), QWidget):
+                row_widget = row_container_item.widget()
+                row_layout = row_widget.layout()
+                if isinstance(row_layout, QHBoxLayout):
+                    row_geom = row_container_item.geometry()
+                    print(f"  Checking row {row} container (geom: {row_geom}) against drop_pos {drop_pos}")
+                    # --- Check only vertical bounds for row context ---
+                    if row_geom.top() <= drop_pos.y() <= row_geom.bottom():
+                        print(f"  Drop is within vertical bounds of row {row}")
+                        # Drop is vertically within this row of buttons. Check horizontally.
+                        current_row_song_key = last_processed_song_key # Store song key for this specific row
+                        target_song_key = last_processed_song_key # Song context is the last title seen
+                        found_insertion_point_in_row = False
+                        for i in range(row_layout.count()):
+                            item = row_layout.itemAt(i)
+                            if item and isinstance(item.widget(), LyricCardWidget):
+                                card_widget = item.widget()
+                                # Map card's geometry relative to the button_area
+                                card_rect_in_grid = card_widget.geometry()
+                                card_pos_in_grid = card_widget.mapTo(self.button_area, QPoint(0,0))
+                                card_global_rect = QRect(card_pos_in_grid, card_rect_in_grid.size())
+
+                                print(f"    Checking card {card_widget.button_id} (geom relative to grid: {card_global_rect})")
+
+                                # Check if drop is to the left of this card
+                                if drop_pos.x() < card_global_rect.left():
+                                    print(f"    Drop is LEFT of card {card_widget.button_id}")
+                                    # Insert before this card. Preceding is the last one processed.
+                                    preceding_button_id = last_processed_button_id
+                                    target_song_key = current_row_song_key # Ensure correct song key is set
+                                    found_insertion_point_in_row = True
+                                    break # Found insertion point
+                                else:
+                                    # Drop is not left of this card, so this card becomes the potential preceding card
+                                    last_processed_button_id = card_widget.button_id
+
+                        if found_insertion_point_in_row:
+                             break # Exit outer loop (rows), we found the target gap
+
+                        # If loop finished without finding a gap *between* cards,
+                        # but we are vertically within this row's bounds,
+                        # the drop must be after the last card in this row (or in an empty row).
+                        if not found_insertion_point_in_row and last_processed_button_id:
+                             print(f"    Drop is RIGHT of the last card in row ({last_processed_button_id})")
+                             target_song_key = current_row_song_key # Set the song key for this row
+                             preceding_button_id = last_processed_button_id # Preceding is the last card processed overall up to this point
+                             break # Exit outer loop
+
+            # Keep track of the last button ID seen overall for end-of-song drops
+            if row_container_item and isinstance(row_container_item.widget(), QWidget):
+                 row_layout = row_container_item.widget().layout()
+                 if isinstance(row_layout, QHBoxLayout):
+                     for i in range(row_layout.count()):
+                         item = row_layout.itemAt(i)
+                         if item and isinstance(item.widget(), LyricCardWidget):
+                             last_processed_button_id = item.widget().button_id # Update last seen button
+
+        # --- Remove or comment out the old fallback logic ---
+        # # If loop finished without break, and we have a last song key, assume drop is at the end of that song
+        # if target_song_key is None and last_processed_song_key:
+        #      print(f"  Drop likely occurred after all content for song: {last_processed_song_key}")
+        #      target_song_key = last_processed_song_key
+        #      preceding_button_id = last_processed_button_id # Insert after the very last button of the song
+        # --- Perform Insertion if Target Found ---
+        if target_song_key:
+            print(f"Target determined: Song='{target_song_key}', Preceding ID='{preceding_button_id}', Insert at start={insert_at_start_of_song}")
+            self._insert_new_section(target_song_key, preceding_button_id, image_path, insert_at_start_of_song)
+        else:
+            print("Could not determine target song or insertion point for the drop.")
+            QMessageBox.warning(self, "Drop Error", "Could not determine where to insert the new slide.")
+
 
     # --- Slot to Open Settings Dialog ---
     def open_settings_dialog(self):
@@ -879,13 +1051,120 @@ class MainWindow(QMainWindow):
         self.song_list.populate(self.songs_data)
         print("Refreshed song list after metadata save.")
 
+    def _handle_delete_section_requested(self, button_id):
+        """Handles the request to delete a specific section."""
+        print(f"Delete requested for section: {button_id}")
+
+        try:
+            song_key, section_name_key = button_id.split('__', 1)
+        except ValueError:
+            print(f"Error: Could not parse song_key/section_name from button_id '{button_id}' for deletion.")
+            QMessageBox.warning(self, "Delete Error", f"Could not identify section from ID '{button_id}'.")
+            return
+
+        if song_key not in self.songs_data or "sections" not in self.songs_data[song_key]:
+            print(f"Error: Song data for '{song_key}' not found or invalid during deletion.")
+            QMessageBox.warning(self, "Delete Error", f"Could not find song data for key '{song_key}'.")
+            return
+
+        # --- Find the section index ---
+        section_index_to_delete = -1
+        section_name_to_delete = "Unknown Section"
+        for idx, section in enumerate(self.songs_data[song_key]["sections"]):
+            current_section_name_key = section.get("name", f"Section {idx+1}").replace(' ', '_').replace('-', '_').lower()
+            if current_section_name_key == section_name_key:
+                section_index_to_delete = idx
+                section_name_to_delete = section.get("name", f"Section {idx+1}")
+                break
+
+        if section_index_to_delete == -1:
+            print(f"Error: Section '{section_name_key}' not found within song '{song_key}' data for deletion.")
+            QMessageBox.warning(self, "Delete Error", f"Could not find section data for '{button_id}'.")
+            return
+
+        # --- No Confirmation - Proceed Directly with Deletion ---
+        print(f"Deleting section at index {section_index_to_delete}...")
+        # --- Delete the section from the data ---
+        del self.songs_data[song_key]["sections"][section_index_to_delete]
+        # --- Save and Refresh ---
+        self._save_song_data(song_key) # Helper function to save song data
+        self._refresh_data_and_ui() # Refresh the entire UI
+
+    def _insert_new_section(self, song_key, preceding_button_id, image_path, insert_at_start):
+        """Creates, inserts, saves, and refreshes UI for a new section."""
+        if song_key not in self.songs_data or "sections" not in self.songs_data[song_key]:
+            print(f"Error: Cannot insert section, song data invalid for key '{song_key}'.")
+            return
+
+        # --- Create New Section Data ---
+        # Find a unique name (e.g., "New Section 1", "New Section 2", etc.)
+        existing_names = {s.get("name", "").lower() for s in self.songs_data[song_key]["sections"]}
+        new_section_name = "New Section"
+        counter = 1
+        while new_section_name.lower() in existing_names:
+            new_section_name = f"New Section {counter}"
+            counter += 1
+
+        new_section_data = {
+            "name": new_section_name,
+            "lyrics": "", # Start with empty lyrics
+            "background_image": image_path
+        }
+
+        # --- Find Insertion Index ---
+        sections = self.songs_data[song_key]["sections"]
+        insert_index = 0
+        if insert_at_start:
+            insert_index = 0
+        elif preceding_button_id:
+            found_preceding = False
+            for idx, section in enumerate(sections):
+                section_name = section.get("name", f"Section {idx+1}")
+                section_name_key = section_name.replace(' ', '_').replace('-', '_').lower()
+                current_button_id = f"{song_key}__{section_name_key}"
+                if current_button_id == preceding_button_id:
+                    insert_index = idx + 1
+                    found_preceding = True
+                    break
+            if not found_preceding:
+                print(f"Warning: Preceding button ID '{preceding_button_id}' not found. Appending section to the end.")
+                insert_index = len(sections) # Append if preceding not found
+        else: # No preceding ID and not insert_at_start means append to end
+            insert_index = len(sections)
+
+        # --- Insert into Data Structure ---
+        print(f"Inserting new section '{new_section_name}' at index {insert_index} in song '{song_key}'")
+        self.songs_data[song_key]["sections"].insert(insert_index, new_section_data)
+
+        # --- Save updated song data to JSON file ---
+        self._save_song_data(song_key) # Use helper function
+        # --- Refresh UI ---
+        print("Refreshing UI after inserting new section...")
+        self._refresh_data_and_ui() # Easiest way is to just reload everything
+
 
     def _update_all_card_backgrounds(self, hex_color):
         """Iterates through all created LyricCardWidgets and updates their background color."""
         print(f"Updating card backgrounds to: {hex_color}")
         for button_widget in self._button_id_to_widget_map.values():
             button_widget.set_card_background_color(hex_color) # Call method on widget
-            
+
+    def _save_song_data(self, song_key):
+        """Helper function to save the current data for a specific song key to its JSON file."""
+        if song_key not in self.songs_data:
+            print(f"Error: Cannot save data for non-existent song key '{song_key}'.")
+            return False # Indicate failure
+        song_file_path = os.path.join("songs", f"{song_key}.json")
+        try:
+            with open(song_file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.songs_data[song_key], f, indent=2, ensure_ascii=False)
+            print(f"Successfully saved data to {song_file_path}")
+            return True # Indicate success
+        except Exception as e:
+            print(f"Error saving updated song file {song_file_path}: {e}")
+            QMessageBox.warning(self, "Save Error", f"Could not save changes to {song_file_path}:\n{e}")
+            return False # Indicate failure
+
     def keyPressEvent(self, event: QEvent):
         """Handles key presses for navigation."""
         key = event.key()
