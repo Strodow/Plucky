@@ -7,9 +7,9 @@
     "bold": true,
     "italic": false,
     "underline": false,
-    "force_all_caps": false
+    "force_all_caps": true
   },
-  "color": "#24c6c1",
+  "color": "#0a3635",
   "position": {
     "x": "50%",
     "y": "55%"

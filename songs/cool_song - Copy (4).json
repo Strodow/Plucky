@@ -11,8 +11,10 @@
       "lyrics": "Sing it loud\nThis is the chorus!"
     },
     {
+      "background_image": null,
+      "lyrics": "Another verse here\nWith different words.",
       "name": "Verse 2",
-      "lyrics": "Another verse here\nWith different words."
+      "template_name": "template_alt"
     },
     {
       "name": "Bridge",

@@ -4,11 +4,13 @@
   "sections": [
     {
       "name": "Verse 1",
-      "lyrics": "When the day is dawning\nAnd the birds are singing..."
+      "lyrics": "When the day is dawning\nAnd the birds are singing...",
+      "template_name": "template"
     },
     {
       "name": "Chorus",
-      "lyrics": "Oh, the sun is shining bright\nFilling everything with light!"
+      "lyrics": "Oh, the sun is shining bright\nFilling everything with light!",
+      "template_name": "template"
     },
     {
       "name": "Verse 2",
@@ -16,7 +18,8 @@
     },
     {
       "name": "Bridge",
-      "lyrics": "A moment of reflection\nA peaceful, quiet view."
+      "lyrics": "A moment of reflection\nA peaceful, quiet view.",
+      "template_name": "template"
     },
     {
       "name": "Outro",

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QSplitter, QMessageBox # Import QSplitter and QMessageBox
 )
 from PySide6.QtCore import Qt, QMimeData, QRect, QSize, QEvent, QPoint # Import QSize, QEvent, QPoint
-from PySide6.QtGui import QFont, QPixmap, QColor, QPainter # Removed QDrag, QMouseEvent, Added QPainter for splash
+from PySide6.QtGui import QFont, QPixmap, QColor, QPainter, QAction # Removed QDrag, QMouseEvent, Added QPainter for splash, QAction
 
 # --- Local Imports ---
 from button_widgets import ButtonGridWidget
@@ -21,7 +21,7 @@ from lyric_display_window import LyricDisplayWindow
 from settings_dialog import SettingsDialog # Import the new dialog
 # from custom_widgets import DraggableButton # No longer using DraggableButton
 from button_remake import LyricCardWidget # Assuming button_remake.py contains the updated LyricCardWidget
-from song_list_widget import SongListWidget # Import the new song list widget
+from song_list_widget import SongListWidget, QMenu # Import the new song list widget, QMenu
 from song_section_editor_window import SongSectionEditorWindow # Import the new section editor window
 from song_metadata_editor_window import SongMetadataEditorWindow # Import the new metadata editor window
 from template_editor import TemplateEditorWindow # Import the template editor
@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         self._button_id_to_widget_map = {} # Map button_id to LyricCardWidget instance
         self._editor_windows = {} # To keep references to open editor windows (key: ('song', song_key) or ('section', button_id))
         self._ordered_buttons = [] # List to store LyricCardWidgets in grid order
+        self.available_templates = {} # Dictionary to hold loaded templates {name: data}
 
         # --- Basic UI Structure Setup (moved data loading out) ---
         # ButtonGridWidget now primarily acts as a container for the grid layout
@@ -103,26 +104,35 @@ class MainWindow(QMainWindow):
         self.current_screen_index = self.app_settings.get("output_screen_index", 0) # Update current index from loaded/default settings
         return time.time() - start_time
     
-    
     def _load_template_settings(self):
-        """Loads lyric display template settings from template.json."""
+        """Loads all lyric display template settings from the 'templates' directory."""
         start_time = time.time()
-        self.lyric_template_settings = {}
-        template_file_path = "template.json"
-        if os.path.exists(template_file_path):
-            try:
-                with open(template_file_path, "r", encoding="utf-8") as f:
-                    self.lyric_template_settings = json.load(f)
-                print(f"Successfully loaded template from {template_file_path}")
-            except json.JSONDecodeError:
-                print(f"Error: Could not decode {template_file_path}. Check file format.")
-                print("Using default lyric display settings.")
-            except Exception as e:
-                print(f"An unexpected error occurred while loading template: {e}")
-                print("Using default lyric display settings.")
+        self.available_templates = {} # Reset
+        templates_dir = "templates"
+        default_template_name = "template" # Define the default template filename (without extension)
+
+        if os.path.exists(templates_dir) and os.path.isdir(templates_dir):
+            for filename in os.listdir(templates_dir):
+                if filename.endswith(".json"):
+                    template_name = os.path.splitext(filename)[0]
+                    file_path = os.path.join(templates_dir, filename)
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            template_data = json.load(f)
+                            self.available_templates[template_name] = template_data
+                            print(f"Successfully loaded template: {template_name} from {file_path}")
+                    except json.JSONDecodeError:
+                        print(f"Error: Could not decode {file_path}. Check file format.")
+                    except Exception as e:
+                        print(f"An unexpected error occurred while loading template {file_path}: {e}")
         else:
-            print(f"Warning: Template file not found at {template_file_path}.")
-            print("Using default lyric display settings.")
+            print(f"Warning: Templates directory '{templates_dir}' not found.")
+
+        # Ensure a default template exists, even if empty, to prevent errors later
+        if default_template_name not in self.available_templates:
+            print(f"Warning: Default template '{default_template_name}.json' not found or failed to load. Using empty default.")
+            self.available_templates[default_template_name] = {} # Provide an empty dict as fallback
+
         return time.time() - start_time
 
     def _load_songs_data(self):
@@ -294,7 +304,10 @@ class MainWindow(QMainWindow):
             print("Warning: Only one screen detected. Lyric window will be fullscreen on the primary screen.")
             self.lyric_window.set_fullscreen_on_screen(self.current_screen_index) # Use default index 0
         # Apply loaded template settings
-        self.lyric_window.set_template_settings(self.lyric_template_settings)
+        # Apply the *default* template initially
+        default_template_name = "template" # Must match the name used in _load_template_settings
+        default_template_data = self.available_templates.get(default_template_name, {})
+        self.lyric_window.set_template_settings(default_template_data)
 
     def _clear_button_grid(self):
         """Removes all widgets from the button grid layout and disconnects signals."""
@@ -424,19 +437,27 @@ class MainWindow(QMainWindow):
                         button_id = f"{song_key}__{section_name_key}" # Use double underscore as delimiter
                         background_path = section.get("background_image") # Get the background image path
                         unique_button_object_name = f"btn_{button_id}_{i}" # Add index for uniqueness
+
+                        # --- Get Template for this Section ---
+                        default_template_name = "template" # Must match the name used in _load_template_settings
+                        template_name = section.get("template_name", default_template_name) # Get from section data or use default
+                        template_data = self.available_templates.get(template_name)
+                        if template_data is None:
+                            print(f"Warning: Template '{template_name}' specified for '{button_id}' not found. Using default.")
+                            template_data = self.available_templates.get(default_template_name, {}) # Fallback to default
+                        # --- End Get Template ---
+
                         card_bg_color = self.app_settings.get("card_background_color", "#000000") # Get color from settings
-                        # self._update_splash(splash, f"  Loading: {section_name}") # Option for more detail
 
                         # --- Create LyricCardWidget ---
-                       # Pass all relevant info: id, number, name, lyrics, background
                         new_button = LyricCardWidget(
                             button_id=button_id,
                             slide_number=i + 1,
                             section_name=section_name,
                             song_title=song_title, # Pass the song title
-                            lyrics=lyric_text,
+                            lyrics=lyric_text,                            template_name=template_name, # Pass the filename key
                             background_image_path=background_path,
-                            template_settings=self.lyric_template_settings, # Pass the loaded template settings
+                            template_settings=template_data, # Pass the specific template data for this card
                             card_background_color=card_bg_color # Pass the card background color
                         )
                         total_image_load_time += new_button.get_last_image_load_time() # Get time from the widget
@@ -457,6 +478,10 @@ class MainWindow(QMainWindow):
                         new_button.delete_section_requested.connect(self._handle_delete_section_requested)
                         # Connect the request to open the template editor
                         new_button.open_template_editor_requested.connect(self._handle_open_template_editor_request)
+                        # Connect the new template change request signal
+                        new_button.template_change_requested.connect(self._handle_template_change_requested)
+                        # Connect the context menu request signal
+                        new_button.context_menu_requested.connect(self._show_card_context_menu)
 
                         # Store the widget reference in the map
                         self._button_id_to_widget_map[button_id] = new_button
@@ -567,7 +592,7 @@ class MainWindow(QMainWindow):
         # 3. Repopulate UI elements (without splash, ignore returned times)
         # Note: This will overwrite the initial load stats if not reset above
         self._populate_ui_elements()
-        self.lyric_window.set_template_settings(self.lyric_template_settings) # Re-apply template
+        # REMOVED: Explicit reset of lyric window template on refresh
         #self._handle_button_click(None) # Clear lyric display and highlight
         print("--- Refresh Complete ---")
     def _save_app_settings(self):
@@ -632,10 +657,18 @@ class MainWindow(QMainWindow):
         if isinstance(button_object, LyricCardWidget):
             # --- Handle LyricCardWidget click ---
             print(f"Handling click for {button_object.button_id} with lyric: '{button_object.lyric_text}'")
+
+            # --- Get and Apply Correct Template to Lyric Window ---
+            template_name = button_object.template_name # Get template name stored on the card
+            template_data = self.available_templates.get(template_name)
+            if template_data is None: # Should ideally not happen if population logic is correct
+                print(f"Warning: Template '{template_name}' for clicked card '{button_object.button_id}' not found. Using default.")
+                template_data = self.available_templates.get("template", {})
+            self.lyric_window.set_template_settings(template_data)
+            # --- End Template Application ---
+
             # Always display the lyric text
             self.lyric_window.display_lyric(button_object.lyric_text)
-            # ONLY set the background if the clicked card has one specified
-            # Access the path via the content_area child widget
             if button_object.content_area._background_image_path:
                 self.lyric_window.set_background_image(button_object.content_area._background_image_path)
             # Apply highlight to the new card
@@ -645,6 +678,9 @@ class MainWindow(QMainWindow):
             # --- Handle Clear button click (or other non-LyricCardWidget source) ---
             print("Handling click for Clear button (or non-card source)")
             self.lyric_window.set_background_image(None) # Clear the background on the lyric window
+            # Reset lyric window to default template when clearing
+            default_template_data = self.available_templates.get("template", {})
+            self.lyric_window.set_template_settings(default_template_data)
             self.lyric_window.display_lyric("") # Display empty lyric
             # self._last_clicked_button is already cleared or was handled above
 
@@ -842,20 +878,27 @@ class MainWindow(QMainWindow):
             self.app_settings["card_background_color"] = new_card_bg_color # Update settings dict
             self._update_all_card_backgrounds(new_card_bg_color) # Apply new color to existing cards
             self._save_app_settings() # Save updated settings to file
-
-    def _handle_open_template_editor_request(self):
+    
+    def _handle_open_template_editor_request(self, template_name_to_edit):
         """Handles the request from a LyricCardWidget to open the template editor."""
-        print("INFO: Request received to open template editor.")
-        editor_key = ('template', 'editor') # Unique key for tracking
+        print(f"INFO: Request received to open template editor for '{template_name_to_edit}'.")
+        editor_key = ('template', template_name_to_edit) # Unique key for tracking this specific template editor
 
         # Avoid opening multiple template editors
         if editor_key in self._editor_windows and self._editor_windows[editor_key].isVisible():
              self._editor_windows[editor_key].activateWindow() # Bring existing window to front
              return
-
+        
+        # Get the data for the requested template
+        template_data_to_edit = self.available_templates.get(template_name_to_edit)
+        if template_data_to_edit is None:
+            QMessageBox.warning(self, "Error", f"Could not find template data for '{template_name_to_edit}'.")
+            print(f"ERROR: Could not find template data for '{template_name_to_edit}' when opening editor.")
+            return
+        
         try:
-            # Pass the current template settings to the editor
-            template_editor_window = TemplateEditorWindow(self.lyric_template_settings, parent=self)
+            # Pass the specific template name and its data to the editor
+            template_editor_window = TemplateEditorWindow(template_name_to_edit, template_data_to_edit, parent=self)
 
             # *** Connect the editor's save signal to MainWindow's handler ***
             template_editor_window.template_saved.connect(self._handle_template_saved)
@@ -869,31 +912,27 @@ class MainWindow(QMainWindow):
              QMessageBox.critical(self, "Error", f"Error opening template editor: {e}")
              print(f"ERROR: Error opening template editor: {e}")
 
-    def _handle_template_saved(self, updated_template_data):
+    def _handle_template_saved(self, saved_template_name, updated_template_data):
         """Handles the template_saved signal from the TemplateEditorWindow."""
-        print("INFO: Received updated template data from editor.")
-        self.lyric_template_settings = updated_template_data
+        print(f"INFO: Received updated template data from editor for '{saved_template_name}'.")
+        # Update the specific template in our available templates dictionary
+        self.available_templates[saved_template_name] = updated_template_data
 
-        # --- Save updated template data to JSON file ---
-        template_file_path = "template.json"
-        try:
-            with open(template_file_path, 'w', encoding='utf-8') as f:
-                json.dump(self.lyric_template_settings, f, indent=2, ensure_ascii=False)
-            print(f"INFO: Successfully saved updated template to {template_file_path}")
-        except Exception as e:
-            print(f"Error saving updated template file {template_file_path}: {e}")
-            QMessageBox.warning(self, "Save Error", f"Could not save template changes to {template_file_path}:\n{e}")
-            # Optionally don't apply if save fails, or revert self.lyric_template_settings
-
+        # --- Save updated template data to JSON file (already done by editor) ---
+        # The TemplateEditorWindow is now responsible for saving its specific file.
+        # We don't need to save it again here.
+        # template_file_path = os.path.join("templates", f"{saved_template_name}.json")
+        # print(f"INFO: Editor should have saved changes to {template_file_path}")
         # --- Apply new settings to the lyric window ---
         if hasattr(self, 'lyric_window') and self.lyric_window:
-            self.lyric_window.set_template_settings(self.lyric_template_settings)
-            print("INFO: Applied updated template settings to lyric window.")
+            self.lyric_window.set_template_settings(updated_template_data) # Apply the saved data
+            print(f"INFO: Applied updated '{saved_template_name}' settings to lyric window (if it was the last clicked).") # Corrected variable name
 
         # --- Apply new settings to all existing LyricCardWidgets ---
-        print("INFO: Applying updated template settings to grid cards...")
+        print(f"INFO: Applying updated '{saved_template_name}' settings to relevant grid cards...")
         for card_widget in self._button_id_to_widget_map.values():
-            card_widget.update_template_settings(self.lyric_template_settings)
+            if card_widget.template_name == saved_template_name: # Only update cards using the edited template
+                card_widget.update_template_settings(updated_template_data)
 
     def _open_song_editor(self, song_key):
         """Opens the SongMetadataEditorWindow for the specified song."""
@@ -1011,6 +1050,7 @@ class MainWindow(QMainWindow):
         # --- Update self.songs_data ---
         if song_key in self.songs_data and "sections" in self.songs_data[song_key]:
             found = False
+            old_section_name_key = None # Store the old key in case name changes
             for idx, section in enumerate(self.songs_data[song_key]["sections"]):
                 current_section_name_key = section.get("name", f"Section {idx+1}").replace(' ', '_').replace('-', '_').lower()
                 if current_section_name_key == section_name_key:
@@ -1018,9 +1058,23 @@ class MainWindow(QMainWindow):
                     self.songs_data[song_key]["sections"][idx] = updated_data
                     found = True
                     break
+
             if not found:
                 print(f"Error: Could not find section '{section_name_key}' in song '{song_key}' data to update.")
                 return # Stop if section wasn't found in data
+
+            # --- Handle potential button_id change if section name changed ---
+            new_name = updated_data.get("name", "")
+            new_section_name_key = new_name.replace(' ', '_').replace('-', '_').lower()
+            new_button_id = f"{song_key}__{new_section_name_key}"
+
+            if new_button_id != button_id and button_id in self._button_id_to_widget_map:
+                print(f"Section name changed. Updating widget map from '{button_id}' to '{new_button_id}'.")
+                widget = self._button_id_to_widget_map.pop(button_id)
+                widget.button_id = new_button_id # Update the ID on the widget itself
+                self._button_id_to_widget_map[new_button_id] = widget
+                button_id = new_button_id # Use the new ID for the rest of the function
+
         else:
             print(f"Error: Song data for '{song_key}' not found or invalid during save.")
             return # Stop if song data is missing
@@ -1042,6 +1096,7 @@ class MainWindow(QMainWindow):
             new_section_name = updated_data.get("name", "Section ?")
             new_lyrics = updated_data.get("lyrics", "")
             new_background = updated_data.get("background_image")
+            # Template name is part of updated_data, but we apply the full template below
 
             target_widget.set_lyrics(new_lyrics)
             target_widget.info_bar.set_data(target_widget._slide_number, new_section_name) # Update info bar name
@@ -1051,6 +1106,14 @@ class MainWindow(QMainWindow):
             if self._last_clicked_button == target_widget:
                 self.lyric_window.display_lyric(new_lyrics)
                 self.lyric_window.set_background_image(new_background)
+                # Also re-apply template to lyric window in case it changed
+                template_name = updated_data.get("template_name", "template")
+                template_data = self.available_templates.get(template_name, self.available_templates.get("template", {}))
+                self.lyric_window.set_template_settings(template_data)
+
+            # Update the card's template settings if the template name changed
+            template_name = updated_data.get("template_name", "template")
+            target_widget.update_template_settings(self.available_templates.get(template_name, self.available_templates.get("template", {})))
 
             print(f"Updated UI for card {button_id}")
         else:
@@ -1145,6 +1208,110 @@ class MainWindow(QMainWindow):
         self._save_song_data(song_key) # Helper function to save song data
         self._refresh_data_and_ui() # Refresh the entire UI
 
+    def _handle_template_change_requested(self, button_id, new_template_name):
+        """Handles the template_change_requested signal from a LyricCardWidget."""
+        print(f"Template change requested for '{button_id}' to '{new_template_name}'")
+
+        # --- Find the section data ---
+        try:
+            song_key, section_name_key = button_id.split('__', 1)
+        except ValueError:
+            print(f"Error: Could not parse song_key/section_name from button_id '{button_id}' during template change.")
+            return
+
+        if song_key not in self.songs_data or "sections" not in self.songs_data[song_key]:
+            print(f"Error: Song data for '{song_key}' not found or invalid during template change.")
+            return
+
+        target_section_data = None
+        section_index = -1
+        for idx, section in enumerate(self.songs_data[song_key]["sections"]):
+            current_section_name_key = section.get("name", f"Section {idx+1}").replace(' ', '_').replace('-', '_').lower()
+            if current_section_name_key == section_name_key:
+                target_section_data = section
+                section_index = idx
+                break
+
+        if target_section_data is None:
+            print(f"Error: Section '{section_name_key}' not found within song '{song_key}' during template change.")
+            return
+
+        # --- Update the section data ---
+        self.songs_data[song_key]["sections"][section_index]["template_name"] = new_template_name
+
+        # --- Save updated song data to JSON file ---
+        if self._save_song_data(song_key):
+            # --- Update the corresponding LyricCardWidget UI ---
+            target_widget = self._button_id_to_widget_map.get(button_id)
+            if target_widget:
+                new_template_data = self.available_templates.get(new_template_name, self.available_templates.get("template", {}))
+                target_widget.update_template_settings(new_template_data) # Update card visuals
+                target_widget.template_name = new_template_name # Update stored name on widget
+
+    def _show_card_context_menu(self, global_pos, button_id):
+        """Creates and shows the context menu for a LyricCardWidget."""
+        target_widget = self._button_id_to_widget_map.get(button_id)
+        if not target_widget:
+            print(f"Error: Could not find widget for button_id '{button_id}' to show context menu.")
+            return
+
+        menu = QMenu(self) # Create the menu with MainWindow as parent
+
+        # --- Edit Song Action ---
+        song_key = target_widget.button_id.split('__', 1)[0] if '__' in target_widget.button_id else target_widget.button_id
+        if song_key:
+            edit_song_action = QAction(f"Edit Song: {target_widget.song_title}", self)
+            edit_song_action.triggered.connect(lambda checked=False, sk=song_key: self._open_song_editor(sk))
+            menu.addAction(edit_song_action)
+            menu.addSeparator()
+
+        # --- Edit Section Action ---
+        edit_section_action = QAction(f"Edit Section: {target_widget.info_bar.section_name}", self)
+        edit_section_action.triggered.connect(lambda checked=False, bid=target_widget.button_id: self._open_section_editor(bid))
+        menu.addAction(edit_section_action)
+
+        # --- Color Submenu ---
+        color_menu = menu.addMenu("Set Bar Color")
+        red_action = QAction("Red", self)
+        red_action.triggered.connect(lambda: target_widget.set_bar_color(QColor("red")))
+        color_menu.addAction(red_action)
+        green_action = QAction("Green", self)
+        green_action.triggered.connect(lambda: target_widget.set_bar_color(QColor("green")))
+        color_menu.addAction(green_action)
+        blue_action = QAction("Blue", self)
+        blue_action.triggered.connect(lambda: target_widget.set_bar_color(QColor(0, 120, 215)))
+        color_menu.addAction(blue_action)
+
+        # --- Set Template Submenu (Dynamic) ---
+        template_menu = menu.addMenu("Set Template")
+        # Sort template names for consistent menu order
+        sorted_template_names = sorted(self.available_templates.keys())
+        for template_name in sorted_template_names:
+            # Use the internal name from the template data for display, but emit the filename (key)
+            display_name = self.available_templates[template_name].get("template_name", template_name) # Fallback to filename if internal name missing
+            action = QAction(display_name, self)
+            action.triggered.connect(
+                # Emit the filename (key) as the new_template_name
+                lambda checked=False, bid=target_widget.button_id, t_name=template_name:
+                    self._handle_template_change_requested(bid, t_name)
+            )
+            template_menu.addAction(action)
+
+        # --- Edit Template Action ---
+        menu.addSeparator()
+        edit_template_action = QAction("Edit Template", self)
+        # Emit the filename (key) of the card's current template
+        edit_template_action.triggered.connect(lambda checked=False, t_name=target_widget.template_name: self._handle_open_template_editor_request(t_name))
+        menu.addAction(edit_template_action)
+
+        # --- Add Delete Section Action ---
+        menu.addSeparator() # Add separator before delete
+        action_delete_section = QAction("Delete Section", self)
+        action_delete_section.triggered.connect(lambda checked=False, bid=target_widget.button_id: self._handle_delete_section_requested(bid))
+        menu.addAction(action_delete_section)
+        # --- Show the menu at the requested position ---
+        menu.exec(global_pos)
+
     def _insert_new_section(self, song_key, preceding_button_id, image_path, insert_at_start):
         """Creates, inserts, saves, and refreshes UI for a new section."""
         if song_key not in self.songs_data or "sections" not in self.songs_data[song_key]:
@@ -1163,7 +1330,8 @@ class MainWindow(QMainWindow):
         new_section_data = {
             "name": new_section_name,
             "lyrics": "", # Start with empty lyrics
-            "background_image": image_path
+            "background_image": image_path,
+            "template_name": "template" # Default to the base template
         }
 
         # --- Find Insertion Index ---

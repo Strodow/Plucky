@@ -285,14 +285,15 @@ class TemplatePreviewWidget(QWidget):
 class TemplateEditorWindow(QDialog):
     """Window for editing template properties."""
     # --- Signal to emit when template is saved ---
-    template_saved = Signal(dict) # Emits the updated template data dictionary
-    def __init__(self, template_data, parent=None):
+    template_saved = Signal(str, dict) # Emits template_name, updated_template_data
+    def __init__(self, template_name, template_data, parent=None):
         super().__init__(parent)
         # Use a deep copy to avoid modifying the original dict until save
         self.template_data = copy.deepcopy(template_data)
+        self.template_name = template_name # Store the name of the template being edited
         # Define template file path within the editor instance
         self.CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
-        self.TEMPLATE_FILE = os.path.join(self.CONFIG_DIR, 'template.json')
+        self.TEMPLATE_FILE = os.path.join(self.CONFIG_DIR, 'templates', f"{self.template_name}.json") # Dynamic path
         self.setWindowTitle(f"Edit Template: {self.template_data.get('template_name', 'Unnamed Template')}")
         self.setMinimumSize(800, 600) # Increased size for controls
 
@@ -661,7 +662,7 @@ class TemplateEditorWindow(QDialog):
         logging.info(f"Saving template data to: {self.TEMPLATE_FILE}")
         try:
             with open(self.TEMPLATE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.template_data, f, indent=2) # Use indent for readability
+                json.dump(self.template_data, f, indent=2, ensure_ascii=False) # Use indent for readability
             logging.info("Template saved successfully.")
             # Optionally show a success message
         except Exception as e:
@@ -671,5 +672,5 @@ class TemplateEditorWindow(QDialog):
     def _save_and_accept(self):
         """Saves the template and then closes the dialog."""
         self._save_template()
-        self.template_saved.emit(self.template_data) # Emit the signal with the data
+        self.template_saved.emit(self.template_name, self.template_data) # Emit name and data
         self.accept() # Close the dialog with accept status

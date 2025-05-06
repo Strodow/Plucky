@@ -105,6 +105,7 @@ class SectionEditorWidget(QWidget):
         self._current_data["name"] = self.name_input.text()
         self._current_data["lyrics"] = self.lyrics_input.toPlainText()
         self._current_data["background_image"] = self.background_input.text() or None # Store None if empty
+        # template_name is not edited here, but should be preserved in _current_data
         return self._current_data.copy() # Return a copy
 
     def _emit_data_changed(self):

@@ -117,17 +117,17 @@ class ContentAreaWidget(QWidget):
             # --- End Apply Force Caps ---
 
             # --- Calculate Scaled Font Size (Copied) ---
-            actual_font_size_pt = 10
+            actual_font_size_pt = 10 # Default value
             if isinstance(font_size_setting, (int, float)):
                 base_point_size = float(font_size_setting)
-                target_output_height = 1080
+                target_output_height = 1080 # Assuming 1080p target output
                 current_preview_height = content_rect.height() # Use this widget's height
                 if target_output_height > 0 and current_preview_height > 0:
                     scaling_factor = current_preview_height / target_output_height
                     actual_font_size_pt = int(base_point_size * scaling_factor)
                 else:
-                    actual_font_size_pt = int(base_point_size)
-                actual_font_size_pt = max(6, actual_font_size_pt)
+                    actual_font_size_pt = int(base_point_size) # Use base size if scaling is not possible
+                actual_font_size_pt = max(6, actual_font_size_pt) # Use min 6pt (was 8pt)
 
             # --- Set Font (Copied) ---
             font = QFont()
@@ -285,11 +285,15 @@ class LyricCardWidget(QWidget):
     edit_song_requested = Signal(str) # Emits the song_key
     # Define a signal to request editing this specific section
     edit_section_requested = Signal(str) # Emits the button_id (songkey_sectionname)
-    open_template_editor_requested = Signal() # Signal to request opening the template editor
+    open_template_editor_requested = Signal(str) # Signal to request opening the template editor for a specific template_name
+    # Signal to request changing the template for this card
+    template_change_requested = Signal(str, str) # Emits button_id, new_template_name
     delete_section_requested = Signal(str) # Emits button_id
+    # Signal to request the main window to show the context menu
+    context_menu_requested = Signal(QPoint, str) # Emits global position, button_id
 
     # Add card_background_color parameter
-    def __init__(self, button_id="", slide_number=0, section_name="", song_title="", lyrics="", background_image_path=None, template_settings=None, card_background_color="#000000", parent=None): # Added song_title
+    def __init__(self, button_id="", slide_number=0, section_name="", song_title="", lyrics="", background_image_path=None, template_name="template", template_settings=None, card_background_color="#000000", parent=None): # Added template_name
         super().__init__(parent)
 
         self.button_id = button_id # Store button_id for external reference
@@ -299,7 +303,8 @@ class LyricCardWidget(QWidget):
         self._card_background_color_hex = card_background_color # Store hex just in case
         self._is_clicked = False # State for external highlighting
         self._last_image_load_time = 0.0 # Store time taken for the last image load attempt
-        self.template_settings = template_settings if template_settings else {} # Store template settings
+        self.template_settings = template_settings if template_settings else {} # Store the *actual* template data
+        self.template_name = template_name # Store the filename key directly
         self._bar_color = QColor(0, 120, 215) # Default blue color for the bottom bar
 
         # --- Configuration --- (Moved from global scope for clarity)
@@ -341,11 +346,14 @@ class LyricCardWidget(QWidget):
 
     def update_template_settings(self, new_settings):
         """Updates template settings for this card and its children."""
+        print(f"DEBUG: Updating template settings for {self.button_id}")
+        # Note: This assumes the template_name (filename key) doesn't change here.
+        # MainWindow handles changing the name and then calls this.
         self.template_settings = new_settings if new_settings else {}
         # Pass updated settings down to children that need them
         self.content_area.set_template_settings(self.template_settings)
         self.info_bar.update_template_settings(self.template_settings)
-
+        self.update() # Trigger a repaint of the card itself (e.g., for border, though not used now)
 
     def set_slide_number(self, number):
         """Sets the slide number displayed in the bottom left."""
@@ -419,6 +427,10 @@ class LyricCardWidget(QWidget):
 
     def contextMenuEvent(self, event):
         """Handles right-click events to show a context menu."""
+        # Emit signal to MainWindow instead of building menu here
+        self.context_menu_requested.emit(event.globalPos(), self.button_id)
+
+        """ OLD MENU BUILDING LOGIC (Now handled by MainWindow)
         menu = QMenu(self)
 
         # --- Edit Song Action ---
@@ -455,18 +467,37 @@ class LyricCardWidget(QWidget):
         blue_action.triggered.connect(lambda: self.set_bar_color(QColor(0, 120, 215)))
         color_menu.addAction(blue_action)
 
+        # --- Set Template Submenu ---
+        # We need access to the available template names. This requires passing them from MainWindow
+        # or using a different mechanism. For now, let's assume MainWindow handles the actual change
+        # and we just emit a signal. We can dynamically build this menu in MainWindow later if needed.
+        template_menu = menu.addMenu("Set Template")
+
+        # Example static actions - replace with dynamic loading later
+        action_template_default = QAction("Default", self)
+        action_template_default.triggered.connect(
+            lambda: self.template_change_requested.emit(self.button_id, "template") # Emit signal with name
+        )
+        template_menu.addAction(action_template_default)
+        action_template_alt = QAction("Alternate", self)
+        action_template_alt.triggered.connect(
+            lambda: self.template_change_requested.emit(self.button_id, "template_alt") # Emit signal with name
+        )
+        template_menu.addAction(action_template_alt)
+
         # --- Edit Template Action ---
         menu.addSeparator() # Add a separator for visual distinction
         edit_template_action = QAction("Edit Template", self)
-        edit_template_action.triggered.connect(self._handle_edit_template) # Connect to a new handler
+        edit_template_action.triggered.connect(lambda: self.open_template_editor_requested.emit(self.template_name)) # Emit the template name
         menu.addAction(edit_template_action)
         
         # --- Add Delete Section Action ---
-        action_delete_section = QAction("Delete Slide", self)
+        action_delete_section = QAction("Delete Section", self)
         action_delete_section.triggered.connect(lambda: self.delete_section_requested.emit(self.button_id))
         menu.addAction(action_delete_section)
         # Show the menu at the cursor's global position
         menu.exec(event.globalPos())
+        """ # End of old menu logic
 
     def set_highlight(self, highlight: bool):
         """Sets the highlighted state externally and triggers a repaint."""
@@ -489,23 +520,6 @@ class LyricCardWidget(QWidget):
         # When using a Fixed policy, minimumSizeHint is often the same as sizeHint
         return self.sizeHint()
 
-    def _handle_edit_template(self):
-        """Placeholder handler for the 'Edit Template' action."""
-        logging.info(f"Edit Template action triggered for button: {self.button_id}")
-        try:
-            with open(self.TEMPLATE_FILE, 'r', encoding='utf-8') as f:
-                template_data = json.load(f)
-            # Create and show the editor window
-            # Pass 'self' or 'self.window()' as parent if needed for modality/behavior
-            self.editor_window = TemplateEditorWindow(template_data, self.window())
-            self.editor_window.exec() # Use exec() for a modal dialog
-
-        except FileNotFoundError:
-            logging.error(f"Template file not found: {self.TEMPLATE_FILE}")
-        except json.JSONDecodeError:
-            logging.error(f"Error decoding JSON from template file: {self.TEMPLATE_FILE}")
-        except Exception as e:
-            logging.error(f"An unexpected error occurred opening the template editor: {e}", exc_info=True)
 
 
 

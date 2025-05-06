@@ -9,11 +9,13 @@
     },
     {
       "name": "Bridge",
-      "lyrics": "A moment of reflection\nA peaceful, quiet view."
+      "lyrics": "A moment of reflection\nA peaceful, quiet view.",
+      "template_name": "template_alt"
     },
     {
       "name": "Outro",
-      "lyrics": "Fading light now calls us home Until we meet again. A moment of reflection A peaceful, quiet view. A moment of reflection A peaceful, quiet view."
+      "lyrics": "Fading light now calls us home Until we meet again. A moment of reflection A peaceful, quiet view. A moment of reflection A peaceful, quiet view.",
+      "template_name": "template"
     }
   ]
 }

@@ -1,0 +1,27 @@
+YourProject/
+├── main.py                     # Application entry point, creates QApplication & MainWindow
+│
+├── data_models/                # Python modules defining data structures
+│   └── __init__.py             # Makes 'data_models' a package
+│   └── slide_data.py           # Defines the SlideData class (e.g., using @dataclass)
+│
+├── rendering/                  # Modules for drawing logic
+│   └── __init__.py             # Makes 'rendering' a package
+│   └── slide_renderer.py       # Defines SlideRenderer class with rendering methods
+│
+├── widgets/                    # Custom UI Widget modules
+│   └── __init__.py             # Makes 'widgets' a package
+│   └── scaled_slide_button.py  # Defines the ScaledSlideButton widget class
+│
+├── windows/                    # Modules for main application windows
+│   └── __init__.py             # Makes 'windows' a package
+│   └── main_window.py          # Defines the MainWindow class (UI, controls, orchestration)
+│   └── output_window.py        # Defines the OutputWindow class (fullscreen display)
+│
+├── resources/                  # Optional: For UI files, images, etc.
+│   └── main_window.ui          # (Optional) UI layout from Qt Designer
+│   └── default_background.png  # Example resource
+│
+└── (Optional) core/            # Modules for application logic/state management
+    └── presentation_manager.py # Optional: Class to manage presentation state, orchestrate slide transitions, and coordinate save/load operations.
+    └── presentation_io.py      # Optional: Handles serialization/deserialization of presentation data for file storage.
