@@ -18,6 +18,7 @@ try:
     from data_models.slide_data import SlideData # DEFAULT_TEMPLATE not directly used here
     from rendering.slide_renderer import SlideRenderer
     from widgets.scaled_slide_button import ScaledSlideButton # This should already be there
+    from widgets.song_header_widget import SongHeaderWidget # Import the new header widget
     from widgets.flow_layout import FlowLayout # Import the new FlowLayout
     from core.presentation_manager import PresentationManager
 except ImportError:
@@ -28,6 +29,7 @@ except ImportError:
     from data_models.slide_data import SlideData
     from rendering.slide_renderer import SlideRenderer
     from widgets.scaled_slide_button import ScaledSlideButton # This should already be there
+    from widgets.song_header_widget import SongHeaderWidget # Import the new header widget
     from widgets.flow_layout import FlowLayout # Import the new FlowLayout
     from core.presentation_manager import PresentationManager
 
@@ -74,10 +76,10 @@ class MainWindow(QMainWindow):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.slide_buttons_widget = QWidget()
-        # Use FlowLayout instead of QVBoxLayout
-        self.slide_buttons_layout = FlowLayout(self.slide_buttons_widget, margin=5, hSpacing=5, vSpacing=5)
-        # FlowLayout typically aligns to top-left by default, so setAlignment might not be needed
-        # self.slide_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft) # If needed
+        # This is now the main vertical layout for song headers and their slide containers
+        self.slide_buttons_layout = QVBoxLayout(self.slide_buttons_widget)
+        self.slide_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.slide_buttons_layout.setSpacing(0) # Let widgets/layouts inside manage their own margins/spacing
         self.scroll_area.setWidget(self.slide_buttons_widget)
 
         # --- Layouts ---
@@ -181,24 +183,37 @@ class MainWindow(QMainWindow):
         Prompts the user for song lyrics and adds them as new slides.
         Lyrics are split into slides by double newlines.
         """
-        lyrics_text, ok = QInputDialog.getMultiLineText(
+        song_title_text, ok_title = QInputDialog.getText(
             self,
-            "Add New Song",
-            "Paste or type song lyrics here.\n"
+            "Add New Song - Title",
+            "Enter the song title:"
+        )
+
+        if not ok_title or not song_title_text.strip():
+            # User cancelled or entered an empty title
+            if ok_title and not song_title_text.strip(): # User pressed OK but title was empty
+                QMessageBox.warning(self, "Empty Title", "Song title cannot be empty.")
+            return
+        
+        cleaned_song_title = song_title_text.strip()
+
+        lyrics_text, ok_lyrics = QInputDialog.getMultiLineText(
+            self,
+            f"Add Lyrics for \"{cleaned_song_title}\"",
+            "Paste or type song lyrics below.\n"
             "Use a blank line (press Enter twice) to separate slides/stanzas."
         )
 
-        if ok and lyrics_text:
+        if ok_lyrics and lyrics_text:
             # Split by one or more blank lines (effectively \n\n or more \n's)
             stanzas = [s.strip() for s in lyrics_text.split('\n\n') if s.strip()]
 
             if not stanzas:
                 QMessageBox.information(self, "No Stanzas", "No stanzas found. Ensure you use blank lines to separate them.")
                 return
-
             new_slides_data = []
             for stanza_lyrics in stanzas:
-                new_slide = SlideData(lyrics=stanza_lyrics) # Uses default background and template
+                new_slide = SlideData(lyrics=stanza_lyrics, song_title=cleaned_song_title)
                 new_slides_data.append(new_slide)
             self.presentation_manager.add_slides(new_slides_data) # Add all at once
 
@@ -259,14 +274,26 @@ class MainWindow(QMainWindow):
         # --- 1. Rebuild Slide Buttons ---
         # Clear existing buttons first
         while self.slide_buttons_layout.count():
-            item = self.slide_buttons_layout.takeAt(0)
-            if item.widget():
-                widget = item.widget()
-                if isinstance(widget, ScaledSlideButton): # Only try to remove if it's a ScaledSlideButton
-                    self.slide_button_group.removeButton(widget)
-                widget.setParent(None) # Explicitly remove from parent's control
-                widget.deleteLater()
-        
+            item = self.slide_buttons_layout.takeAt(0) # Item from the main QVBoxLayout
+            widget_in_vbox = item.widget()
+            if widget_in_vbox:
+                # If it's a container QWidget holding a FlowLayout for slides
+                if isinstance(widget_in_vbox.layout(), FlowLayout):
+                    flow_layout_inside = widget_in_vbox.layout()
+                    while flow_layout_inside.count():
+                        flow_item = flow_layout_inside.takeAt(0)
+                        slide_button_widget = flow_item.widget()
+                        if slide_button_widget:
+                            if isinstance(slide_button_widget, ScaledSlideButton):
+                                self.slide_button_group.removeButton(slide_button_widget)
+                            # Child widgets of widget_in_vbox will be deleted when widget_in_vbox is deleted
+                            # No need to call deleteLater on slide_button_widget explicitly here
+                            # as long as it's properly parented to widget_in_vbox or its layout.
+                
+                # For SongHeaderWidget, QLabel, or the container QWidget itself
+                widget_in_vbox.setParent(None)
+                widget_in_vbox.deleteLater()
+
         slides = self.presentation_manager.get_slides()
 
         if not slides:
@@ -277,9 +304,36 @@ class MainWindow(QMainWindow):
             self._show_blank_on_output()
             return
 
+        # Use a sentinel that's guaranteed not to match any actual title (including None)
+        last_processed_title: Optional[str] = object() 
+        current_song_flow_layout: Optional[FlowLayout] = None
+
         print(f"  update_slide_display_and_selection: Found {len(slides)} slides to process.")
+
         for index, slide_data in enumerate(slides):
+            current_title = slide_data.song_title # This can be None or a string
+
+            if current_title != last_processed_title:
+                # This is a new song, or a transition to/from an untitled block of slides
+                last_processed_title = current_title
+
+                if current_title is not None: # It's a titled song
+                    song_header = SongHeaderWidget(current_title)
+                    self.slide_buttons_layout.addWidget(song_header) # Add header to main VBox
+                # else:
+                    # If current_title is None, we don't add a specific header for "untitled"
+                    # but we still create a new FlowLayout container below.
+
+                # Create a new container QWidget and FlowLayout for this group of slides
+                song_slides_container = QWidget()
+                # Pass the container as the parent to FlowLayout, it will set itself as layout
+                current_song_flow_layout = FlowLayout(song_slides_container, margin=5, hSpacing=5, vSpacing=5)
+                # song_slides_container.setLayout(current_song_flow_layout) # Not needed if parent passed to FlowLayout
+                self.slide_buttons_layout.addWidget(song_slides_container) # Add container to main VBox
+
+            # --- Process and create the ScaledSlideButton ---
             print(f"    Processing slide {index}, ID: {slide_data.id}, Lyrics: '{slide_data.lyrics[:30].replace('\n', ' ')}...'")
+            # (Ensure current_song_flow_layout is valid before adding buttons to it)
             preview_render_width = self.output_resolution.width() if self.output_window.isVisible() else 1920
             preview_render_height = self.output_resolution.height() if self.output_window.isVisible() else 1080
             
@@ -303,12 +357,13 @@ class MainWindow(QMainWindow):
             # button.setFixedSize(PREVIEW_WIDTH + 10, PREVIEW_HEIGHT + 10) # Padding
             button.setToolTip(f"Slide {index + 1}: {slide_data.lyrics.splitlines()[0] if slide_data.lyrics else 'Empty'}")
             button.slide_selected.connect(self._on_slide_button_selected_by_index) # Connect to new slot
-            self.slide_buttons_layout.addWidget(button)
+            
+            if current_song_flow_layout: # Add button to the current song's FlowLayout
+                current_song_flow_layout.addWidget(button)
             self.slide_button_group.addButton(button, index)
         
-        # addStretch is for box layouts, not applicable to FlowLayout in the same way.
-        # self.slide_buttons_layout.addStretch(1) 
-
+        # Add a stretch at the end of the main QVBoxLayout to push everything up
+        self.slide_buttons_layout.addStretch(1)
         # --- 2. Manage Selection ---
         num_slides = len(slides)
         if self.current_slide_index >= num_slides: # If selected index is now out of bounds

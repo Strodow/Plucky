@@ -29,6 +29,7 @@ class SlideData:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     lyrics: str = ""
     background_image_path: Optional[str] = None
+    song_title: Optional[str] = None # New field for the song's title
     background_color: str = "#000000" # Default black background if no image
     template_settings: Dict[str, Any] = field(default_factory=lambda: DEFAULT_TEMPLATE.copy())
 
@@ -81,4 +82,3 @@ if __name__ == "__main__":
     }
     slide_from_old_data = SlideData.from_dict(old_data_format)
     print("\nSlide from old data format (new ID and default template assigned):", slide_from_old_data)
-
