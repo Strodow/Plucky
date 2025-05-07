@@ -29,7 +29,7 @@ class SlideRenderer:
         # Potential future optimizations: cache fonts, etc.
         pass
 
-    def render_slide(self, slide_data: SlideData, width: int, height: int) -> QPixmap:
+    def render_slide(self, slide_data: SlideData, width: int, height: int) -> tuple[QPixmap, bool]:
         """
         Renders the given slide data onto a QPixmap of the specified dimensions.
 
@@ -39,11 +39,25 @@ class SlideRenderer:
             height: The target height of the output pixmap.
 
         Returns:
-            A QPixmap containing the rendered slide.
+            A tuple containing:
+                - A QPixmap with the rendered slide.
+                - A boolean indicating if a font error/fallback occurred (True if error, False otherwise).
         """
+        font_error_occurred = False # Initialize error flag
+
+        if width <= 0 or height <= 0:
+            logging.warning(f"Invalid dimensions for rendering slide: {width}x{height}. Returning blank pixmap.")
+            pixmap = QPixmap(1, 1) 
+            pixmap.fill(Qt.GlobalColor.transparent)
+            return pixmap, True # Indicate an error
+
         # Create the target pixmap
         pixmap = QPixmap(width, height)
-        # Start with a default background (e.g., black)
+        if pixmap.isNull():
+            logging.error(f"Failed to create QPixmap of size {width}x{height} for slide_data: {slide_data.id}")
+            error_pixmap = QPixmap(1, 1)
+            error_pixmap.fill(Qt.GlobalColor.magenta) # Error indicator
+            return error_pixmap, True
         pixmap.fill(QColor(slide_data.background_color))
 
         # --- Draw Background Image (if specified and valid) ---
@@ -57,6 +71,13 @@ class SlideRenderer:
 
         # --- Prepare Painter ---
         painter = QPainter(pixmap)
+        if not painter.isActive():
+            logging.error(f"QPainter could not be activated on pixmap for slide_data: {slide_data.id}")
+            painter.end() 
+            error_pixmap = QPixmap(1, 1)
+            error_pixmap.fill(Qt.GlobalColor.red) 
+            return error_pixmap, True
+
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -84,8 +105,10 @@ class SlideRenderer:
         font = QFont()
         font_family = font_settings.get("family", "Arial")
         font.setFamily(font_family)
-        if not QFontInfo(font).exactMatch():
+        font_info_check = QFontInfo(font) # Check against the font set on the painter later
+        if font_info_check.family().lower() != font_family.lower() and not font_info_check.exactMatch() :
             logging.warning(f"Font family '{font_family}' not found or resolved differently. Using default.")
+            font_error_occurred = True
 
         # Calculate font point size based on target height (scaling from 1080p base)
         base_font_size_pt = font_settings.get("size", 58) # Base size for 1080p
@@ -109,7 +132,7 @@ class SlideRenderer:
 
         if not text_to_draw: # Nothing more to do if no lyrics
             painter.end()
-            return pixmap
+            return pixmap, font_error_occurred # Still return the error flag
 
         # --- Calculate Text Layout ---
         font_metrics = QFontMetrics(font)
@@ -196,7 +219,7 @@ class SlideRenderer:
         # --- Cleanup ---
         painter.end()
 
-        return pixmap
+        return pixmap, font_error_occurred
 
 
 if __name__ == "__main__":

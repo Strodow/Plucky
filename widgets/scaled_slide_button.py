@@ -1,25 +1,24 @@
 import sys
 print(f"DEBUG: scaled_slide_button.py TOP LEVEL, __name__ is {__name__}") # DIAGNOSTIC
 import os
-from PySide6.QtWidgets import ( # type: ignore
-    QApplication, QPushButton, QWidget, QSizePolicy, QHBoxLayout, QButtonGroup, QStyle, QMenu
+from PySide6.QtWidgets import (  # type: ignore
+    QApplication, QWidget, QSizePolicy, QHBoxLayout, QVBoxLayout, QButtonGroup, QStyle, QMenu, QStyleOption
 )
 from PySide6.QtGui import (
-    QPixmap, QPainter, QColor, QFont, QFontMetrics, QPalette
+    QPixmap, QPainter, QColor, QFont, QFontMetrics, QPalette, QPen, QMouseEvent, QContextMenuEvent, QKeyEvent
 )
 from PySide6.QtCore import (
     Qt, QSize, Signal, Slot, QRectF, QPoint, QEvent
 )
 from typing import Optional, List, cast
 
+# Import the new InfoBannerWidget
+from .scaled_slide_button_infobar import InfoBannerWidget
 
-# Define content dimensions, matching MainWindow's PREVIEW_WIDTH/HEIGHT for the image part
-# These constants are no longer strictly needed here as the button will receive an already-sized pixmap.
-# However, they can be useful for the test block.
 BASE_TEST_PREVIEW_CONTENT_WIDTH = 160
 BASE_TEST_PREVIEW_CONTENT_HEIGHT = 90
 
-class ScaledSlideButton(QPushButton):
+class ScaledSlideButton(QWidget): # Changed from QPushButton
     """
     A button that displays a scaled version of a QPixmap and an info banner with icons.
     """
@@ -34,366 +33,429 @@ class ScaledSlideButton(QPushButton):
         super().__init__(parent)
         self._pixmap_to_display = QPixmap() # Stores the pixmap (already scaled by MainWindow)
         self._slide_id = slide_id
-
-        self._slide_number: Optional[int] = None
-        self._slide_label: Optional[str] = ""
         self._center_overlay_label: Optional[str] = "" # New: For the prominent centered label
         self._available_template_names: List[str] = [] # Will be set by MainWindow
+
         self._banner_height = 25
-        self.setCheckable(True)
-        self.setAutoExclusive(False)
+        self._is_checked = False
+        self._is_hovered = False 
+        self._is_pressed = False 
 
-        self._icon_states = {"error": False, "warning": False}
-        self._icon_pixmaps = {}
-        self._icon_size = self._banner_height - 10
-        self._icon_spacing = 5
+        self.banner_widget = InfoBannerWidget(banner_height=self._banner_height, parent=self)
 
-        error_icon_path = r"c:\Users\Logan\Documents\Plucky\Plucky\resources\error_icon.png"
-        error_pixmap_icon = QPixmap(error_icon_path) # Renamed to avoid conflict
-        if not error_pixmap_icon.isNull():
-            self._icon_pixmaps["error"] = error_pixmap_icon.scaled(self._icon_size, self._icon_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        else: # pragma: no cover
-            print(f"Warning: Could not load error icon from {error_icon_path}")
+        # Main layout for this QWidget
+        main_layout = QVBoxLayout(self)
+        # Add a margin to the layout so child widgets (like the banner)
+        # don't draw over the border painted by ScaledSlideButton's paintEvent.
+        # The border width can be up to 2px (or 3px if fixed_inset_for_content is 3).
+        main_layout.setContentsMargins(2,2,2,2) # A 2px margin should be enough
+        main_layout.setSpacing(0)
+        # The image will be drawn in the space managed by ScaledSlideButton's paintEvent,
+        # above the banner_widget. We add a stretch item that the banner will push down.
+        main_layout.addStretch(1) # This represents the image area
+        main_layout.addWidget(self.banner_widget)
+        self.setLayout(main_layout)
 
-        warning_pixmap_icon = QPixmap(self._icon_size, self._icon_size) # Renamed
-        warning_pixmap_icon.fill(QColor("orange"))
-        self._icon_pixmaps["warning"] = warning_pixmap_icon
-
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True) 
+
         self.setStyleSheet("""
-            QPushButton { border: 1px solid #555; padding: 0px; background-color: #333; color: white; text-align: center; }
-            QPushButton:checked { border: 2px solid #0078D7; background-color: #444; }
-            QPushButton:hover { background-color: #484848; }
-            QPushButton:pressed { background-color: #282828; }
+            ScaledSlideButton { /* Style the class itself */
+                border: 1px solid #555; /* Default border */
+                background-color: #333; /* Default background */
+                color: white; 
+            }
+            ScaledSlideButton[checked="true"] {
+                border: 2px solid #0078D7; /* Prominent blue border when checked */
+            }
+            ScaledSlideButton:hover { 
+                border: 2px solid #00A0F0;   /* Was 1px, now 2px light blue */
+            }
+            /* Pressed state will be handled by changing border color in paintEvent directly */
+            ScaledSlideButton[checked="true"]:hover {
+                border-color: #50AFEF;   /* Brighter blue for checked + hover */
+            }
         """)
-        self.clicked.connect(self._handle_click)
+
+    # --- Mimic QPushButton API ---
+    def isChecked(self) -> bool:
+        return self._is_checked
+
+    def setChecked(self, checked: bool):
+        if self._is_checked != checked:
+            self._is_checked = checked
+            self.setProperty("checked", self._is_checked) # For stylesheet selector [checked="true"]
+            self.style().unpolish(self) 
+            self.style().polish(self)
+            self.update()
+
+    def setCheckable(self, checkable: bool): 
+        pass # Always checkable by our logic
+
+    def setAutoExclusive(self, exclusive: bool): 
+        pass # Handled by QButtonGroup externally if used with QAbstractButton
+    # --- End Mimic QPushButton API ---
 
     def set_pixmap(self, pixmap: QPixmap):
         """Sets the pixmap to be displayed and triggers a repaint."""
         if isinstance(pixmap, QPixmap) and not pixmap.isNull():
-            self._pixmap_to_display = pixmap # Assume pixmap is already correctly sized
+            self._pixmap_to_display = pixmap 
         else:
-            # Create a placeholder if an invalid pixmap is provided
-            # For safety, create a minimal placeholder. MainWindow should handle better placeholders.
-            self._pixmap_to_display = QPixmap(1,1) # Minimal placeholder
+            self._pixmap_to_display = QPixmap(1,1) 
             self._pixmap_to_display.fill(Qt.GlobalColor.lightGray)
-            # Optionally draw text on placeholder
-            # painter = QPainter(self._scaled_pixmap)
-            # painter.drawText(self._scaled_pixmap.rect(), Qt.AlignCenter, "No Preview")
-            # painter.end()
-        self.update()  # Schedule a repaint
-
+        self.update()
+        self.updateGeometry() 
 
     def set_slide_info(self, number: Optional[int], label: Optional[str]):
-        """Sets the information to be displayed in the banner."""
-        self._slide_number = number
-        self._slide_label = label if label is not None else ""
-        self.update() # Request repaint
+        """Sets the information for the banner widget."""
+        self.banner_widget.set_info(number, label)
 
     def set_icon_state(self, icon_name: str, visible: bool):
-        """Sets the visibility state for a specific icon."""
-        if icon_name in self._icon_states and self._icon_states[icon_name] != visible:
-            self._icon_states[icon_name] = visible
-            self.update() # Request repaint if state changed
+        """Sets the icon visibility for the banner widget."""
+        self.banner_widget.set_icon_state(icon_name, visible)
 
     def set_center_overlay_label(self, text: Optional[str], emit_signal_on_change: bool = True):
-        """Sets the text for the prominent centered label displayed over the image."""
         new_label_value = text if text is not None else ""
+        # The ScaledSlideButton still "owns" the concept of this label for data purposes
         if self._center_overlay_label != new_label_value:
             self._center_overlay_label = new_label_value
             if emit_signal_on_change:
                 self.center_overlay_label_changed.emit(self._slide_id, self._center_overlay_label)
+        self.banner_widget.set_section_label(new_label_value) # Pass to banner for display
         self.update()
 
+    def set_banner_color(self, color: Optional[QColor]):
+        """Sets a custom color for the banner widget."""
+        self.banner_widget.set_custom_color(color)
 
     def sizeHint(self) -> QSize:
-        # The button's preferred size includes the pixmap area and the info banner
         content_width = self._pixmap_to_display.width() if not self._pixmap_to_display.isNull() else BASE_TEST_PREVIEW_CONTENT_WIDTH
         content_height = self._pixmap_to_display.height() if not self._pixmap_to_display.isNull() else BASE_TEST_PREVIEW_CONTENT_HEIGHT
-        return QSize(content_width, content_height + self._banner_height)
-
+        # The banner widget has a fixed height, so we add that.
+        return QSize(content_width, content_height + self.banner_widget.height())
 
     def paintEvent(self, event):
-        """Overrides the paint event to draw the scaled pixmap, banner, and icons."""
-        # Call super().paintEvent() if you want the stylesheet's border/hover effects
-        # and then draw on top. If you want full control, omit it or draw borders manually.
-        super().paintEvent(event) # Draws border, handles hover/pressed from stylesheet
-
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        opt = QStyleOption()
+        opt.initFrom(self)
+        
+        # Draw background based on stylesheet (for QWidget)
+        self.style().drawPrimitive(QStyle.PrimitiveElement.PE_Widget, opt, painter, self)
 
-        button_rect = self.rect() # The entire area of the button
+        # Determine the area for drawing the image (above the banner)
+        image_area_total_rect = self.rect()
+        image_area_total_rect.setHeight(max(0, self.height() - self.banner_widget.height()))
 
-        main_content_draw_rect = QRectF() # Will store where the main image/placeholder is drawn
+        # Determine border properties based on state
+        # current_border_color = QColor(self.style().styleHint(QStyle.StyleHint.SH_Button_DefaultBorder, opt, self)) # Fallback - REMOVE THIS
+        # Default border from stylesheet if not overridden by state
+        if self.isChecked(): # Using our internal state
+            current_border_color = QColor("#0078D7") # Checked color
+            current_border_width = 2
+            if self._is_hovered:
+                current_border_color = QColor("#50AFEF") # Checked + Hover
+        elif self._is_hovered: # Not checked, but hovered
+            current_border_color = QColor("#00A0F0") # Hover color
+            current_border_width = 2
+        else: # Default unckecked, not hovered
+            current_border_color = QColor("#555")
+            current_border_width = 1
+        
+        if self._is_pressed: # Overrides other border colors for visual feedback
+            current_border_color = QColor("#FFFFFF") # Pressed color
+            current_border_width = 2
 
-        # --- Draw the Main Scaled Pixmap ---
-        # It's already scaled to PREVIEW_CONTENT_WIDTH x PREVIEW_CONTENT_HEIGHT (or smaller if aspect kept)
-        if not self._pixmap_to_display.isNull():
-            # Calculate target drawing dimensions for the pixmap, respecting button width
-            # The pixmap itself is already scaled to PREVIEW_CONTENT_WIDTH x PREVIEW_CONTENT_HEIGHT
-            # We just need to center it if the button is wider.
-            
-            # Effective width for drawing the pixmap (it won't exceed button width)
-            draw_width = min(self._pixmap_to_display.width(), button_rect.width())
-            # Effective height (it's already scaled for PREVIEW_CONTENT_HEIGHT)
-            draw_height = self._pixmap_to_display.height()
+        # Draw the border manually
+        painter.setPen(QPen(current_border_color, current_border_width))
+        half_pen = current_border_width / 2.0
+        border_draw_rect = QRectF(self.rect()).adjusted(half_pen, half_pen, -half_pen, -half_pen)
+        painter.drawRect(border_draw_rect)
 
-            img_x = (button_rect.width() - draw_width) / 2
-            # Center vertically within its designated PREVIEW_CONTENT_HEIGHT area
-            # The content area height is self._pixmap_to_display.height()
-            img_y = (self._pixmap_to_display.height() - draw_height) / 2 # Should be 0 if pixmap fills content height
-            main_content_draw_rect = QRectF(img_x, img_y, draw_width, draw_height)
-            painter.drawPixmap(main_content_draw_rect.topLeft(), self._pixmap_to_display)
-        else:
-            # Define a placeholder rect if pixmap is null
-            placeholder_height = button_rect.height() - self._banner_height
-            main_content_draw_rect = QRectF(0, 0, button_rect.width(), max(0, placeholder_height))
-            if main_content_draw_rect.isValid():
-                painter.fillRect(main_content_draw_rect, QColor(Qt.GlobalColor.darkGray).lighter(150))
-                # Optional: text on placeholder, though center_overlay_label might cover it
-                # painter.setPen(Qt.GlobalColor.gray)
-                # painter.drawText(main_content_draw_rect, Qt.AlignCenter, "No Preview")
-
-
-        # --- Draw Banner ---
-        banner_rect = QRectF(
-            0, # Start from the left edge of the button
-            self._pixmap_to_display.height() if not self._pixmap_to_display.isNull() else 0, # Positioned directly below the image content area
-            button_rect.width(), # Full width of the button
-            self._banner_height
+        # Define drawable_area for content (pixmap, overlay) *inside* the border
+        fixed_inset_for_content = 3 # This was the value that worked
+        drawable_image_content_area = image_area_total_rect.adjusted(
+            fixed_inset_for_content, fixed_inset_for_content, 
+            -fixed_inset_for_content, -fixed_inset_for_content 
         )
 
-        # Banner background
-        # Use style's highlight color if checked, otherwise a darker version of button background
-        # The stylesheet handles the main button background, so we draw banner on top.
-        if self.isChecked():
-            # A slightly different color for the banner when checked to distinguish from main highlight
-            banner_color = self.palette().color(QPalette.ColorRole.Highlight).darker(110)
-            if banner_color == self.palette().color(QPalette.ColorRole.Highlight): # Ensure it's actually darker
-                 banner_color = banner_color.darker(105) # Try again
-        else:
-            # A color that contrasts with the default button background from stylesheet
-            banner_color = QColor("#202020") # Darker than the #333 default
-        painter.fillRect(banner_rect, banner_color)
+        painter.save() # Save painter state for clipping
+        painter.setClipRect(drawable_image_content_area)
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
 
+        actual_pixmap_rect = QRectF()
+        if not self._pixmap_to_display.isNull() and drawable_image_content_area.height() > 0:
+            target_w = min(self._pixmap_to_display.width(), drawable_image_content_area.width())
+            target_h = min(self._pixmap_to_display.height(), drawable_image_content_area.height())
+            actual_pixmap_rect = QRectF(
+                drawable_image_content_area.left() + (drawable_image_content_area.width() - target_w) / 2,
+                drawable_image_content_area.top() + (drawable_image_content_area.height() - target_h) / 2,
+                target_w, target_h
+            )
+            painter.drawPixmap(actual_pixmap_rect, self._pixmap_to_display, self._pixmap_to_display.rect())
+        elif drawable_image_content_area.isValid(): 
+            actual_pixmap_rect = QRectF(
+                drawable_image_content_area.left(), drawable_image_content_area.top(),
+                drawable_image_content_area.width(), max(0, drawable_image_content_area.height())
+            )
+            painter.fillRect(actual_pixmap_rect, QColor(Qt.GlobalColor.darkGray).lighter(150))
 
-        # --- Prepare Banner Content ---
-        painter.setPen(QColor(Qt.GlobalColor.white)) # Ensure text is visible on dark banner
-        banner_font = QFont(self.font()) # Start with button's font
-        banner_font.setPointSize(max(8, int(banner_font.pointSize() * 0.85))) # Slightly smaller
-        painter.setFont(banner_font)
-
-        # --- Calculate Text and Icon Rects ---
-        text_padding_horizontal = 5 # Horizontal padding for text within the banner
-        total_icon_area_width = 0
-        visible_icons = []
-
-        # Determine which icons are visible and calculate total width needed
-        # Iterate in reverse if you want icons added left-to-right visually but drawn right-to-left
-        icon_order = ["error", "warning"] # Define drawing order (rightmost first)
-        for icon_name in icon_order:
-            if self._icon_states.get(icon_name, False) and icon_name in self._icon_pixmaps:
-                visible_icons.append(icon_name)
-                total_icon_area_width += self._icon_size + self._icon_spacing
-
-        if total_icon_area_width > 0 and visible_icons: # Check visible_icons to avoid negative if only spacing
-            total_icon_area_width -= self._icon_spacing # Remove trailing space if icons exist
-
-        # --- Draw Banner Content: Number, Centered Overlay Label, Icons ---
-
-        # Draw slide number left-aligned
-        num_str = str(self._slide_number if self._slide_number is not None else (self._slide_id + 1))
-        font_metrics = QFontMetrics(painter.font())
-        num_str_width_approx = font_metrics.horizontalAdvance(num_str) + text_padding_horizontal * 2 # Width for number + padding on both sides
-
-        # Define the rect for the number
-        number_draw_rect = QRectF(banner_rect.left() + text_padding_horizontal, banner_rect.top(),
-                                  num_str_width_approx - text_padding_horizontal, banner_rect.height())
-        painter.drawText(number_draw_rect, Qt.AlignLeft | Qt.AlignVCenter, num_str)
-
-        # Define the rect for the centered overlay label
-        # It's between the number area and the icon area
-        center_label_left_edge = banner_rect.left() + num_str_width_approx
-        center_label_right_edge = banner_rect.right() - (total_icon_area_width + text_padding_horizontal)
-        
-        center_label_rect = QRectF(center_label_left_edge, banner_rect.top(),
-                                   max(0, center_label_right_edge - center_label_left_edge), banner_rect.height())
-
-        if self._center_overlay_label and center_label_rect.width() > 0:
-            # Use a slightly more prominent font for this label if desired
-            # overlay_banner_font = QFont(painter.font())
-            # overlay_banner_font.setBold(True) # Example
-            # painter.setFont(overlay_banner_font)
-            elided_center_label = font_metrics.elidedText(self._center_overlay_label, Qt.TextElideMode.ElideRight, center_label_rect.width())
-            painter.drawText(center_label_rect, Qt.AlignCenter | Qt.AlignVCenter, elided_center_label)
-            # painter.setFont(banner_font) # Reset to original banner font if changed
-
-        # --- Draw Visible Icons ---
-        current_icon_x = banner_rect.right() - text_padding_horizontal # Start from right edge of banner (with padding)
-        for icon_name in visible_icons: # Draw in the order determined earlier (e.g., error then warning from right)
-            current_icon_x -= self._icon_size # Position for current icon
-            icon_pixmap = self._icon_pixmaps[icon_name]
-            icon_y = banner_rect.top() + (banner_rect.height() - icon_pixmap.height()) / 2 # Center vertically
-            painter.drawPixmap(int(current_icon_x), int(icon_y), icon_pixmap)
-            current_icon_x -= self._icon_spacing # Space for next icon
+        # Center overlay label drawing on the image is now removed. It's handled by InfoBannerWidget.
+        painter.restore() # Restore clipping
         painter.end()
 
-    def get_slide_id(self):
-        return self._slide_id
+    # --- Mouse event handling ---
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_pressed = True
+            self.update()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
-    @Slot()
-    def _handle_click(self):
-        """Emits the slide_selected signal when clicked."""
-        # QButtonGroup handles unchecking others if setExclusive(True)
-        # self.setChecked(True) # Ensure this button is visually checked
-        self.slide_selected.emit(self._slide_id)
-        
-    def contextMenuEvent(self, event):
-        if not self._available_template_names: # Don't show "Apply Template" if no templates known
-            # Fallback to a simpler menu or no menu if this happens unexpectedly
-            # For now, we'll proceed, but this is a point to consider.
-            pass
-        """Shows a context menu on right-click."""
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton and self._is_pressed:
+            self._is_pressed = False
+            if self.rect().contains(event.pos()): # Check if release is within bounds
+                current_checked_state = self.isChecked()
+                self.setChecked(not current_checked_state) 
+                self.slide_selected.emit(self._slide_id) 
+            self.update()
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def enterEvent(self, event: QEvent): 
+        self._is_hovered = True
+        self.update() 
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent): 
+        self._is_hovered = False
+        self.update() 
+        super().leaveEvent(event)
+
+    def contextMenuEvent(self, event: QContextMenuEvent): # Changed from QEvent to QContextMenuEvent
         menu = QMenu(self)
-        
         edit_action = menu.addAction("Edit Slide Lyrics")
         delete_action = menu.addAction("Delete Slide")
-        # menu.addSeparator() # Separator removed as next/prev are gone
         menu.addSeparator()
-        # Future actions can be added here
         
         apply_template_submenu = menu.addMenu("Apply Template")
         if self._available_template_names:
             for template_name in self._available_template_names:
                 action = apply_template_submenu.addAction(template_name)
-                action.setData(template_name) # Store template name in action's data
+                action.setData(template_name)
         else:
             apply_template_submenu.setEnabled(False)
 
-        # --- New "Label" Submenu ---
         label_submenu = menu.addMenu("Set Overlay Label")
         predefined_labels = ["Verse 1", "Verse 2", "Verse 3", "Chorus", "Refrain", "Bridge", "Intro", "Outro", "Blank"]
         for label_text in predefined_labels:
             action = label_submenu.addAction(label_text)
-            action.setData(label_text) # Store label text in action's data
+            action.setData(label_text)
         
         label_submenu.addSeparator()
         edit_custom_label_action = label_submenu.addAction("Edit Custom Label...")
-        # --- End New "Label" Submenu ---
 
-        # Add a final separator if you plan to add more top-level items later
-        # menu.addSeparator() 
-        # clear_label_action = menu.addAction("Clear Overlay Label")
+        menu.addSeparator()
+        banner_color_submenu = menu.addMenu("Change Banner Color")
+        default_color_action = banner_color_submenu.addAction("Default Color")
+        custom_color_action = banner_color_submenu.addAction("Choose Custom Color...")
 
+        action_selected = menu.exec(event.globalPos()) # Renamed 'action' to 'action_selected'
 
-        action = menu.exec(event.globalPos())
-
-        if action == edit_action:
+        if action_selected == edit_action:
             self.edit_requested.emit(self._slide_id)
-        elif action == delete_action:
+        elif action_selected == delete_action:
             self.delete_requested.emit(self._slide_id)
-        elif action and action.parent() == apply_template_submenu: # Check if action is from submenu
-            chosen_template_name = action.data()
+        elif action_selected and action_selected.parent() == apply_template_submenu:
+            chosen_template_name = action_selected.data()
             if chosen_template_name:
                 self.apply_template_to_slide_requested.emit(self._slide_id, chosen_template_name)
-        elif action and action.parent() == label_submenu:
-            if action == edit_custom_label_action:
-                # Import QInputDialog locally to avoid circular import issues if it were at top level
+        elif action_selected and action_selected.parent() == label_submenu:
+            if action_selected == edit_custom_label_action:
                 from PySide6.QtWidgets import QInputDialog # type: ignore
                 current_label = self._center_overlay_label
                 new_label, ok = QInputDialog.getText(self, "Set Custom Overlay Label", 
                                                      "Enter label text:", text=current_label)
-                if ok: # User pressed OK
+                if ok:
                     self.set_center_overlay_label(new_label)
-            else: # One of the predefined labels
-                chosen_label = action.data()
-                if chosen_label == "Blank": # Handle "Blank" explicitly
+            else:
+                chosen_label = action_selected.data()
+                if chosen_label == "Blank":
                     self.set_center_overlay_label("")
                 elif chosen_label:
                     self.set_center_overlay_label(chosen_label)
-        # elif action == clear_label_action: # If you add a top-level clear
-        #     self.set_center_overlay_label("")
+        elif action_selected and action_selected.parent() == banner_color_submenu:
+            if action_selected == default_color_action:
+                self.banner_widget.set_custom_color(None) # Delegate to banner widget
+            elif action_selected == custom_color_action:
+                from PySide6.QtWidgets import QColorDialog # type: ignore
+                initial_color = self.banner_widget._custom_banner_color if self.banner_widget._custom_banner_color else QColor("#202020")
+                color = QColorDialog.getColor(initial_color, self, "Choose Banner Color")
+                if color.isValid():
+                    self.banner_widget.set_custom_color(color) # Delegate
 
     def set_available_templates(self, template_names: List[str]):
         self._available_template_names = template_names
         
-    def keyPressEvent(self, event: QEvent): # QEvent can be imported from PySide6.QtCore
-        """Override to prevent default button navigation for arrow keys we want to handle globally."""
+    def keyPressEvent(self, event: QKeyEvent): # Changed QEvent to QKeyEvent
         key = event.key()
-        # Check for Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down
-        if key == Qt.Key_Left or \
-           key == Qt.Key_Right or \
-           key == Qt.Key_Up or \
-           key == Qt.Key_Down:
-            event.ignore() # Tell Qt this widget isn't handling it, let it propagate
-            return         # Explicitly return to stop further processing by this widget for these keys
-        super().keyPressEvent(event) # Handle other keys (like Space for click) normally
+        if key == Qt.Key_Space or key == Qt.Key_Return: # Emulate button press
+            current_checked_state = self.isChecked()
+            self.setChecked(not current_checked_state)
+            self.slide_selected.emit(self._slide_id)
+            event.accept()
+        elif key in [Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down]:
+            event.ignore() 
+        else:
+            super().keyPressEvent(event)
 
 
 if __name__ == "__main__": # pragma: no cover
     print(f"DEBUG: scaled_slide_button.py INSIDE if __name__ == '__main__'") # DIAGNOSTIC
     app = QApplication(sys.argv)
 
-    # --- Create a dummy window to hold the button ---
     window = QWidget()
-    layout = QHBoxLayout(window) # Changed to QHBoxLayout
-    # Align items added to the layout to the top-left
+    layout = QHBoxLayout(window) 
     layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
     window.setWindowTitle("ScaledSlideButton Test")
-    window.setGeometry(100, 100, 800, 400) # x, y, width, height (made taller for banner)
+    window.setGeometry(100, 100, 800, 600) 
 
-    # --- Create multiple buttons ---
     num_buttons = 10
-    loaded_pixmaps = {} # Cache loaded images to avoid reloading
+    loaded_pixmaps = {} 
 
-    # --- Add Button Group for Exclusive Selection ---
-    button_group = QButtonGroup(window) # Parent to the window
-    button_group.setExclusive(True)
+    # QButtonGroup won't work directly with QWidget for setExclusive.
+    # We'll manage exclusivity manually in the on_slide_selected handler for this test.
+    all_slide_buttons_in_test = [] 
 
-    # Create a single placeholder pixmap to reuse for previews in test
-    placeholder_pixmap_test = QPixmap(BASE_TEST_PREVIEW_CONTENT_WIDTH, BASE_TEST_PREVIEW_CONTENT_HEIGHT) # Renamed
+    placeholder_pixmap_test = QPixmap(BASE_TEST_PREVIEW_CONTENT_WIDTH, BASE_TEST_PREVIEW_CONTENT_HEIGHT) 
     placeholder_pixmap_test.fill(QColor("darkcyan"))
-    # Draw text on the test placeholder pixmap
     temp_painter = QPainter(placeholder_pixmap_test)
     temp_painter.setPen(QColor("white"))
-    temp_painter.setFont(QFont("Arial", 10)) # Added font setting for placeholder
+    temp_painter.setFont(QFont("Arial", 10)) 
     temp_painter.drawText(placeholder_pixmap_test.rect(), Qt.AlignmentFlag.AlignCenter, "Test Slide")
     temp_painter.end()
 
-
-    # --- Connect signal for testing ---
-    def on_slide_selected(slide_id_val): # Renamed arg to avoid conflict
-        print(f"Button clicked! Slide ID: {slide_id_val}")
-        # In a real app, you might uncheck other buttons here
+    def on_slide_selected(clicked_button_id): 
+        print(f"Button clicked! Slide ID: {clicked_button_id}")
+        for btn_id, btn_widget in all_slide_buttons_in_test:
+            if btn_id != clicked_button_id:
+                btn_widget.setChecked(False) # Manual exclusivity
 
     for i in range(num_buttons):
-        # slide_id for the button is its index
         button = ScaledSlideButton(slide_id=i)
-        # No need for setFixedSize, sizeHint and sizePolicy should handle it.
-
-        # Try loading a corresponding test render, fallback to placeholder
-        # Adjust this path if your test renders are elsewhere or named differently
+        button.set_available_templates(["Template Alpha", "Template Beta"]) # For context menu
+        
         test_image_path = f"c:/Users/Logan/Documents/Plucky/Plucky/rendering/test_renders/test_render_{i+1}.png"
 
         if test_image_path not in loaded_pixmaps:
             pixmap = QPixmap(test_image_path)
             if pixmap.isNull():
-                loaded_pixmaps[test_image_path] = placeholder_pixmap_test # Use placeholder if load fails
+                loaded_pixmaps[test_image_path] = placeholder_pixmap_test 
             else:
-                loaded_pixmaps[test_image_path] = pixmap # Cache successful load
+                loaded_pixmaps[test_image_path] = pixmap.scaled(
+                    BASE_TEST_PREVIEW_CONTENT_WIDTH, 
+                    BASE_TEST_PREVIEW_CONTENT_HEIGHT, 
+                    Qt.AspectRatioMode.KeepAspectRatio, 
+                    Qt.TransformationMode.SmoothTransformation
+                )
 
         button.set_pixmap(loaded_pixmaps[test_image_path])
-        # Set sample banner info
-        # Set the new center overlay label for some buttons
+        
+        button.set_slide_info(number=i + 1, label=f"Test Label {i+1}")
+
         if i == 0:
             button.set_center_overlay_label("Verse 1")
         elif i == 2:
             button.set_center_overlay_label("Chorus")
         elif i == 4:
-            button.set_center_overlay_label("") # Test blank
-        button.set_slide_info(number=i + 1, label=f"A Long Test Label Name {i+1}")
-        # --- Set icon states for some buttons in the test ---
+            button.set_center_overlay_label("Bridge") 
+            button.set_banner_color(QColor("darkmagenta")) 
+        elif i == 5:
+             button.set_center_overlay_label("") 
+
+        if (i + 1) % 3 == 0: 
+            button.set_icon_state("error", True)
+        if (i + 1) % 4 == 0: 
+            button.set_icon_state("warning", True)
+        if (i + 1) == 6:
+             button.set_icon_state("error", True)
+             button.set_icon_state("warning", True)
+        
+        button.slide_selected.connect(on_slide_selected)
+        layout.addWidget(button)
+        all_slide_buttons_in_test.append((i, button))
+
+    window.show()
+
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__": # pragma: no cover
+    print(f"DEBUG: scaled_slide_button.py INSIDE if __name__ == '__main__'") # DIAGNOSTIC
+    app = QApplication(sys.argv)
+
+    window = QWidget()
+    layout = QHBoxLayout(window) 
+    layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+    window.setWindowTitle("ScaledSlideButton Test")
+    window.setGeometry(100, 100, 800, 600) # Made window taller to see more buttons
+
+    num_buttons = 10
+    loaded_pixmaps = {} 
+
+    button_group = QButtonGroup(window) 
+    button_group.setExclusive(True)
+
+    placeholder_pixmap_test = QPixmap(BASE_TEST_PREVIEW_CONTENT_WIDTH, BASE_TEST_PREVIEW_CONTENT_HEIGHT) 
+    placeholder_pixmap_test.fill(QColor("darkcyan"))
+    temp_painter = QPainter(placeholder_pixmap_test)
+    temp_painter.setPen(QColor("white"))
+    temp_painter.setFont(QFont("Arial", 10)) 
+    temp_painter.drawText(placeholder_pixmap_test.rect(), Qt.AlignmentFlag.AlignCenter, "Test Slide")
+    temp_painter.end()
+
+    def on_slide_selected(slide_id_val): 
+        print(f"Button clicked! Slide ID: {slide_id_val}")
+
+    for i in range(num_buttons):
+        button = ScaledSlideButton(slide_id=i)
+        
+        test_image_path = f"c:/Users/Logan/Documents/Plucky/Plucky/rendering/test_renders/test_render_{i+1}.png"
+
+        if test_image_path not in loaded_pixmaps:
+            pixmap = QPixmap(test_image_path)
+            if pixmap.isNull():
+                loaded_pixmaps[test_image_path] = placeholder_pixmap_test 
+            else:
+                # Ensure test pixmap is scaled to base preview size for consistency in test
+                loaded_pixmaps[test_image_path] = pixmap.scaled(
+                    BASE_TEST_PREVIEW_CONTENT_WIDTH, 
+                    BASE_TEST_PREVIEW_CONTENT_HEIGHT, 
+                    Qt.AspectRatioMode.KeepAspectRatio, 
+                    Qt.TransformationMode.SmoothTransformation
+                )
+
+        button.set_pixmap(loaded_pixmaps[test_image_path])
+        
+        # Set slide info (number for banner, long label for banner)
+        button.set_slide_info(number=i + 1, label=f"Test Label {i+1}")
+
+        # Set center overlay label (now for banner)
+        # The set_slide_info above sets a "Test Label X" which will be overridden if section label is set
+        if i == 0:
+            button.set_center_overlay_label("Verse 1")
+        elif i == 2:
+            button.set_center_overlay_label("Chorus")
+        elif i == 4:
+            button.set_center_overlay_label("Bridge") # Label on image
+            button.set_banner_color(QColor("darkmagenta")) # Test custom banner color
+        elif i == 5:
+             button.set_center_overlay_label("") # Test blank overlay label
+
+        # Set icon states
         if (i + 1) % 3 == 0: # Show error on every 3rd button
             button.set_icon_state("error", True)
         if (i + 1) % 4 == 0: # Show warning on every 4th button
@@ -402,11 +464,10 @@ if __name__ == "__main__": # pragma: no cover
         if (i + 1) == 6:
              button.set_icon_state("error", True)
              button.set_icon_state("warning", True)
-
-
+        
         button.slide_selected.connect(on_slide_selected)
-        layout.addWidget(button) # Add button to the layout
-        button_group.addButton(button) # Add button to the group
+        layout.addWidget(button)
+        button_group.addButton(button)
 
     window.show()
 

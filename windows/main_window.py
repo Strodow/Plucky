@@ -4,7 +4,7 @@ import uuid # For generating unique slide IDs for testing
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QSlider,
-    QMessageBox, QVBoxLayout, QWidget, QPushButton, QInputDialog, QDialog,
+    QMessageBox, QVBoxLayout, QWidget, QPushButton, QInputDialog, QDialog, # QButtonGroup removed
     QComboBox, QLabel, QHBoxLayout, QSplitter, QScrollArea, QButtonGroup
 )
 from PySide6.QtGui import QScreen, QPixmap
@@ -74,8 +74,10 @@ class MainWindow(QMainWindow):
 
         self.current_slide_index = -1 # Tracks the selected slide button's index
         self.output_resolution = QSize(1920, 1080) # Default, updated on monitor select
-        self.slide_button_group = QButtonGroup(self)
-        self.slide_button_group.setExclusive(True)
+        # self.slide_button_group = QButtonGroup(self) # No longer using QButtonGroup for ScaledSlideButtons
+        # self.slide_button_group.setExclusive(True)   # No longer using QButtonGroup for ScaledSlideButtons
+        self.slide_buttons_list = [] # List to store ScaledSlideButton instances
+
 
         # --- UI Elements ---
         self.central_widget = QWidget()
@@ -179,7 +181,8 @@ class MainWindow(QMainWindow):
 
         self.refresh_monitors_button.clicked.connect(self.refresh_monitors)
         self.go_live_button.clicked.connect(self.toggle_live)
-        # self.slide_button_group.buttonClicked[int].connect(self._on_slide_button_selected_by_index) # Alternative
+        # The QButtonGroup signal is no longer used for ScaledSlideButtons.
+        # We will connect ScaledSlideButton.slide_selected directly.
 
         self.update_slide_display_and_selection() # Initial setup of slide display
         
@@ -356,6 +359,31 @@ class MainWindow(QMainWindow):
             # which in turn calls update_slide_display_and_selection to refresh UI.
 
     @Slot()
+    def _handle_manual_slide_selection(self, selected_slide_id: int):
+        """
+        Manages exclusive selection of ScaledSlideButtons and updates UI.
+        This is connected to ScaledSlideButton.slide_selected signal.
+        """
+        print(f"MainWindow: _handle_manual_slide_selection for slide_id {selected_slide_id}")
+        
+        clicked_button_widget = None
+        for button_widget in self.slide_buttons_list:
+            if button_widget._slide_id == selected_slide_id:
+                if not button_widget.isChecked(): # Ensure it's checked
+                    button_widget.setChecked(True)
+                clicked_button_widget = button_widget
+            else:
+                if button_widget.isChecked(): # Uncheck others
+                    button_widget.setChecked(False)
+
+        if clicked_button_widget:
+            self.current_slide_index = selected_slide_id # Update our tracking variable
+            if self.output_window.isVisible():
+                self._display_slide(selected_slide_id)
+            self.scroll_area.setFocus() # Important for keyboard navigation
+            print(f"MainWindow: UI updated for slide {selected_slide_id}. Focus on scroll_area.")
+
+    @Slot()
     def update_slide_display_and_selection(self):
         """
         Clears and repopulates slide buttons. Manages selection.
@@ -364,6 +392,7 @@ class MainWindow(QMainWindow):
         print("MainWindow: update_slide_display_and_selection called")
         
         # --- 1. Rebuild Slide Buttons ---
+        old_selected_slide_index = self.current_slide_index # Preserve current selection if possible
         # Clear existing buttons first
         while self.slide_buttons_layout.count():
             item = self.slide_buttons_layout.takeAt(0) # Item from the main QVBoxLayout
@@ -376,8 +405,11 @@ class MainWindow(QMainWindow):
                         flow_item = flow_layout_inside.takeAt(0)
                         slide_button_widget = flow_item.widget()
                         if slide_button_widget:
-                            if isinstance(slide_button_widget, ScaledSlideButton):
-                                self.slide_button_group.removeButton(slide_button_widget)
+                            # No need to remove from QButtonGroup as we are not using it for these
+                            # Disconnect signals if they were connected
+                            try:
+                                slide_button_widget.slide_selected.disconnect(self._handle_manual_slide_selection)
+                            except (TypeError, RuntimeError): pass # If not connected or already gone
                             # Child widgets of widget_in_vbox will be deleted when widget_in_vbox is deleted
                             # No need to call deleteLater on slide_button_widget explicitly here
                             # as long as it's properly parented to widget_in_vbox or its layout.
@@ -385,6 +417,7 @@ class MainWindow(QMainWindow):
                 # For SongHeaderWidget, QLabel, or the container QWidget itself
                 widget_in_vbox.setParent(None)
                 widget_in_vbox.deleteLater()
+        self.slide_buttons_list.clear() # Clear our manual list
 
         slides = self.presentation_manager.get_slides()
 
@@ -435,25 +468,33 @@ class MainWindow(QMainWindow):
             preview_render_height = self.output_resolution.height() if self.output_window.isVisible() else 1080
             
             try:
-                full_res_pixmap = self.slide_renderer.render_slide(slide_data, preview_render_width, preview_render_height)
+                # render_slide now returns (pixmap, has_font_error)
+                full_res_pixmap, has_font_error = self.slide_renderer.render_slide(
+                    slide_data, preview_render_width, preview_render_height
+                )
                 # print(f"      Full-res pixmap for slide {index}: isNull={full_res_pixmap.isNull()}, size={full_res_pixmap.size()}") # DEBUG
                 # if full_res_pixmap.isNull(): # DEBUG
                     # print(f"      WARNING: Full-res pixmap is NULL for slide {index}. Renderer might have failed silently.") # DEBUG
                 
                 preview_pixmap = full_res_pixmap.scaled(current_dynamic_preview_width, current_dynamic_preview_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 # print(f"      Preview pixmap for slide {index}: isNull={preview_pixmap.isNull()}, size={preview_pixmap.size()}") # DEBUG
-            except Exception as e:
+            except Exception as e: # Catch general rendering exceptions
                 print(f"      ERROR rendering preview for slide {index} (ID {slide_data.id}): {e}")
+                has_font_error = True # Treat general rendering errors as something to flag
                 preview_pixmap = QPixmap(current_dynamic_preview_width, current_dynamic_preview_height) # Use dynamic size for placeholder
                 preview_pixmap.fill(Qt.darkGray) # Corrected to Qt.darkGray
                 # print(f"      Filled preview pixmap with darkGray due to error for slide {index}.") # DEBUG
 
             button = ScaledSlideButton(slide_id=index) # No longer needs scale_factor
             button.set_pixmap(preview_pixmap)
+            # Set the slide number and label for the banner
+            # Pass an empty string for the label if you only want the number
+            button.set_slide_info(number=index + 1, label="")
+
             # print(f"      Set pixmap for button {index}.") # DEBUG
-            # button.setFixedSize(PREVIEW_WIDTH + 10, PREVIEW_HEIGHT + 10) # Padding
+
             button.setToolTip(f"Slide {index + 1}: {slide_data.lyrics.splitlines()[0] if slide_data.lyrics else 'Empty'}")
-            button.slide_selected.connect(self._on_slide_button_selected_by_index) # Connect to new slot
+            button.slide_selected.connect(self._handle_manual_slide_selection) # Connect to our new manual handler
             button.edit_requested.connect(self.handle_edit_slide_requested)
             button.delete_requested.connect(self.handle_delete_slide_requested)
             button.set_available_templates(self.template_manager.get_template_names()) # Pass template names
@@ -461,47 +502,53 @@ class MainWindow(QMainWindow):
             button.next_slide_requested_from_menu.connect(self.handle_next_slide_from_menu)
             button.previous_slide_requested_from_menu.connect(self.handle_previous_slide_from_menu)
             button.center_overlay_label_changed.connect(self.handle_slide_overlay_label_changed) # New connection
+
+            if has_font_error:
+                button.set_icon_state("error", True)
             
             if current_song_flow_layout: # Add button to the current song's FlowLayout
                 current_song_flow_layout.addWidget(button)
-            self.slide_button_group.addButton(button, index)
+            # self.slide_button_group.addButton(button, index) # DO NOT ADD TO QButtonGroup
+            self.slide_buttons_list.append(button) # Add to our manual list
         
         # Add a stretch at the end of the main QVBoxLayout to push everything up
         self.slide_buttons_layout.addStretch(1)
 
         # After creating all buttons, set their overlay labels from SlideData
         self._update_all_button_overlay_labels()
-
+        
         # --- 2. Manage Selection ---
         num_slides = len(slides)
-        if self.current_slide_index >= num_slides: # If selected index is now out of bounds
-            self.current_slide_index = num_slides - 1 if num_slides > 0 else -1
+        new_selection_target_index = old_selected_slide_index
+
+        if new_selection_target_index >= num_slides: # If old selection is now out of bounds
+            new_selection_target_index = num_slides - 1 if num_slides > 0 else -1
         
-        if self.current_slide_index != -1:
-            button_to_select = self.slide_button_group.button(self.current_slide_index)
-            if button_to_select:
-                if not button_to_select.isChecked(): # Check if not already checked to avoid signal loops
-                    button_to_select.setChecked(True)
-                # If it was already checked, and output is live, ensure it's displayed (content might have changed)
-                if self.output_window.isVisible():
-                     self._display_slide(self.current_slide_index)
-            else: # Should not happen if index is valid
-                self.current_slide_index = -1 
+        if new_selection_target_index != -1:
+            # Find the button in our list
+            button_to_select = next((btn for btn in self.slide_buttons_list if btn._slide_id == new_selection_target_index), None)
+            if button_to_select: # If found
+                # Trigger our manual selection handler. It will check the button and uncheck others.
+                self._handle_manual_slide_selection(new_selection_target_index)
+                # Ensure it's visible
+                self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50)
+            else: # Button for the target index not found (should not happen if list is consistent)
+                self.current_slide_index = -1
                 self._show_blank_on_output()
-        elif num_slides > 0: # No selection, but slides exist, select first one
-            self.current_slide_index = 0
-            button_to_select = self.slide_button_group.button(0)
-            if button_to_select and not button_to_select.isChecked():
-                button_to_select.setChecked(True) 
-            # _on_slide_button_selected_by_index will handle display if output is live
+        elif num_slides > 0: # No previous selection, but slides exist, select the first one
+            self._handle_manual_slide_selection(0) # Select the first slide (ID 0)
+            if self.slide_buttons_list:
+                 self.scroll_area.ensureWidgetVisible(self.slide_buttons_list[0], 50, 50)
         else: # No slides, no selection
+            self.current_slide_index = -1
             self._show_blank_on_output()
 
     def _update_all_button_overlay_labels(self):
         """Sets the overlay label on each button based on its corresponding SlideData."""
         slides = self.presentation_manager.get_slides()
         for index, slide_data in enumerate(slides):
-            button = self.slide_button_group.button(index)
+            # Find button in our list
+            button = next((btn for btn in self.slide_buttons_list if btn._slide_id == index), None)
             if button and isinstance(button, ScaledSlideButton):
                 # Pass the overlay_label from SlideData to the button
                 button.set_center_overlay_label(slide_data.overlay_label, emit_signal_on_change=False)
@@ -509,20 +556,23 @@ class MainWindow(QMainWindow):
     @Slot(int) # Receives slide_id (which is the index)
     def _on_slide_button_selected_by_index(self, slide_index: int):
         """Handles a slide button being clicked or programmatically selected."""
-        slides = self.presentation_manager.get_slides()
-        if 0 <= slide_index < len(slides):
-            self.current_slide_index = slide_index
-            print(f"_on_slide_button_selected_by_index: Slide {slide_index} selected. Current focus: {QApplication.focusWidget()}") # DEBUG
-            if self.output_window.isVisible():
-                self._display_slide(slide_index)
-            # CRITICAL: After a slide is selected, set focus to the QScrollArea
-            self.scroll_area.setFocus()
-            print(f"_on_slide_button_selected_by_index: Focus set to scroll_area. New focus: {QApplication.focusWidget()}") # DEBUG
-
-        else:
-            print(f"Warning: Invalid slide index {slide_index} from button selection.")
-            self.current_slide_index = -1
-            self._show_blank_on_output()
+        # THIS METHOD IS NOW REPLACED BY _handle_manual_slide_selection
+        # If you still have connections to this, they should be updated.
+        # For safety, let's just call the new handler.
+        print(f"DEPRECATED: _on_slide_button_selected_by_index called for {slide_index}. Redirecting.")
+        self._handle_manual_slide_selection(slide_index)
+        # slides = self.presentation_manager.get_slides()
+        # if 0 <= slide_index < len(slides):
+        #     self.current_slide_index = slide_index
+        #     print(f"_on_slide_button_selected_by_index: Slide {slide_index} selected. Current focus: {QApplication.focusWidget()}") # DEBUG
+        #     if self.output_window.isVisible():
+        #         self._display_slide(slide_index)
+        #     self.scroll_area.setFocus()
+        #     print(f"_on_slide_button_selected_by_index: Focus set to scroll_area. New focus: {QApplication.focusWidget()}") # DEBUG
+        # else:
+        #     print(f"Warning: Invalid slide index {slide_index} from button selection.")
+        #     self.current_slide_index = -1
+        #     self._show_blank_on_output()
 
     @Slot(int)
     def handle_edit_slide_requested(self, slide_index: int):
@@ -639,11 +689,12 @@ class MainWindow(QMainWindow):
         if new_selection_index >= num_slides: # Wrap to first
             new_selection_index = 0
         
-        button_to_select = self.slide_button_group.button(new_selection_index)
+        # Find button in our list
+        button_to_select = next((btn for btn in self.slide_buttons_list if btn._slide_id == new_selection_index), None)
         if button_to_select:
-            self.setFocus()
-            button_to_select.setChecked(True)
-            self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50)
+            # Trigger the full selection logic
+            self._handle_manual_slide_selection(new_selection_index)
+            self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50) # Ensure visibility
 
     @Slot(int)
     def handle_previous_slide_from_menu(self, current_slide_id: int):
@@ -655,11 +706,12 @@ class MainWindow(QMainWindow):
         if new_selection_index < 0: # Wrap to last
             new_selection_index = num_slides - 1
         
-        button_to_select = self.slide_button_group.button(new_selection_index)
+        # Find button in our list
+        button_to_select = next((btn for btn in self.slide_buttons_list if btn._slide_id == new_selection_index), None)
         if button_to_select:
-            self.setFocus()
-            button_to_select.setChecked(True)
-            self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50)
+            # Trigger the full selection logic
+            self._handle_manual_slide_selection(new_selection_index)
+            self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50) # Ensure visibility
 
 
     def _display_slide(self, index: int): # Original method starts here
@@ -672,21 +724,26 @@ class MainWindow(QMainWindow):
 
         slide_data = slides[index]
         try:
-            output_pixmap = self.slide_renderer.render_slide(
+            # render_slide now returns (pixmap, has_font_error)
+            output_pixmap, has_font_error_on_output = self.slide_renderer.render_slide(
                 slide_data, self.output_resolution.width(), self.output_resolution.height()
             )
             self.output_window.set_pixmap(output_pixmap)
+            # We don't directly use has_font_error_on_output here, but it's good practice
+            # The button icon should already reflect this from the preview rendering.
         except Exception as e:
             print(f"Error rendering slide {index} for output: {e}")
             error_slide = SlideData(lyrics=f"Error rendering slide:\n{e}", background_color="#AA0000", template_settings={"color": "#FFFFFF"})
-            error_pixmap = self.slide_renderer.render_slide(error_slide, self.output_resolution.width(), self.output_resolution.height())
+            # Render error slide, ignore its font error status for this specific display
+            error_pixmap, _ = self.slide_renderer.render_slide(error_slide, self.output_resolution.width(), self.output_resolution.height())
             self.output_window.set_pixmap(error_pixmap)
             self.show_error_message(f"Error rendering slide {index} (ID: {slide_data.id}): {e}")
 
     def _show_blank_on_output(self):
         if self.output_window.isVisible():
             blank_slide = SlideData(lyrics="", background_color="#000000")
-            blank_pixmap = self.slide_renderer.render_slide(blank_slide, self.output_resolution.width(), self.output_resolution.height())
+            # Render blank slide, ignore its font error status
+            blank_pixmap, _ = self.slide_renderer.render_slide(blank_slide, self.output_resolution.width(), self.output_resolution.height())
             self.output_window.set_pixmap(blank_pixmap)
 
     def show_error_message(self, message: str):
@@ -750,7 +807,8 @@ class MainWindow(QMainWindow):
                 else: # No change in selection logic based on this key, let default happen
                     return super().eventFilter(watched_object, event)
             elif key == Qt.Key_Left:
-                if current_selection_index == -1 and num_slides > 0:
+                # If current_slide_index is -1, it means no slide is selected.
+                if current_selection_index == -1 and num_slides > 0: # If nothing selected, select last
                     new_selection_index = num_slides - 1
                     print(f"EventFilter ArrowKeyDebug: Left - Was: None, Next: {new_selection_index}")
                 elif current_selection_index > 0:
@@ -767,16 +825,14 @@ class MainWindow(QMainWindow):
 
             if new_selection_index != current_selection_index or \
                (current_selection_index == -1 and new_selection_index != -1): # Ensure selection actually changes or initializes
-                button_to_select = self.slide_button_group.button(new_selection_index)
+                # Find button in our list
+                button_to_select = next((btn for btn in self.slide_buttons_list if btn._slide_id == new_selection_index), None)
                 if button_to_select:
                     print(f"EventFilter: Navigating to slide index {new_selection_index} from {current_selection_index}") # DEBUG
                     
                     # Directly call the method that handles all aspects of slide selection.
-                    # This method will update self.current_slide_index, update live output, and set focus.
-                    self._on_slide_button_selected_by_index(new_selection_index)
-                    
-                    # Ensure the button's visual state is checked and QButtonGroup is updated.
-                    button_to_select.setChecked(True) # This will trigger _on_slide_button_selected_by_index
+                    self._handle_manual_slide_selection(new_selection_index)
+                    # The handler above already calls setChecked(True) on the target button.
                     self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50)
                 return True # Event handled
 
