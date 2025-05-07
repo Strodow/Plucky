@@ -1,16 +1,18 @@
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy # Changed QWidget to QFrame
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QMenu
+from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtGui import QFont, QPalette
 
-# Assuming PREVIEW_WIDTH is a known constant, e.g., from MainWindow or a config
-# For now, let's use a typical value. If ScaledSlideButton.PREVIEW_CONTENT_WIDTH is accessible, use that.
-WIDGET_PREVIEW_WIDTH = 160
+# This will be the base width for calculations.
+BASE_BUTTON_WIDTH = 160
 
 class SongHeaderWidget(QFrame): # Inherit from QFrame
-    def __init__(self, title: str, parent=None):
+    # Signal to emit the current title of the song when edit is requested
+    edit_song_requested = Signal(str) # Define as a class attribute
+    def __init__(self, title: str, current_button_width: int = BASE_BUTTON_WIDTH, parent=None):
         super().__init__(parent)
+        self._current_button_width = current_button_width
         self.setAutoFillBackground(True) # Ensure the widget paints its background
-        
+
         # For QFrame, you might want to control the frame's appearance
         self.setFrameShape(QFrame.Shape.StyledPanel) # This helps with styling
         self.setFrameShadow(QFrame.Shadow.Plain)
@@ -23,8 +25,7 @@ class SongHeaderWidget(QFrame): # Inherit from QFrame
         font = self.title_label.font()
         font.setBold(True)
         font.setPointSize(font.pointSize() + 1) # Slightly larger
-        self.title_label.setFont(font) 
-        # Ensure title label text is white, as it's already set
+        self.title_label.setFont(font)
         # Ensure label background is transparent so frame background shows through
         self.title_label.setStyleSheet("color: white; background-color: transparent;")
 
@@ -41,22 +42,35 @@ class SongHeaderWidget(QFrame): # Inherit from QFrame
         self.setStyleSheet("""
             SongHeaderWidget {
                 background-color: #2D3748; /* Darker color (Tailwind gray-800 equivalent) */
+                margin-top: 8px; /* Add space above the header */
                 border-radius: 4px;
                 /* If using QFrame.NoFrame, you might add border here: */
                 /* border: 1px solid #4A5568; */
             }
         """)
         
-        # Size policy: Preferred horizontally (will take sizeHint), Fixed vertically
-        # The FlowLayout will use its sizeHint.
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
     def setTitle(self, title: str):
         self.title_label.setText(title)
 
+    def set_reference_button_width(self, width: int):
+        self._current_button_width = width
+        self.updateGeometry() # May be needed if sizeHint changes
+
     def sizeHint(self) -> QSize:
-        # Suggest a width that's reasonably wide, e.g., for 2-3 slide buttons.
-        # This helps FlowLayout decide if it should wrap this item to a new line.
-        # Height is already fixed by setFixedHeight.
-        # Let's make it at least the width of two preview buttons plus some spacing.
-        return QSize(WIDGET_PREVIEW_WIDTH * 2 + 20, self.height())
+        return QSize(self._current_button_width * 2 + 20, self.height())
+    
+    def contextMenuEvent(self, event):
+        """Shows a context menu on right-click."""
+        menu = QMenu(self)
+        
+        edit_song_action = menu.addAction(f"Edit Song: \"{self.title_label.text()}\"")
+        # Add more song-level actions here in the future if needed
+        # menu.addSeparator()
+        # delete_song_action = menu.addAction("Delete Entire Song")
+
+        action = menu.exec(event.globalPos())
+
+        if action == edit_song_action:
+            self.edit_song_requested.emit(self.title_label.text())

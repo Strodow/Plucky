@@ -1012,5 +1012,512 @@
         },
         "slide_number": null,
         "section_name": null
+    },
+    {
+        "id": "2db7d017-061f-448c-b93a-e8f8880813d3",
+        "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "3988f02a-aebe-420a-a923-5c7ebcdad548",
+        "lyrics": "Pay the toll to the angels\nDrawin' circles in the clouds\nKeep your mind on the distance\nWhen the devil turns around",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "be439ccf-3b4f-4a26-8319-cd9ada9cff69",
+        "lyrics": "Hold me in your heart tonight\nIn the magic of the dark moonlight\nSave me from this empty fight\nIn the game of life",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "204dc9fc-c37f-426b-9c12-d83a5a6e5989",
+        "lyrics": "Like a poem said by a lady in red\nYou hear the last few words of your life\nWith a haunting dance, now you're both in a trance\nIt's time to cast your spell on the night",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "d83538bf-461e-4b9e-97fa-8494c872de10",
+        "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "089b5f3c-5646-4e11-8866-bbfe1c7ddbb1",
+        "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra\nFeel the beat under your feet, the floor's on fire\nAbracadabra, abracadabra",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "01773543-7aa8-4d14-a546-f05534cfe556",
+        "lyrics": "Choose the road on the west side\nAs the dust flies, watch it burn\nDon't waste time on a feelin'\nUse your passion, no return",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "c93f5d66-b501-4f57-af1d-88a31e1a1216",
+        "lyrics": "Hold me in your heart tonight\nIn the magic of the dark moonlight\nSave me from this empty fight\nIn the game of life",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "da966bb2-d156-45b7-b9d7-a830ea250ab7",
+        "lyrics": "Like a poem said by a lady in red\nYou hear the last few words of your life\nWith a haunting dance, now you're both in a trance\nIt's time to cast your spell on the night",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "206cfedb-962c-4446-af4a-f8402af7e257",
+        "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "c396a275-0d08-40ba-95d5-ee4441f712cd",
+        "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra\nFeel the beat under your feet, the floor's on fire\nAbracadabra, abracadabra",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "faca12ab-4419-4241-8c1a-54f35d421511",
+        "lyrics": "Phantom of the dance floor, come to me\nSing for me a sinful melody\nAh, ah, ah\nAh, ah, ah",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "cca684de-39f7-4687-af00-424bc4ee1f14",
+        "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
+        "background_image_path": null,
+        "song_title": "test3",
+        "background_color": "#000000",
+        "template_settings": {
+            "font": {
+                "family": "Arial",
+                "size": 58,
+                "bold": false,
+                "italic": false,
+                "underline": false,
+                "force_all_caps": false
+            },
+            "color": "#FFFFFF",
+            "position": {
+                "x": "50%",
+                "y": "80%"
+            },
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "max_width": "90%",
+            "outline": {
+                "enabled": false,
+                "color": "#000000",
+                "width": 2
+            },
+            "shadow": {
+                "enabled": false,
+                "color": "#000000",
+                "offset_x": 3,
+                "offset_y": 3
+            },
+            "info_bar_color": "#0078D7"
+        },
+        "slide_number": null,
+        "section_name": null
     }
 ]
