@@ -30,6 +30,7 @@ class SlideData:
     lyrics: str = ""
     background_image_path: Optional[str] = None
     song_title: Optional[str] = None # New field for the song's title
+    overlay_label: str = "" # New field for the overlay label set via context menu
     background_color: str = "#000000" # Default black background if no image
     template_settings: Dict[str, Any] = field(default_factory=lambda: DEFAULT_TEMPLATE.copy())
 

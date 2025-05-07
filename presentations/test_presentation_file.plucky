@@ -4,6 +4,7 @@
         "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Intro",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -43,6 +44,7 @@
         "lyrics": "Pay the toll to the angels\nDrawin' circles in the clouds\nKeep your mind on the distance\nWhen the devil turns around",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Verse 1",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -82,6 +84,7 @@
         "lyrics": "Hold me in your heart tonight\nIn the magic of the dark moonlight\nSave me from this empty fight\nIn the game of life",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Verse 1",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -121,6 +124,7 @@
         "lyrics": "Like a poem said by a lady in red\nYou hear the last few words of your life\nWith a haunting dance, now you're both in a trance\nIt's time to cast your spell on the night",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Verse 1",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -160,6 +164,7 @@
         "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Chorus",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -199,6 +204,7 @@
         "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra\nFeel the beat under your feet, the floor's on fire\nAbracadabra, abracadabra",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Chorus",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -238,6 +244,7 @@
         "lyrics": "Choose the road on the west side\nAs the dust flies, watch it burn\nDon't waste time on a feelin'\nUse your passion, no return",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Verse 2",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -277,6 +284,7 @@
         "lyrics": "Hold me in your heart tonight\nIn the magic of the dark moonlight\nSave me from this empty fight\nIn the game of life",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Verse 2",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -316,6 +324,7 @@
         "lyrics": "Like a poem said by a lady in red\nYou hear the last few words of your life\nWith a haunting dance, now you're both in a trance\nIt's time to cast your spell on the night",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Verse 2",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -355,6 +364,7 @@
         "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Chorus",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -394,6 +404,7 @@
         "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra\nFeel the beat under your feet, the floor's on fire\nAbracadabra, abracadabra",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Chorus",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -433,6 +444,7 @@
         "lyrics": "Phantom of the dance floor, come to me\nSing for me a sinful melody\nAh, ah, ah\nAh, ah, ah",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Outro",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -472,6 +484,7 @@
         "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
         "background_image_path": null,
         "song_title": "test",
+        "overlay_label": "Outro",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -511,6 +524,7 @@
         "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -550,6 +564,7 @@
         "lyrics": "Pay the toll to the angels\nDrawin' circles in the clouds\nKeep your mind on the distance\nWhen the devil turns around",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -589,6 +604,7 @@
         "lyrics": "Hold me in your heart tonight\nIn the magic of the dark moonlight\nSave me from this empty fight\nIn the game of life",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -628,6 +644,7 @@
         "lyrics": "Like a poem said by a lady in red\nYou hear the last few words of your life\nWith a haunting dance, now you're both in a trance\nIt's time to cast your spell on the night",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -667,6 +684,7 @@
         "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -706,6 +724,7 @@
         "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra\nFeel the beat under your feet, the floor's on fire\nAbracadabra, abracadabra",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -745,6 +764,7 @@
         "lyrics": "Choose the road on the west side\nAs the dust flies, watch it burn\nDon't waste time on a feelin'\nUse your passion, no return",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -784,6 +804,7 @@
         "lyrics": "Hold me in your heart tonight\nIn the magic of the dark moonlight\nSave me from this empty fight\nIn the game of life",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -823,6 +844,7 @@
         "lyrics": "Like a poem said by a lady in red\nYou hear the last few words of your life\nWith a haunting dance, now you're both in a trance\nIt's time to cast your spell on the night",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -862,6 +884,7 @@
         "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -901,6 +924,7 @@
         "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra\nFeel the beat under your feet, the floor's on fire\nAbracadabra, abracadabra",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -940,6 +964,7 @@
         "lyrics": "Phantom of the dance floor, come to me\nSing for me a sinful melody\nAh, ah, ah\nAh, ah, ah",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -979,6 +1004,7 @@
         "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
         "background_image_path": null,
         "song_title": "abba abba",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1018,6 +1044,7 @@
         "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1057,6 +1084,7 @@
         "lyrics": "Pay the toll to the angels\nDrawin' circles in the clouds\nKeep your mind on the distance\nWhen the devil turns around",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1096,6 +1124,7 @@
         "lyrics": "Hold me in your heart tonight\nIn the magic of the dark moonlight\nSave me from this empty fight\nIn the game of life",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1135,6 +1164,7 @@
         "lyrics": "Like a poem said by a lady in red\nYou hear the last few words of your life\nWith a haunting dance, now you're both in a trance\nIt's time to cast your spell on the night",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1174,6 +1204,7 @@
         "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1213,6 +1244,7 @@
         "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra\nFeel the beat under your feet, the floor's on fire\nAbracadabra, abracadabra",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1252,6 +1284,7 @@
         "lyrics": "Choose the road on the west side\nAs the dust flies, watch it burn\nDon't waste time on a feelin'\nUse your passion, no return",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1291,6 +1324,7 @@
         "lyrics": "Hold me in your heart tonight\nIn the magic of the dark moonlight\nSave me from this empty fight\nIn the game of life",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1330,6 +1364,7 @@
         "lyrics": "Like a poem said by a lady in red\nYou hear the last few words of your life\nWith a haunting dance, now you're both in a trance\nIt's time to cast your spell on the night",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1369,6 +1404,7 @@
         "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1408,6 +1444,7 @@
         "lyrics": "Abracadabra, abracadabra\nAbracadabra, abracadabra\nFeel the beat under your feet, the floor's on fire\nAbracadabra, abracadabra",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1447,6 +1484,7 @@
         "lyrics": "Phantom of the dance floor, come to me\nSing for me a sinful melody\nAh, ah, ah\nAh, ah, ah",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {
@@ -1486,6 +1524,7 @@
         "lyrics": "\"Abracadabra, amor-ooh-na-na\nAbracadabra, morta-ooh-ga-ga\nAbracadabra, abra-ooh-na-na\"\nIn her tongue she said, \"Death or love tonight\"",
         "background_image_path": null,
         "song_title": "test3",
+        "overlay_label": "",
         "background_color": "#000000",
         "template_settings": {
             "font": {

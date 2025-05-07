@@ -1,7 +1,7 @@
 import sys
 print(f"DEBUG: scaled_slide_button.py TOP LEVEL, __name__ is {__name__}") # DIAGNOSTIC
 import os
-from PySide6.QtWidgets import (
+from PySide6.QtWidgets import ( # type: ignore
     QApplication, QPushButton, QWidget, QSizePolicy, QHBoxLayout, QButtonGroup, QStyle, QMenu
 )
 from PySide6.QtGui import (
@@ -10,7 +10,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import (
     Qt, QSize, Signal, Slot, QRectF, QPoint, QEvent
 )
-from typing import Optional, List
+from typing import Optional, List, cast
 
 
 # Define content dimensions, matching MainWindow's PREVIEW_WIDTH/HEIGHT for the image part
@@ -29,6 +29,7 @@ class ScaledSlideButton(QPushButton):
     next_slide_requested_from_menu = Signal(int) # Emits current slide_id
     previous_slide_requested_from_menu = Signal(int) # Emits current slide_id
     apply_template_to_slide_requested = Signal(int, str) # Emits slide_id, template_name
+    center_overlay_label_changed = Signal(int, str) # Emits slide_id, new_label_text
     def __init__(self, slide_id: int, parent=None):
         super().__init__(parent)
         self._pixmap_to_display = QPixmap() # Stores the pixmap (already scaled by MainWindow)
@@ -36,6 +37,7 @@ class ScaledSlideButton(QPushButton):
 
         self._slide_number: Optional[int] = None
         self._slide_label: Optional[str] = ""
+        self._center_overlay_label: Optional[str] = "" # New: For the prominent centered label
         self._available_template_names: List[str] = [] # Will be set by MainWindow
         self._banner_height = 25
         self.setCheckable(True)
@@ -94,6 +96,16 @@ class ScaledSlideButton(QPushButton):
             self._icon_states[icon_name] = visible
             self.update() # Request repaint if state changed
 
+    def set_center_overlay_label(self, text: Optional[str], emit_signal_on_change: bool = True):
+        """Sets the text for the prominent centered label displayed over the image."""
+        new_label_value = text if text is not None else ""
+        if self._center_overlay_label != new_label_value:
+            self._center_overlay_label = new_label_value
+            if emit_signal_on_change:
+                self.center_overlay_label_changed.emit(self._slide_id, self._center_overlay_label)
+        self.update()
+
+
     def sizeHint(self) -> QSize:
         # The button's preferred size includes the pixmap area and the info banner
         content_width = self._pixmap_to_display.width() if not self._pixmap_to_display.isNull() else BASE_TEST_PREVIEW_CONTENT_WIDTH
@@ -113,6 +125,8 @@ class ScaledSlideButton(QPushButton):
 
         button_rect = self.rect() # The entire area of the button
 
+        main_content_draw_rect = QRectF() # Will store where the main image/placeholder is drawn
+
         # --- Draw the Main Scaled Pixmap ---
         # It's already scaled to PREVIEW_CONTENT_WIDTH x PREVIEW_CONTENT_HEIGHT (or smaller if aspect kept)
         if not self._pixmap_to_display.isNull():
@@ -129,8 +143,17 @@ class ScaledSlideButton(QPushButton):
             # Center vertically within its designated PREVIEW_CONTENT_HEIGHT area
             # The content area height is self._pixmap_to_display.height()
             img_y = (self._pixmap_to_display.height() - draw_height) / 2 # Should be 0 if pixmap fills content height
-            
-            painter.drawPixmap(QPoint(int(img_x), int(img_y)), self._pixmap_to_display)
+            main_content_draw_rect = QRectF(img_x, img_y, draw_width, draw_height)
+            painter.drawPixmap(main_content_draw_rect.topLeft(), self._pixmap_to_display)
+        else:
+            # Define a placeholder rect if pixmap is null
+            placeholder_height = button_rect.height() - self._banner_height
+            main_content_draw_rect = QRectF(0, 0, button_rect.width(), max(0, placeholder_height))
+            if main_content_draw_rect.isValid():
+                painter.fillRect(main_content_draw_rect, QColor(Qt.GlobalColor.darkGray).lighter(150))
+                # Optional: text on placeholder, though center_overlay_label might cover it
+                # painter.setPen(Qt.GlobalColor.gray)
+                # painter.drawText(main_content_draw_rect, Qt.AlignCenter, "No Preview")
 
 
         # --- Draw Banner ---
@@ -177,23 +200,34 @@ class ScaledSlideButton(QPushButton):
         if total_icon_area_width > 0 and visible_icons: # Check visible_icons to avoid negative if only spacing
             total_icon_area_width -= self._icon_spacing # Remove trailing space if icons exist
 
-        # Adjust text rect to not overlap icon area
-        text_rect = banner_rect.adjusted(text_padding_horizontal, 0, -(text_padding_horizontal + total_icon_area_width), 0)
+        # --- Draw Banner Content: Number, Centered Overlay Label, Icons ---
 
-        # --- Draw Banner Text ---
         # Draw slide number left-aligned
         num_str = str(self._slide_number if self._slide_number is not None else (self._slide_id + 1))
-        painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, num_str)
-
-        # Draw label centered, elided if necessary
         font_metrics = QFontMetrics(painter.font())
-        # Calculate available width for the label (subtracting space for number)
-        # Give a bit more space for the number string
-        num_str_width_approx = font_metrics.horizontalAdvance(num_str + "  MM") # Approx width for number + some spacing
-        available_label_width = text_rect.width() - num_str_width_approx
-        elided_label = font_metrics.elidedText(self._slide_label or "", Qt.TextElideMode.ElideRight, max(0, available_label_width))
-        if elided_label: # Only draw if there's something to draw
-            painter.drawText(text_rect, Qt.AlignCenter | Qt.AlignVCenter, elided_label)
+        num_str_width_approx = font_metrics.horizontalAdvance(num_str) + text_padding_horizontal * 2 # Width for number + padding on both sides
+
+        # Define the rect for the number
+        number_draw_rect = QRectF(banner_rect.left() + text_padding_horizontal, banner_rect.top(),
+                                  num_str_width_approx - text_padding_horizontal, banner_rect.height())
+        painter.drawText(number_draw_rect, Qt.AlignLeft | Qt.AlignVCenter, num_str)
+
+        # Define the rect for the centered overlay label
+        # It's between the number area and the icon area
+        center_label_left_edge = banner_rect.left() + num_str_width_approx
+        center_label_right_edge = banner_rect.right() - (total_icon_area_width + text_padding_horizontal)
+        
+        center_label_rect = QRectF(center_label_left_edge, banner_rect.top(),
+                                   max(0, center_label_right_edge - center_label_left_edge), banner_rect.height())
+
+        if self._center_overlay_label and center_label_rect.width() > 0:
+            # Use a slightly more prominent font for this label if desired
+            # overlay_banner_font = QFont(painter.font())
+            # overlay_banner_font.setBold(True) # Example
+            # painter.setFont(overlay_banner_font)
+            elided_center_label = font_metrics.elidedText(self._center_overlay_label, Qt.TextElideMode.ElideRight, center_label_rect.width())
+            painter.drawText(center_label_rect, Qt.AlignCenter | Qt.AlignVCenter, elided_center_label)
+            # painter.setFont(banner_font) # Reset to original banner font if changed
 
         # --- Draw Visible Icons ---
         current_icon_x = banner_rect.right() - text_padding_horizontal # Start from right edge of banner (with padding)
@@ -225,9 +259,7 @@ class ScaledSlideButton(QPushButton):
         
         edit_action = menu.addAction("Edit Slide Lyrics")
         delete_action = menu.addAction("Delete Slide")
-        menu.addSeparator()
-        next_slide_action = menu.addAction("Go to Next Slide")
-        prev_slide_action = menu.addAction("Go to Previous Slide")
+        # menu.addSeparator() # Separator removed as next/prev are gone
         menu.addSeparator()
         # Future actions can be added here
         
@@ -239,6 +271,22 @@ class ScaledSlideButton(QPushButton):
         else:
             apply_template_submenu.setEnabled(False)
 
+        # --- New "Label" Submenu ---
+        label_submenu = menu.addMenu("Set Overlay Label")
+        predefined_labels = ["Verse 1", "Verse 2", "Verse 3", "Chorus", "Refrain", "Bridge", "Intro", "Outro", "Blank"]
+        for label_text in predefined_labels:
+            action = label_submenu.addAction(label_text)
+            action.setData(label_text) # Store label text in action's data
+        
+        label_submenu.addSeparator()
+        edit_custom_label_action = label_submenu.addAction("Edit Custom Label...")
+        # --- End New "Label" Submenu ---
+
+        # Add a final separator if you plan to add more top-level items later
+        # menu.addSeparator() 
+        # clear_label_action = menu.addAction("Clear Overlay Label")
+
+
         action = menu.exec(event.globalPos())
 
         if action == edit_action:
@@ -249,10 +297,23 @@ class ScaledSlideButton(QPushButton):
             chosen_template_name = action.data()
             if chosen_template_name:
                 self.apply_template_to_slide_requested.emit(self._slide_id, chosen_template_name)
-        elif action == next_slide_action:
-            self.next_slide_requested_from_menu.emit(self._slide_id)
-        elif action == prev_slide_action:
-            self.previous_slide_requested_from_menu.emit(self._slide_id)
+        elif action and action.parent() == label_submenu:
+            if action == edit_custom_label_action:
+                # Import QInputDialog locally to avoid circular import issues if it were at top level
+                from PySide6.QtWidgets import QInputDialog # type: ignore
+                current_label = self._center_overlay_label
+                new_label, ok = QInputDialog.getText(self, "Set Custom Overlay Label", 
+                                                     "Enter label text:", text=current_label)
+                if ok: # User pressed OK
+                    self.set_center_overlay_label(new_label)
+            else: # One of the predefined labels
+                chosen_label = action.data()
+                if chosen_label == "Blank": # Handle "Blank" explicitly
+                    self.set_center_overlay_label("")
+                elif chosen_label:
+                    self.set_center_overlay_label(chosen_label)
+        # elif action == clear_label_action: # If you add a top-level clear
+        #     self.set_center_overlay_label("")
 
     def set_available_templates(self, template_names: List[str]):
         self._available_template_names = template_names
@@ -293,11 +354,11 @@ if __name__ == "__main__": # pragma: no cover
     # Create a single placeholder pixmap to reuse for previews in test
     placeholder_pixmap_test = QPixmap(BASE_TEST_PREVIEW_CONTENT_WIDTH, BASE_TEST_PREVIEW_CONTENT_HEIGHT) # Renamed
     placeholder_pixmap_test.fill(QColor("darkcyan"))
-    # Ensure painter is ended for placeholder_pixmap
-    temp_painter = QPainter(placeholder_pixmap)
+    # Draw text on the test placeholder pixmap
+    temp_painter = QPainter(placeholder_pixmap_test)
     temp_painter.setPen(QColor("white"))
     temp_painter.setFont(QFont("Arial", 10)) # Added font setting for placeholder
-    temp_painter.drawText(placeholder_pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Test Slide")
+    temp_painter.drawText(placeholder_pixmap_test.rect(), Qt.AlignmentFlag.AlignCenter, "Test Slide")
     temp_painter.end()
 
 
@@ -324,6 +385,13 @@ if __name__ == "__main__": # pragma: no cover
 
         button.set_pixmap(loaded_pixmaps[test_image_path])
         # Set sample banner info
+        # Set the new center overlay label for some buttons
+        if i == 0:
+            button.set_center_overlay_label("Verse 1")
+        elif i == 2:
+            button.set_center_overlay_label("Chorus")
+        elif i == 4:
+            button.set_center_overlay_label("") # Test blank
         button.set_slide_info(number=i + 1, label=f"A Long Test Label Name {i+1}")
         # --- Set icon states for some buttons in the test ---
         if (i + 1) % 3 == 0: # Show error on every 3rd button

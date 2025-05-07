@@ -23,6 +23,10 @@ try:
     from widgets.flow_layout import FlowLayout # Import the new FlowLayout
     from core.presentation_manager import PresentationManager
     from core.template_manager import TemplateManager # Import TemplateManager
+    # --- Undo/Redo Command Imports ---
+    from commands.slide_commands import (
+        ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand
+    )
 except ImportError:
     # Fallback if running directly from the windows directory (adjust as needed)
     # import sys, os # Already imported at top level
@@ -36,6 +40,10 @@ except ImportError:
     from widgets.flow_layout import FlowLayout # Import the new FlowLayout
     from core.presentation_manager import PresentationManager
     from core.template_manager import TemplateManager # Import TemplateManager
+    # --- Undo/Redo Command Imports ---
+    from commands.slide_commands import (
+        ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand
+    )
 
 # Constants for button previews
 # These are now BASE dimensions for calculating scaled preview sizes
@@ -86,6 +94,8 @@ class MainWindow(QMainWindow):
         self.add_test_slide_button = QPushButton("Add Test Slide")
         self.clear_button = QPushButton("Clear All Slides")
         self.edit_template_button = QPushButton("Edit Template") # New button
+        self.undo_button = QPushButton("Undo") # New
+        self.redo_button = QPushButton("Redo") # New
 
         # Template Selector ComboBox - REMOVED
         # self.template_selector_combo = QComboBox()
@@ -130,6 +140,8 @@ class MainWindow(QMainWindow):
         file_ops_layout.addWidget(self.add_test_slide_button)
         file_ops_layout.addWidget(self.edit_template_button) # Add to layout
         file_ops_layout.addWidget(self.clear_button)
+        file_ops_layout.addWidget(self.undo_button) # Add Undo button
+        file_ops_layout.addWidget(self.redo_button) # Add Redo button
         left_layout.addLayout(file_ops_layout)
         
         # Template selector layout - REMOVED
@@ -160,6 +172,8 @@ class MainWindow(QMainWindow):
         self.add_test_slide_button.clicked.connect(self.add_test_slide)
         self.clear_button.clicked.connect(self.handle_clear_all_slides)
         self.edit_template_button.clicked.connect(self.handle_edit_template) # Connect signal
+        self.undo_button.clicked.connect(self.handle_undo) # New
+        self.redo_button.clicked.connect(self.handle_redo) # New
         self.button_size_slider.sliderReleased.connect(self.handle_button_size_change) # Changed signal
         # self.template_selector_combo.currentTextChanged.connect(self.handle_active_template_changed) # REMOVED
 
@@ -216,12 +230,14 @@ class MainWindow(QMainWindow):
         new_slide = SlideData(
             lyrics=f"Test Slide {slide_count + 1}\nAdded via button.",
             background_color=f"#{slide_count % 3 * 40:02X}{slide_count % 5 * 30:02X}{slide_count % 7 * 25:02X}" # pseudo-random color
-        ) # Test slides will use the current default template from SlideData class
+        ) # Test slides will use the current default template from SlideData class, overlay_label defaults to ""
         # To use the MainWindow's current_default_template:
         test_slide_template = self.template_manager.get_template_settings("Default") or DEFAULT_TEMPLATE.copy()
         new_slide = SlideData(lyrics=new_slide.lyrics, template_settings=test_slide_template)
-        self.presentation_manager.add_slide(new_slide)
-        # presentation_changed signal will call update_slide_display_and_selection
+        
+        # Use Command for adding slide
+        cmd = AddSlideCommand(self.presentation_manager, new_slide)
+        self.presentation_manager.do_command(cmd)
 
     def handle_add_song(self):
         """
@@ -261,10 +277,15 @@ class MainWindow(QMainWindow):
                 # New songs will use the "Default" template from the TemplateManager
                 default_tpl_for_new_song = self.template_manager.get_template_settings("Default") or DEFAULT_TEMPLATE.copy()
                 new_slide = SlideData(lyrics=stanza_lyrics, 
-                                      song_title=cleaned_song_title,                                      
+                                      song_title=cleaned_song_title,
+                                      overlay_label="", # Default for new song slides
                                       template_settings=default_tpl_for_new_song)
                 new_slides_data.append(new_slide)
-            self.presentation_manager.add_slides(new_slides_data) # Add all at once
+            
+            # For multiple slides, you might create a "MacroCommand" or execute individual AddSlideCommands
+            # For simplicity now, let's assume add_slides is not directly undoable as one step,
+            # or we create multiple commands. Here, we'll just call the PM method.
+            self.presentation_manager.add_slides(new_slides_data) # This won't be a single undo step
 
     def handle_load(self):
         if self.presentation_manager.is_dirty:
@@ -280,7 +301,8 @@ class MainWindow(QMainWindow):
         filepath, _ = QFileDialog.getOpenFileName(self, "Load Presentation", "", "Plucky Files (*.plucky *.json);;All Files (*)")
         if filepath:
             self.presentation_manager.load_presentation(filepath)
-            # presentation_changed signal handles UI update
+            # After UI update (triggered by presentation_changed), explicitly mark as not dirty
+            self.presentation_manager.is_dirty = False
 
     def handle_save(self) -> bool:
         if not self.presentation_manager.current_filepath:
@@ -307,9 +329,10 @@ class MainWindow(QMainWindow):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.current_slide_index = -1 # Reset UI selection state
-            # Create a method in PresentationManager for this
-            self.presentation_manager.slides.clear() 
-            self.presentation_manager.is_dirty = True # Or False if cleared means "saved empty"
+            # This is a destructive operation, might need a "ClearAllCommand"
+            # For now, directly clear and mark dirty. Undo stack will be cleared by new actions.
+            self.presentation_manager.slides.clear()
+            self.presentation_manager.is_dirty = True
             self.presentation_manager.presentation_changed.emit()
 
     @Slot() # No longer receives an int directly from the signal
@@ -437,6 +460,7 @@ class MainWindow(QMainWindow):
             button.apply_template_to_slide_requested.connect(self.handle_apply_template_to_slide)
             button.next_slide_requested_from_menu.connect(self.handle_next_slide_from_menu)
             button.previous_slide_requested_from_menu.connect(self.handle_previous_slide_from_menu)
+            button.center_overlay_label_changed.connect(self.handle_slide_overlay_label_changed) # New connection
             
             if current_song_flow_layout: # Add button to the current song's FlowLayout
                 current_song_flow_layout.addWidget(button)
@@ -444,6 +468,10 @@ class MainWindow(QMainWindow):
         
         # Add a stretch at the end of the main QVBoxLayout to push everything up
         self.slide_buttons_layout.addStretch(1)
+
+        # After creating all buttons, set their overlay labels from SlideData
+        self._update_all_button_overlay_labels()
+
         # --- 2. Manage Selection ---
         num_slides = len(slides)
         if self.current_slide_index >= num_slides: # If selected index is now out of bounds
@@ -468,6 +496,15 @@ class MainWindow(QMainWindow):
             # _on_slide_button_selected_by_index will handle display if output is live
         else: # No slides, no selection
             self._show_blank_on_output()
+
+    def _update_all_button_overlay_labels(self):
+        """Sets the overlay label on each button based on its corresponding SlideData."""
+        slides = self.presentation_manager.get_slides()
+        for index, slide_data in enumerate(slides):
+            button = self.slide_button_group.button(index)
+            if button and isinstance(button, ScaledSlideButton):
+                # Pass the overlay_label from SlideData to the button
+                button.set_center_overlay_label(slide_data.overlay_label, emit_signal_on_change=False)
 
     @Slot(int) # Receives slide_id (which is the index)
     def _on_slide_button_selected_by_index(self, slide_index: int):
@@ -506,9 +543,10 @@ class MainWindow(QMainWindow):
         )
 
         if ok and new_lyrics != current_lyrics:
-            self.presentation_manager.update_slide_content(slide_index, new_lyrics)
-            # presentation_manager.presentation_changed will trigger UI update
-            # If the currently displayed slide was edited, re-display it
+            cmd = EditLyricsCommand(self.presentation_manager, slide_index, current_lyrics, new_lyrics)
+            self.presentation_manager.do_command(cmd)
+            # The presentation_changed signal from do_command will update UI.
+            # If current slide was edited, it will be re-rendered by update_slide_display_and_selection.
             if self.current_slide_index == slide_index and self.output_window.isVisible():
                 self._display_slide(slide_index)
 
@@ -524,8 +562,8 @@ class MainWindow(QMainWindow):
                                      f"Are you sure you want to delete this slide?\n\nLyrics: \"{slide_data.lyrics[:50]}...\"",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
-            self.presentation_manager.remove_slide(slide_index)
-            # presentation_manager.presentation_changed will trigger UI update
+            cmd = DeleteSlideCommand(self.presentation_manager, slide_index)
+            self.presentation_manager.do_command(cmd)
 
     @Slot(str)
     def handle_edit_entire_song_requested(self, song_title_to_edit: str):
@@ -560,8 +598,9 @@ class MainWindow(QMainWindow):
 
         if ok_lyrics: # User might have pressed OK without changing lyrics, or even deleted all lyrics
             new_stanzas = [s.strip() for s in new_full_lyrics.split('\n\n') if s.strip()]
+            # This is a complex operation, potentially multiple commands or a macro command.
+            # For now, not making it undoable as a single step.
             self.presentation_manager.update_entire_song(song_title_to_edit, new_title, new_stanzas)
-            # presentation_manager.presentation_changed will trigger UI update
 
     @Slot(int, str)
     def handle_apply_template_to_slide(self, slide_index: int, template_name: str):
@@ -575,9 +614,21 @@ class MainWindow(QMainWindow):
         if not (0 <= slide_index < len(slides)):
             self.show_error_message(f"Cannot apply template: Slide index {slide_index} is invalid.")
             return
-        self.presentation_manager.set_slide_template_settings(slide_index, chosen_template_settings)
-            # presentation_manager.presentation_changed will trigger UI update
+        
+        old_settings = slides[slide_index].template_settings
+        cmd = ApplyTemplateCommand(self.presentation_manager, slide_index, old_settings, chosen_template_settings.copy())
+        self.presentation_manager.do_command(cmd)
 
+    @Slot(int)
+    def handle_slide_overlay_label_changed(self, slide_index: int, new_label: str):
+        """Handles the center_overlay_label_changed signal from a ScaledSlideButton."""
+        slides = self.presentation_manager.get_slides()
+        if 0 <= slide_index < len(slides):
+            # Update the SlideData object directly
+            old_label = slides[slide_index].overlay_label
+            cmd = ChangeOverlayLabelCommand(self.presentation_manager, slide_index, old_label, new_label)
+            self.presentation_manager.do_command(cmd)
+            print(f"MainWindow: Overlay label for slide {slide_index} changed to '{new_label}'. Presentation marked dirty.")
     @Slot(int)
     def handle_next_slide_from_menu(self, current_slide_id: int):
         num_slides = len(self.presentation_manager.get_slides())
@@ -742,6 +793,16 @@ class MainWindow(QMainWindow):
         # The event filter on QScrollArea should handle Left/Right.
         super().keyPressEvent(event)
     # handle_active_template_changed method REMOVED
+
+    @Slot()
+    def handle_undo(self):
+        print("MainWindow: Undo action triggered.")
+        self.presentation_manager.undo()
+
+    @Slot()
+    def handle_redo(self):
+        print("MainWindow: Redo action triggered.")
+        self.presentation_manager.redo()
 
 # Example of how to run this if it's the main entry point for testing
 # (Your main.py would typically handle this)
