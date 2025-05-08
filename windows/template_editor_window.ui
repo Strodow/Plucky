@@ -1,0 +1,623 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>TemplateEditorWindow</class>
+ <widget class="QDialog" name="TemplateEditorWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>700</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Template Editor (New Design)</string>
+  </property>
+  <layout class="QVBoxLayout" name="main_v_layout">
+   <item>
+    <widget class="QTabWidget" name="main_tab_widget">
+     <property name="currentIndex">
+      <number>0</number>
+     </property>
+     <widget class="QWidget" name="layouts_tab">
+      <attribute name="title">
+       <string>Layouts</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="layouts_tab_v_layout">
+      <item>
+        <layout class="QHBoxLayout" name="layout_selector_layout">
+         <item>
+          <widget class="QLabel" name="layout_selector_label">
+           <property name="text">
+            <string>Layout:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="layout_selector_combo">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <horstretch>1</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="add_layout_button">
+           <property name="text">
+            <string>+</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>30</width>
+             <height>16777215</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="remove_layout_button">
+           <property name="text">
+            <string>-</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>30</width>
+             <height>16777215</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QLabel" name="layouts_placeholder_label">
+         <property name="text">
+          <string>Layout Management UI:
+- List of existing Layout Definitions
+- Buttons: Add New Layout, Edit Selected, Delete Selected
+- Editing area for selected layout (name, number of text boxes, properties for each text box: ID, position, size)</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="layouts_tab_spacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="styles_tab">
+      <attribute name="title">
+       <string>Styles</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="styles_tab_v_layout">
+      <item>
+        <layout class="QHBoxLayout" name="style_selector_layout">
+         <item>
+          <widget class="QLabel" name="style_selector_label">
+           <property name="text">
+            <string>Style:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="style_selector_combo">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <horstretch>1</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="add_style_button">
+           <property name="text">
+            <string>+</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>30</width>
+             <height>16777215</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="remove_style_button">
+           <property name="text">
+            <string>-</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>30</width>
+             <height>16777215</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+       <widget class="QGroupBox" name="style_properties_group">
+         <property name="title">
+          <string>Style Properties</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout">
+          <item>
+           <widget class="QLabel" name="preview_text_input_label">
+            <property name="text">
+             <string>Preview Text:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLineEdit" name="preview_text_input_edit"/>
+          </item>
+          <item>
+           <layout class="QFormLayout" name="style_form_layout">
+            <item row="0" column="0">
+             <widget class="QLabel" name="font_family_label">
+              <property name="text">
+               <string>Font Family:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="0" column="1">
+             <widget class="QFontComboBox" name="font_family_combo"/>
+            </item>
+            <item row="1" column="0">
+             <widget class="QLabel" name="font_size_label">
+              <property name="text">
+               <string>Font Size:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="1">
+             <widget class="QSpinBox" name="font_size_spinbox">
+              <property name="minimum">
+               <number>6</number>
+              </property>
+              <property name="maximum">
+               <number>144</number>
+              </property>
+              <property name="value">
+               <number>12</number>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="0">
+             <widget class="QLabel" name="font_color_label">
+              <property name="text">
+               <string>Font Color:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="1">
+             <layout class="QHBoxLayout" name="font_color_layout">
+              <item>
+               <widget class="QPushButton" name="font_color_button">
+                <property name="text">
+                 <string>Choose Color...</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLabel" name="font_color_preview_label">
+                <property name="minimumSize">
+                 <size>
+                  <width>24</width>
+                  <height>24</height>
+                 </size>
+                </property>
+                <property name="autoFillBackground">
+                 <bool>true</bool>
+                </property>
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="text">
+                 <string/>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <spacer name="font_color_spacer">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>40</width>
+                  <height>20</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+             </layout>
+            </item>
+            <item row="3" column="0">
+             <widget class="QLabel" name="force_caps_label">
+              <property name="text">
+               <string>Formatting:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="3" column="1">
+             <widget class="QCheckBox" name="force_caps_checkbox">
+              <property name="text">
+               <string>Force All Caps</string>
+              </property>
+             </widget>
+            </item>
+            <item row="4" column="1">
+             <widget class="QCheckBox" name="text_shadow_checkbox">
+              <property name="text">
+               <string>Text Shadow</string>
+              </property>
+             </widget>
+            </item>
+            <item row="5" column="1"> <!-- Shadow Group Box -->
+             <widget class="QGroupBox" name="shadow_properties_group">
+              <property name="title">
+               <string>Shadow Properties</string>
+              </property>
+              <property name="checkable">
+               <bool>false</bool> <!-- Controlled by text_shadow_checkbox -->
+              </property>
+              <layout class="QFormLayout" name="shadow_form_layout">
+               <item row="0" column="0">
+                <widget class="QLabel" name="shadow_x_label">
+                 <property name="text">
+                  <string>X Offset:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="1">
+                <widget class="QSpinBox" name="shadow_x_spinbox">
+                 <property name="minimum">
+                  <number>-20</number>
+                 </property>
+                 <property name="maximum">
+                  <number>20</number>
+                 </property>
+                 <property name="value">
+                  <number>1</number>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QLabel" name="shadow_y_label">
+                 <property name="text">
+                  <string>Y Offset:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <widget class="QSpinBox" name="shadow_y_spinbox">
+                 <property name="minimum">
+                  <number>-20</number>
+                 </property>
+                 <property name="maximum">
+                  <number>20</number>
+                 </property>
+                 <property name="value">
+                  <number>1</number>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="0">
+                <widget class="QLabel" name="shadow_blur_label">
+                 <property name="text">
+                  <string>Blur Radius:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="1">
+                <widget class="QSpinBox" name="shadow_blur_spinbox">
+                 <property name="maximum">
+                  <number>20</number>
+                 </property>
+                 <property name="value">
+                  <number>2</number>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="0">
+                <widget class="QLabel" name="shadow_color_label">
+                 <property name="text">
+                  <string>Color:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <layout class="QHBoxLayout" name="shadow_color_layout">
+                 <item>
+                  <widget class="QPushButton" name="shadow_color_button">
+                   <property name="text">
+                    <string>Choose...</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="shadow_color_preview_label">
+                   <property name="minimumSize">
+                    <size>
+                     <width>24</width>
+                     <height>24</height>
+                    </size>
+                   </property>
+                   <property name="autoFillBackground">
+                    <bool>true</bool>
+                   </property>
+                   <property name="frameShape">
+                    <enum>QFrame::StyledPanel</enum>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="shadow_color_spacer">
+                   <property name="orientation">
+                    <enum>Qt::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>40</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item row="6" column="1"> <!-- Outline Group Box -->
+             <widget class="QCheckBox" name="text_outline_checkbox">
+              <property name="text">
+               <string>Text Outline (Basic)</string>
+              </property>
+             </widget>
+            </item>
+            <item row="7" column="1">
+             <widget class="QGroupBox" name="outline_properties_group">
+              <property name="title">
+               <string>Outline Properties</string>
+              </property>
+              <property name="checkable">
+               <bool>false</bool> <!-- Controlled by text_outline_checkbox -->
+              </property>
+              <layout class="QFormLayout" name="outline_form_layout">
+               <item row="0" column="0">
+                <widget class="QLabel" name="outline_thickness_label">
+                 <property name="text">
+                  <string>Thickness:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="1">
+                <widget class="QSpinBox" name="outline_thickness_spinbox">
+                 <property name="minimum">
+                  <number>1</number>
+                 </property>
+                 <property name="maximum">
+                  <number>5</number>
+                 </property>
+                 <property name="value">
+                  <number>1</number>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QLabel" name="outline_color_label">
+                 <property name="text">
+                  <string>Color:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <layout class="QHBoxLayout" name="outline_color_layout">
+                 <item>
+                  <widget class="QPushButton" name="outline_color_button">
+                   <property name="text">
+                    <string>Choose...</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="outline_color_preview_label">
+                   <property name="minimumSize">
+                    <size>
+                     <width>24</width>
+                     <height>24</height>
+                    </size>
+                   </property>
+                   <property name="autoFillBackground">
+                    <bool>true</bool>
+                   </property>
+                   <property name="frameShape">
+                    <enum>QFrame::StyledPanel</enum>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="outline_color_spacer">
+                   <property name="orientation">
+                    <enum>Qt::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>40</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+              </layout>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QGraphicsView" name="style_preview_graphics_view">
+            <property name="minimumSize">
+             <size>
+              <width>0</width> <!-- Width will be determined by layout -->
+              <height>100</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>Aa Bb Cc Dd Ee Ff Gg Hh Ii Jj Kk Ll Mm Nn Oo Pp Qq Rr Ss Tt Uu Vv Ww Xx Yy Zz 0123456789</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="styles_placeholder_label">
+         <property name="text">
+          <string>Style Management UI:
+- List of existing Style Definitions
+- Buttons: Add New Style, Edit Selected, Delete Selected
+- Editing area for selected style (name, font properties, color, alignment)</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="styles_tab_spacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="master_templates_tab">
+      <attribute name="title">
+       <string>Master Templates</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="master_templates_tab_v_layout">
+      <item>
+        <layout class="QHBoxLayout" name="master_template_selector_layout">
+         <item>
+          <widget class="QLabel" name="master_template_selector_label">
+           <property name="text">
+            <string>Master Template:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="master_template_selector_combo">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <horstretch>1</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="add_master_template_button">
+           <property name="text">
+            <string>+</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>30</width>
+             <height>16777215</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="remove_master_template_button">
+           <property name="text">
+            <string>-</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>30</width>
+             <height>16777215</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QLabel" name="master_templates_placeholder_label">
+         <property name="text">
+          <string>Master Template Assembly UI:
+- List of existing Master Templates
+- Buttons: Add New Master, Edit Selected, Delete Selected
+- Editing area for selected Master Template (name, chosen Layout, mapping of Layout's text box IDs to Styles)</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="master_templates_tab_spacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="button_box">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

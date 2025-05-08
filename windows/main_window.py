@@ -92,12 +92,20 @@ class MainWindow(QMainWindow):
         self.load_button = QPushButton("Load")
         self.save_button = QPushButton("Save")
         self.save_as_button = QPushButton("Save As...")
-        self.add_song_button = QPushButton("Add Song") # New button
-        self.add_test_slide_button = QPushButton("Add Test Slide")
         self.clear_button = QPushButton("Clear All Slides")
-        self.edit_template_button = QPushButton("Edit Template") # New button
         self.undo_button = QPushButton("Undo") # New
         self.redo_button = QPushButton("Redo") # New
+
+        # Buttons related to features undergoing major rework for "multiple text boxes"
+        self.add_song_button = QPushButton("Add Song")
+        self.add_song_button.setEnabled(False)
+        self.add_song_button.setToolTip("Temporarily disabled pending multi-textbox feature.")
+        self.add_test_slide_button = QPushButton("Add Test Slide")
+        self.add_test_slide_button.setEnabled(False)
+        self.add_test_slide_button.setToolTip("Temporarily disabled pending multi-textbox feature.")
+        self.edit_template_button = QPushButton("Edit Template")
+        self.edit_template_button.setEnabled(True) # Re-enabled
+        self.edit_template_button.setToolTip("Open the template editor.") # Updated tooltip
 
         # Template Selector ComboBox - REMOVED
         # self.template_selector_combo = QComboBox()
