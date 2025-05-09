@@ -5,13 +5,87 @@ from PySide6.QtWidgets import (
     QTabWidget, QFontComboBox, QSpinBox, QColorDialog, QLineEdit,
     QGraphicsView, QGraphicsScene, QGraphicsTextItem, QGraphicsDropShadowEffect # New for QGraphicsScene
 )
-from PySide6.QtGui import QFont, QColor, QPalette, QPainter # For font and color manipulation, and QPainter
-from PySide6.QtCore import Qt, Slot, QDir, QFileInfo
+from PySide6.QtGui import QFont, QColor, QPalette, QPainter, QPen, QTextCharFormat, QTextCursor # For font and color manipulation, and QPainter, Added QPen, QTextCharFormat, QTextCursor
+from PySide6.QtCore import Qt, Slot, QDir, QFileInfo, Signal # Added Signal
 from PySide6.QtUiTools import QUiLoader
 
 from data_models.slide_data import DEFAULT_TEMPLATE # To access initial defaults
 
+class OutlinedGraphicsTextItem(QGraphicsTextItem):
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self._outline_pen = QPen(Qt.PenStyle.NoPen)
+        self._text_fill_color = QColor(Qt.GlobalColor.black)
+        self._has_outline = False
+        self._current_font = QFont() # Store the current font
+
+        # Initialize with default font and color to ensure _apply_format_to_document works
+        super().setFont(self._current_font)
+        super().setDefaultTextColor(self._text_fill_color)
+
+        if text:
+            self.setPlainText(text) # This will call _apply_format_to_document
+
+    def setOutline(self, color: QColor, thickness: int):
+        if thickness > 0 and color.isValid():
+            # The pen width for setTextOutline is the actual stroke width.
+            self._outline_pen = QPen(color, float(thickness))
+            self._outline_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin) # Makes corners look better
+            self._has_outline = True
+        else:
+            self._outline_pen = QPen(Qt.PenStyle.NoPen)
+            self._has_outline = False
+        self._apply_format_to_document()
+
+    def setTextFillColor(self, color: QColor):
+        self._text_fill_color = color
+        # Also call super's method if it's used for default text color elsewhere
+        super().setDefaultTextColor(color)
+        self._apply_format_to_document()
+
+    def setFont(self, font: QFont):
+        self._current_font = font
+        super().setFont(font)
+        # When font changes, we need to re-apply the whole format
+        self._apply_format_to_document()
+
+    def setPlainText(self, text: str):
+        super().setPlainText(text)
+        # After text is set/changed, re-apply the format
+        self._apply_format_to_document()
+
+    def setHtml(self, html: str):
+        super().setHtml(html)
+        # After html is set/changed, re-apply the format
+        self._apply_format_to_document()
+
+    def _apply_format_to_document(self):
+        if not self.document():  # Document might not exist if no text/HTML has been set
+            return
+
+        self.prepareGeometryChange() # Important if formatting affects bounding rect
+
+        cursor = QTextCursor(self.document())
+        cursor.select(QTextCursor.SelectionType.Document)
+
+        text_format = QTextCharFormat()
+        # Apply all relevant properties in one go
+        text_format.setFont(self._current_font)
+        text_format.setForeground(self._text_fill_color) # This is the brush for the text fill
+
+        if self._has_outline:
+            text_format.setTextOutline(self._outline_pen)
+        else:
+            # Explicitly remove outline by setting a NoPen
+            text_format.setTextOutline(QPen(Qt.PenStyle.NoPen))
+
+        cursor.mergeCharFormat(text_format)
+        # self.update() # mergeCharFormat usually triggers necessary updates
+
 class TemplateEditorWindow(QDialog):
+    # Signal to indicate that the current templates (styles, etc.) should be saved
+    templates_save_requested = Signal(dict)
+
     def __init__(self, all_templates: dict, parent=None):
         super().__init__(parent)
 
@@ -58,7 +132,9 @@ class TemplateEditorWindow(QDialog):
         self.style_preview_graphics_view: QGraphicsView = self.ui.findChild(QGraphicsView, "style_preview_graphics_view")
         self.style_preview_scene = QGraphicsScene(self)
         self.style_preview_graphics_view.setScene(self.style_preview_scene)
-        self.style_preview_text_item = QGraphicsTextItem() # This will hold our text
+        self.style_preview_text_item = OutlinedGraphicsTextItem() # Use the new custom item
+        self.style_preview_text_item.setFont(QFont()) # Initialize with a default font
+        self.style_preview_text_item.setTextFillColor(QColor(Qt.GlobalColor.black)) # Initialize fill
         self.style_preview_scene.addItem(self.style_preview_text_item)
         self.style_preview_graphics_view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.style_preview_graphics_view.setRenderHint(QPainter.RenderHint.TextAntialiasing)
@@ -94,9 +170,12 @@ class TemplateEditorWindow(QDialog):
         # }
         self._currently_editing_style_name: str | None = None
 
-        # TODO: Load existing styles from TemplateManager or `all_templates` if it contains them
-        # For now, create a default style if none are loaded
-        if not self.style_definitions:
+        # Load existing styles from the passed 'all_templates' dictionary
+        # Make a deep copy to avoid modifying the original dict directly until "OK"
+        self.style_definitions = copy.deepcopy(all_templates.get("styles", {}))
+
+        # If, after loading, there are no styles, create a default one.
+        if not self.style_definitions: # Check if it's still empty
             default_style_props = {
                 "font_family": self.font_family_combo.font().family(), # Get default from combo
                 "font_size": self.font_size_spinbox.value(),
@@ -110,10 +189,16 @@ class TemplateEditorWindow(QDialog):
                 "outline_thickness": self.outline_thickness_spinbox.value(), "outline_color": self._current_outline_color.name(),
             }
             self.style_definitions["Default Style"] = default_style_props
-
         # --- Connect signals from the loaded UI ---
         self.ui.button_box.accepted.connect(self.accept)
         self.ui.button_box.rejected.connect(self.reject)
+
+        # Add a "Save" button to the dialog's button box
+        self.save_button = QPushButton("Save")
+        self.ui.button_box.addButton(self.save_button, QDialogButtonBox.ButtonRole.ApplyRole) # ApplyRole is good for "save and continue"
+        self.save_button.clicked.connect(self._handle_save_action)
+        # Tooltip for clarity
+        self.save_button.setToolTip("Save current changes and continue editing.")
 
         # --- Style Tab Connections ---
         self.add_style_button.clicked.connect(self.add_new_style_definition)
@@ -380,10 +465,13 @@ class TemplateEditorWindow(QDialog):
     def _apply_style_to_preview_area(self):
         print(f"DEBUG: _apply_style_to_preview_area called. Current style: '{self._currently_editing_style_name}'") # DEBUG
         if not self._currently_editing_style_name or self._currently_editing_style_name not in self.style_definitions:
+            default_font = QFont()
+            self.style_preview_text_item.setFont(default_font)
+            self.style_preview_text_item.setTextFillColor(QColor(Qt.GlobalColor.black))
+            self.style_preview_text_item.setOutline(QColor(Qt.GlobalColor.transparent), 0) # No outline
             self.style_preview_text_item.setPlainText("Select a style to preview.")
-            self.style_preview_text_item.setFont(QFont()) # Reset font
-            self.style_preview_text_item.setDefaultTextColor(Qt.GlobalColor.black)
             self.style_preview_text_item.setGraphicsEffect(None) # Remove effects
+            self.style_preview_scene.update()
             return
         print(f"DEBUG: Applying style for '{self._currently_editing_style_name}'") # DEBUG
 
@@ -410,11 +498,24 @@ class TemplateEditorWindow(QDialog):
         if force_caps:
             preview_text = preview_text.upper()
 
-        # Apply to QGraphicsTextItem
+        # Apply to OutlinedGraphicsTextItem
         current_font = QFont(font_family, font_size)
         self.style_preview_text_item.setFont(current_font)
-        self.style_preview_text_item.setDefaultTextColor(QColor(font_color_hex))
+        self.style_preview_text_item.setTextFillColor(QColor(font_color_hex))
         self.style_preview_text_item.setPlainText(preview_text)
+
+        # --- Outline ---
+        # This needs to be applied after font and color, or ensure _apply_format_to_document
+        # correctly re-applies everything. Our OutlinedGraphicsTextItem is designed to do so.
+        if has_outline:
+            outline_qcolor = QColor(outline_color_hex)
+            actual_thickness = max(1, outline_thickness) # Ensure thickness is at least 1 if outline is enabled
+            self.style_preview_text_item.setOutline(outline_qcolor, actual_thickness)
+            print(f"DEBUG: Applied Outline: Color {outline_color_hex}, Thickness {actual_thickness}")
+        else:
+            # Remove outline by setting thickness to 0
+            self.style_preview_text_item.setOutline(QColor(Qt.GlobalColor.transparent), 0) # Color doesn't matter if pen is NoPen
+            print("DEBUG: Removed Outline")
 
         # --- Shadow Effect ---
         current_effect = self.style_preview_text_item.graphicsEffect()
@@ -435,30 +536,26 @@ class TemplateEditorWindow(QDialog):
                 self.style_preview_text_item.setGraphicsEffect(None)
                 print("DEBUG: Removed QGraphicsDropShadowEffect")
 
-        # --- Outline (Basic - by layering another text item, or more advanced with custom paint) ---
-        # For now, we'll skip the complex outline with QGraphicsTextItem directly.
-        # A true stroke outline would require subclassing QGraphicsTextItem and overriding paint,
-        # or layering another QGraphicsTextItem.
-        # The old text-shadow trick for outline won't work here as QGraphicsTextItem doesn't use stylesheets that way.
-        if has_outline:
-            print(f"DEBUG: Outline enabled (Thickness: {outline_thickness}, Color: {outline_color_hex}). QGraphicsTextItem outline needs custom implementation (skipped for now).")
-        
         # Adjust view / item position if necessary
         # For simplicity, let's ensure the item is at the top-left of the scene.
         # And then fit the view to the item.
         self.style_preview_text_item.setPos(0, 0) 
-        # self.style_preview_graphics_view.setSceneRect(self.style_preview_text_item.boundingRect())
-        self.style_preview_graphics_view.fitInView(self.style_preview_text_item, Qt.AspectRatioMode.KeepAspectRatio)
-        
+
         # Set text width for wrapping (important for QGraphicsTextItem)
         # Use the view's width as a basis, minus some padding
         available_width = self.style_preview_graphics_view.viewport().width() - 20 # 10px padding each side
+        print(f"DEBUG: _apply_style_to_preview_area - Viewport width: {self.style_preview_graphics_view.viewport().width()}, available_width for text: {available_width}") # DEBUG
+        print(f"DEBUG: _apply_style_to_preview_area - TextItem boundingRect BEFORE setTextWidth: {self.style_preview_text_item.boundingRect()}") # DEBUG
+
         if available_width > 0 :
             self.style_preview_text_item.setTextWidth(available_width)
         else:
             self.style_preview_text_item.setTextWidth(-1) # No wrapping if view not sized yet
 
         self.style_preview_scene.update() # Ensure scene redraws
+        # It's good to allow the scene to process updates which might affect bounding rect after setTextWidth
+        print(f"DEBUG: _apply_style_to_preview_area - TextItem boundingRect AFTER setTextWidth: {self.style_preview_text_item.boundingRect()}") # DEBUG
+        self.style_preview_graphics_view.fitInView(self.style_preview_text_item, Qt.AspectRatioMode.KeepAspectRatio)
 
     @Slot()
     def add_new_template(self):
@@ -498,11 +595,14 @@ class TemplateEditorWindow(QDialog):
         self.preview_text_input_edit.clear()
         self.font_family_combo.setCurrentIndex(-1) # Or set to a default font
         self.font_size_spinbox.setValue(self.font_size_spinbox.minimum()) # Or a default size
+        
         self._current_style_font_color = QColor(Qt.GlobalColor.black)
         self._update_font_color_preview_label()
-        self.style_preview_text_item.setPlainText("No style selected or defined.")
-        self.style_preview_text_item.setFont(QFont())
-        self.style_preview_text_item.setDefaultTextColor(Qt.GlobalColor.black)
+        
+        self.style_preview_text_item.setFont(QFont()) # Reset font
+        self.style_preview_text_item.setTextFillColor(QColor(Qt.GlobalColor.black)) # Reset fill
+        self.style_preview_text_item.setOutline(QColor(Qt.GlobalColor.transparent), 0) # Reset outline
+        self.style_preview_text_item.setPlainText("No style selected or defined.") # Set text last
         
         self.force_caps_checkbox.setChecked(False)
         self.text_shadow_checkbox.setChecked(False)
@@ -520,6 +620,7 @@ class TemplateEditorWindow(QDialog):
         
         # Remove any graphics effects
         self.style_preview_text_item.setGraphicsEffect(None)
+        self.style_preview_scene.update()
 
         self.preview_text_input_edit.blockSignals(False)
         self.font_family_combo.blockSignals(False)
@@ -535,6 +636,14 @@ class TemplateEditorWindow(QDialog):
         self.outline_color_button.blockSignals(False)# Ensure unblocked here too
         
         self._toggle_shadow_detail_group()
+        self._toggle_outline_detail_group()
+
+    @Slot()
+    def _handle_save_action(self):
+        """Handles the action when the 'Save' button is clicked."""
+        current_template_data = self.get_updated_templates()
+        self.templates_save_requested.emit(current_template_data)
+        print("Template Editor: 'Save' button clicked. templates_save_requested signal emitted.")
         self._toggle_outline_detail_group()
 
     def _update_style_remove_button_state(self):
