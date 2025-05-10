@@ -1,64 +1,4 @@
 {
-  "layouts": {
-    "Default Layout": {
-      "background_color": "#000000",
-      "text_boxes": [
-        {
-          "h_align": "center",
-          "height_pc": 80,
-          "id": "main",
-          "style_name": "Default Style",
-          "v_align": "center",
-          "width_pc": 80,
-          "x_pc": 10,
-          "y_pc": 10
-        }
-      ]
-    },
-    "test": {
-      "background_color": "#1A1A1A",
-      "text_boxes": [
-        {
-          "h_align": "left",
-          "height_pc": 15.0,
-          "id": "textbox_2",
-          "style_name": "Test2",
-          "v_align": "center",
-          "width_pc": 45.0,
-          "x_pc": 5.0,
-          "y_pc": 80.0
-        },
-        {
-          "h_align": "center",
-          "height_pc": 64.62,
-          "id": "Title",
-          "style_name": "test",
-          "v_align": "top",
-          "width_pc": 84.89,
-          "x_pc": 7.48,
-          "y_pc": 15.38
-        },
-        {
-          "h_align": "right",
-          "height_pc": 15.0,
-          "id": "textbox_3",
-          "style_name": "Test2",
-          "v_align": "center",
-          "width_pc": 45.0,
-          "x_pc": 50.0,
-          "y_pc": 80.0
-        }
-      ]
-    }
-  },
-  "master_templates": {
-    "Default Master": {
-      "layout_name": "Default Layout",
-      "text_box_styles": {
-        "main": "Default Style"
-      }
-    }
-  },
   "styles": {
     "Default Style": {
       "font_color": "#ffffff",
@@ -104,6 +44,66 @@
       "shadow_y": 2,
       "text_outline": false,
       "text_shadow": false
+    }
+  },
+  "layouts": {
+    "Default Layout": {
+      "background_color": "#000000",
+      "text_boxes": [
+        {
+          "h_align": "center",
+          "height_pc": 80,
+          "id": "main",
+          "style_name": "Default Style",
+          "v_align": "center",
+          "width_pc": 80,
+          "x_pc": 10,
+          "y_pc": 10
+        }
+      ]
+    },
+    "test": {
+      "background_color": "#1A1A1A",
+      "text_boxes": [
+        {
+          "h_align": "left",
+          "height_pc": 15.0,
+          "id": "textbox_2",
+          "style_name": "Test2",
+          "v_align": "center",
+          "width_pc": 45.0,
+          "x_pc": 5.0,
+          "y_pc": 80.0
+        },
+        {
+          "h_align": "center",
+          "height_pc": 64.62,
+          "id": "Title",
+          "style_name": "test",
+          "v_align": "top",
+          "width_pc": 84.89,
+          "x_pc": 7.48,
+          "y_pc": 15.38
+        },
+        {
+          "h_align": "right",
+          "height_pc": 15.0,
+          "id": "Attribution",
+          "style_name": "Test2",
+          "v_align": "center",
+          "width_pc": 45.0,
+          "x_pc": 50.0,
+          "y_pc": 80.0
+        }
+      ]
+    }
+  },
+  "master_templates": {
+    "Default Master": {
+      "layout_name": "Default Layout",
+      "text_box_styles": {
+        "main": "Default Style"
+      }
     }
   }
 }

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QFontComboBox, QSpinBox, QColorDialog, QLineEdit, 
     QGraphicsObject, # Changed from QGraphicsRectItem
     QGraphicsView, QGraphicsScene, QGraphicsTextItem, QGraphicsDropShadowEffect, QGraphicsItem, QApplication # Added QGraphicsItem, QApplication
-)
+) # Added QCursor
 from PySide6.QtGui import QFont, QColor, QPalette, QPainter, QPen, QTextCharFormat, QTextCursor, QBrush # For font and color manipulation, and QPainter, Added QPen, QTextCharFormat, QTextCursor, QBrush
 from PySide6.QtCore import Qt, Slot, QDir, QFileInfo, Signal # Added Signal
 from PySide6.QtUiTools import QUiLoader
@@ -14,6 +14,7 @@ from PySide6.QtUiTools import QUiLoader
 from data_models.slide_data import DEFAULT_TEMPLATE # To access initial defaults
 from PySide6.QtCore import QRectF # For QGraphicsObject bounding rect
 from typing import Optional # Import Optional for type hinting
+from PySide6.QtGui import QCursor
 # Default properties for a new layout definition (used in TemplateEditorWindow)
 from PySide6.QtGui import QFontMetrics, QTextOption # For text width calculation, Added QTextOption
 from PySide6.QtCore import QPointF # Import QPointF
@@ -228,29 +229,41 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
         # Add the main rectangle plus a margin for easier grabbing
         path.addRect(self._rect.adjusted(-RESIZE_HANDLE_SIZE/2, -RESIZE_HANDLE_SIZE/2, RESIZE_HANDLE_SIZE/2, RESIZE_HANDLE_SIZE/2))
         return path
-
+    
     def hoverMoveEvent(self, event):
         # Change cursor based on hover position for resizing
         pos = event.pos() # Position in item coordinates
-        handle_size = RESIZE_HANDLE_SIZE
+        handle_size = RESIZE_HANDLE_SIZE # This is 8 pixels by default
         
-        # Determine cursor based on proximity to edges/corners
-        cursor = Qt.CursorShape.ArrowCursor # Default cursor
+        determined_cursor_shape = None # None means unset/defer to view
         
         left_edge = abs(pos.x() - self._rect.left()) < handle_size
         right_edge = abs(pos.x() - self._rect.right()) < handle_size
         top_edge = abs(pos.y() - self._rect.top()) < handle_size
         bottom_edge = abs(pos.y() - self._rect.bottom()) < handle_size
         
-        if left_edge and top_edge: cursor = Qt.CursorShape.SizeFDiagCursor # Top-left
-        elif right_edge and bottom_edge: cursor = Qt.CursorShape.SizeFDiagCursor # Bottom-right
-        elif left_edge and bottom_edge: cursor = Qt.CursorShape.SizeBDiagCursor # Bottom-left
-        elif right_edge and top_edge: cursor = Qt.CursorShape.SizeBDiagCursor # Top-right
-        elif left_edge or right_edge: cursor = Qt.CursorShape.SizeHorCursor # Left or Right edge
-        elif top_edge or bottom_edge: cursor = Qt.CursorShape.SizeVerCursor # Top or Bottom edge
+        if left_edge and top_edge: determined_cursor_shape = Qt.CursorShape.SizeFDiagCursor
+        elif right_edge and bottom_edge: determined_cursor_shape = Qt.CursorShape.SizeFDiagCursor
+        elif left_edge and bottom_edge: determined_cursor_shape = Qt.CursorShape.SizeBDiagCursor
+        elif right_edge and top_edge: determined_cursor_shape = Qt.CursorShape.SizeBDiagCursor
+        elif left_edge or right_edge: determined_cursor_shape = Qt.CursorShape.SizeHorCursor
+        elif top_edge or bottom_edge: determined_cursor_shape = Qt.CursorShape.SizeVerCursor
         
-        self.setCursor(cursor)
+        if determined_cursor_shape is not None:
+            # If a specific resize cursor is determined, set it
+            if self.cursor().shape() != determined_cursor_shape:
+                self.setCursor(QCursor(determined_cursor_shape))
+        else:
+            # Not on a handle; if item has a cursor set (e.g. from previous move on handle), unset it
+            # This allows the view's ScrollHandDrag cursor (OpenHand) to show.
+            if self.hasCursor():
+                self.unsetCursor()
+        
         super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.unsetCursor() # Ensure view's cursor is restored when mouse leaves item
+        super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

@@ -92,7 +92,6 @@ class MainWindow(QMainWindow):
         self.load_button = QPushButton("Load")
         self.save_button = QPushButton("Save")
         self.save_as_button = QPushButton("Save As...")
-        self.clear_button = QPushButton("Clear All Slides")
         self.undo_button = QPushButton("Undo") # New
         self.redo_button = QPushButton("Redo") # New
 
@@ -100,9 +99,6 @@ class MainWindow(QMainWindow):
         self.add_song_button = QPushButton("Add Song")
         self.add_song_button.setEnabled(False)
         self.add_song_button.setToolTip("Temporarily disabled pending multi-textbox feature.")
-        self.add_test_slide_button = QPushButton("Add Test Slide")
-        self.add_test_slide_button.setEnabled(False)
-        self.add_test_slide_button.setToolTip("Temporarily disabled pending multi-textbox feature.")
         self.edit_template_button = QPushButton("Edit Template")
         self.edit_template_button.setEnabled(True) # Re-enabled
         self.edit_template_button.setToolTip("Open the template editor.") # Updated tooltip
@@ -146,10 +142,8 @@ class MainWindow(QMainWindow):
         file_ops_layout.addWidget(self.save_button)
         file_ops_layout.addWidget(self.save_as_button)
         file_ops_layout.addWidget(self.add_song_button) # Add to layout
-        file_ops_layout.addStretch(1)
-        file_ops_layout.addWidget(self.add_test_slide_button)
-        file_ops_layout.addWidget(self.edit_template_button) # Add to layout
-        file_ops_layout.addWidget(self.clear_button)
+        file_ops_layout.addStretch(1) # Keep stretch before edit template
+        file_ops_layout.addWidget(self.edit_template_button)
         file_ops_layout.addWidget(self.undo_button) # Add Undo button
         file_ops_layout.addWidget(self.redo_button) # Add Redo button
         left_layout.addLayout(file_ops_layout)
@@ -178,9 +172,7 @@ class MainWindow(QMainWindow):
         self.load_button.clicked.connect(self.handle_load)
         self.save_button.clicked.connect(self.handle_save)
         self.save_as_button.clicked.connect(self.handle_save_as)
-        self.add_song_button.clicked.connect(self.handle_add_song) # Connect signal
-        self.add_test_slide_button.clicked.connect(self.add_test_slide)
-        self.clear_button.clicked.connect(self.handle_clear_all_slides)
+        self.add_song_button.clicked.connect(self.handle_add_song)
         self.edit_template_button.clicked.connect(self.handle_edit_template) # Connect signal
         self.undo_button.clicked.connect(self.handle_undo) # New
         self.redo_button.clicked.connect(self.handle_redo) # New
@@ -234,26 +226,7 @@ class MainWindow(QMainWindow):
             if 0 <= self.current_slide_index < len(self.presentation_manager.get_slides()):
                 self._display_slide(self.current_slide_index)
             else:
-                self._show_blank_on_output() # Show blank if no valid slide selected
-
-    def add_test_slide(self):
-        slide_count = len(self.presentation_manager.get_slides())
-        new_slide = SlideData(
-            lyrics=f"Test Slide {slide_count + 1}\nAdded via button.",
-            # background_color is now part of template_settings
-        )
-        # Get resolved settings for the "Default Master" template
-        # This assumes TemplateManager has a method like resolve_master_template_for_primary_text_box
-        default_master_settings = self.template_manager.resolve_master_template_for_primary_text_box("Default Master")
-        if not default_master_settings:
-            print("Warning: Could not resolve 'Default Master' template settings. Using empty settings for test slide.")
-            default_master_settings = {} # Fallback to empty if resolution fails
-
-        new_slide.template_settings = default_master_settings
-        
-        # Use Command for adding slide
-        cmd = AddSlideCommand(self.presentation_manager, new_slide)
-        self.presentation_manager.do_command(cmd)
+                self._show_blank_on_output()
 
     def handle_add_song(self):
         """
@@ -342,18 +315,6 @@ class MainWindow(QMainWindow):
                 return True
             return False
         return False # User cancelled dialog
-
-    def handle_clear_all_slides(self):
-        reply = QMessageBox.question(self, 'Clear All Slides',
-                                     "Are you sure you want to clear all slides? This cannot be undone.",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.current_slide_index = -1 # Reset UI selection state
-            # This is a destructive operation, might need a "ClearAllCommand"
-            # For now, directly clear and mark dirty. Undo stack will be cleared by new actions.
-            self.presentation_manager.slides.clear()
-            self.presentation_manager.is_dirty = True
-            self.presentation_manager.presentation_changed.emit()
 
     @Slot() # No longer receives an int directly from the signal
     def handle_button_size_change(self):
@@ -448,7 +409,7 @@ class MainWindow(QMainWindow):
         slides = self.presentation_manager.get_slides()
 
         if not slides:
-            no_slides_label = QLabel("No slides. Use 'Load' or 'Add Test Slide'.")
+            no_slides_label = QLabel("No slides. Use 'Load' or 'Add Song'.")
             no_slides_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.slide_buttons_layout.addWidget(no_slides_label)
             self.current_slide_index = -1
