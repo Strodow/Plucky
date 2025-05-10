@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QSize, Slot, QEvent # Added QEvent
 try:
     # Assuming running from the YourProject directory
     from windows.output_window import OutputWindow
-    from data_models.slide_data import SlideData, DEFAULT_TEMPLATE # Import DEFAULT_TEMPLATE
+    from data_models.slide_data import SlideData # DEFAULT_TEMPLATE is no longer used here
     from rendering.slide_renderer import SlideRenderer
     from widgets.scaled_slide_button import ScaledSlideButton # This should already be there
     from windows.template_editor_window import TemplateEditorWindow # Import the new editor
@@ -32,7 +32,7 @@ except ImportError:
     # import sys, os # Already imported at top level
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from windows.output_window import OutputWindow
-    from data_models.slide_data import SlideData, DEFAULT_TEMPLATE # Import DEFAULT_TEMPLATE
+    from data_models.slide_data import SlideData # DEFAULT_TEMPLATE is no longer used here
     from rendering.slide_renderer import SlideRenderer
     from widgets.scaled_slide_button import ScaledSlideButton # This should already be there
     from windows.template_editor_window import TemplateEditorWindow # Import the new editor
@@ -240,11 +240,16 @@ class MainWindow(QMainWindow):
         slide_count = len(self.presentation_manager.get_slides())
         new_slide = SlideData(
             lyrics=f"Test Slide {slide_count + 1}\nAdded via button.",
-            background_color=f"#{slide_count % 3 * 40:02X}{slide_count % 5 * 30:02X}{slide_count % 7 * 25:02X}" # pseudo-random color
-        ) # Test slides will use the current default template from SlideData class, overlay_label defaults to ""
-        # To use the MainWindow's current_default_template:
-        test_slide_template = self.template_manager.get_template_settings("Default") or DEFAULT_TEMPLATE.copy()
-        new_slide = SlideData(lyrics=new_slide.lyrics, template_settings=test_slide_template)
+            # background_color is now part of template_settings
+        )
+        # Get resolved settings for the "Default Master" template
+        # This assumes TemplateManager has a method like resolve_master_template_for_primary_text_box
+        default_master_settings = self.template_manager.resolve_master_template_for_primary_text_box("Default Master")
+        if not default_master_settings:
+            print("Warning: Could not resolve 'Default Master' template settings. Using empty settings for test slide.")
+            default_master_settings = {} # Fallback to empty if resolution fails
+
+        new_slide.template_settings = default_master_settings
         
         # Use Command for adding slide
         cmd = AddSlideCommand(self.presentation_manager, new_slide)
@@ -285,12 +290,16 @@ class MainWindow(QMainWindow):
                 return
             new_slides_data = []
             for stanza_lyrics in stanzas:
-                # New songs will use the "Default" template from the TemplateManager
-                default_tpl_for_new_song = self.template_manager.get_template_settings("Default") or DEFAULT_TEMPLATE.copy()
+                # New songs will use the resolved "Default Master" template
+                default_master_settings_for_song = self.template_manager.resolve_master_template_for_primary_text_box("Default Master")
+                if not default_master_settings_for_song:
+                    print("Warning: Could not resolve 'Default Master' template settings. Using empty settings for new song slide.")
+                    default_master_settings_for_song = {}
+
                 new_slide = SlideData(lyrics=stanza_lyrics, 
                                       song_title=cleaned_song_title,
                                       overlay_label="", # Default for new song slides
-                                      template_settings=default_tpl_for_new_song)
+                                      template_settings=default_master_settings_for_song)
                 new_slides_data.append(new_slide)
             
             # For multiple slides, you might create a "MacroCommand" or execute individual AddSlideCommands
@@ -359,12 +368,21 @@ class MainWindow(QMainWindow):
         # Pass all current named templates to the editor
         current_templates_snapshot = self.template_manager.get_all_templates()
         editor = TemplateEditorWindow(all_templates=current_templates_snapshot, parent=self)
+        # Connect the editor's save request signal to a handler in MainWindow
+        editor.templates_save_requested.connect(self._handle_editor_save_request)
         
         if editor.exec() == QDialog.DialogCode.Accepted:
             updated_templates_collection = editor.get_updated_templates()
             self.template_manager.update_from_collection(updated_templates_collection)
             # The templates_changed signal from TemplateManager will call on_template_collection_changed
             # which in turn calls update_slide_display_and_selection to refresh UI.
+        else:
+            # If the user cancels, we might want to reload the templates from the manager
+            # to discard any un-OK'd changes if they didn't use the intermediate "Save" button.
+            # This depends on how "dirty" state is managed within TemplateEditorWindow itself.
+            # For now, we'll assume TemplateManager holds the last saved state.
+            # If the editor was complex and had its own dirty tracking, you might reload here.
+            print("Template editor was cancelled.")
 
     @Slot()
     def _handle_manual_slide_selection(self, selected_slide_id: int):
@@ -505,7 +523,7 @@ class MainWindow(QMainWindow):
             button.slide_selected.connect(self._handle_manual_slide_selection) # Connect to our new manual handler
             button.edit_requested.connect(self.handle_edit_slide_requested)
             button.delete_requested.connect(self.handle_delete_slide_requested)
-            button.set_available_templates(self.template_manager.get_template_names()) # Pass template names
+            button.set_available_templates(self.template_manager.get_master_template_names()) # Pass master template names
             button.apply_template_to_slide_requested.connect(self.handle_apply_template_to_slide)
             button.next_slide_requested_from_menu.connect(self.handle_next_slide_from_menu)
             button.previous_slide_requested_from_menu.connect(self.handle_previous_slide_from_menu)
@@ -663,9 +681,12 @@ class MainWindow(QMainWindow):
     @Slot(int, str)
     def handle_apply_template_to_slide(self, slide_index: int, template_name: str):
         """Applies a named template to a specific slide."""
-        chosen_template_settings = self.template_manager.get_template_settings(template_name)
+        # 'template_name' here refers to a Master Template name.
+        # We need to resolve it to get the flat settings for SlideData.template_settings (interim step)
+        chosen_template_settings = self.template_manager.resolve_master_template_for_primary_text_box(template_name)
+        
         if not chosen_template_settings:
-            self.show_error_message(f"Template '{template_name}' not found.")
+            self.show_error_message(f"Could not resolve Master Template '{template_name}'.")
             return
         
         slides = self.presentation_manager.get_slides()
@@ -867,6 +888,17 @@ class MainWindow(QMainWindow):
     def handle_redo(self):
         print("MainWindow: Redo action triggered.")
         self.presentation_manager.redo()
+        
+    @Slot(dict)
+    def _handle_editor_save_request(self, templates_collection: dict):
+        """
+        Handles the templates_save_requested signal from the TemplateEditorWindow.
+        This allows saving templates without closing the editor.
+        """
+        print(f"MainWindow: Received save request from template editor with data: {templates_collection.keys()}")
+        self.template_manager.update_from_collection(templates_collection)
+        # Optionally, provide feedback to the user, e.g., via a status bar or a brief message.
+        # For now, the print statement and the TemplateManager's own save confirmation (if any) will suffice.
 
 # Example of how to run this if it's the main entry point for testing
 # (Your main.py would typically handle this)

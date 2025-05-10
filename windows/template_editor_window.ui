@@ -4,9 +4,9 @@
  <widget class="QDialog" name="TemplateEditorWindow">
   <property name="geometry">
    <rect>
-    <x>0</x>
-    <y>0</y>
-    <width>700</width>
+    <x>0</x> <!-- You might adjust x later if you want to center it or position it differently -->
+    <y>0</y> <!-- You might adjust y later -->
+    <width>950</width> <!-- Increased width -->
     <height>600</height>
    </rect>
   </property>
@@ -72,33 +72,104 @@
         </layout>
        </item>
        <item>
-        <widget class="QLabel" name="layouts_placeholder_label">
-         <property name="text">
-          <string>Layout Management UI:
-- List of existing Layout Definitions
-- Buttons: Add New Layout, Edit Selected, Delete Selected
-- Editing area for selected layout (name, number of text boxes, properties for each text box: ID, position, size)</string>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
+        <layout class="QHBoxLayout" name="layout_editor_area_layout" stretch="3,1">
+         <item>
+          <widget class="ZoomableGraphicsView" name="layout_preview_graphics_view">
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>250</height>
+            </size>
+           </property>
+           <property name="renderHints">
+            <set>QPainter::Antialiasing|QPainter::TextAntialiasing</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QGroupBox" name="textbox_properties_group">
+           <property name="title">
+            <string>Selected Text Box Properties</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool> <!-- Initially disabled -->
+           </property>
+           <layout class="QFormLayout" name="textbox_properties_form_layout">
+            <item row="0" column="0">
+             <widget class="QLabel" name="textbox_id_label">
+              <property name="text">
+               <string>ID/Name:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="0" column="1">
+             <widget class="QLineEdit" name="selected_textbox_id_edit"/>
+            </item>
+            <item row="1" column="0">
+             <widget class="QLabel" name="textbox_style_label">
+              <property name="text">
+               <string>Style:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="1">
+             <widget class="QComboBox" name="selected_textbox_style_combo"/>
+            </item>
+            <item row="2" column="0">
+             <widget class="QLabel" name="label_halign">
+              <property name="text">
+               <string>H. Align:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="1">
+             <widget class="QComboBox" name="selected_textbox_halign_combo"/>
+            </item>
+            <item row="3" column="0"> <!-- New row for V. Align -->
+             <widget class="QLabel" name="label_valign">
+              <property name="text">
+               <string>V. Align:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="3" column="1"> <!-- New row for V. Align -->
+             <widget class="QComboBox" name="selected_textbox_valign_combo"/>
+            </item>
+            <item row="4" column="0"> <!-- Spacer moved down -->
+             <spacer name="textbox_properties_spacer">
+              <property name="orientation">
+               <enum>Qt::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>20</width>
+                <height>40</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </widget>
+         </item>
+        </layout>
        </item>
        <item>
-        <spacer name="layouts_tab_spacer">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>40</height>
-          </size>
-         </property>
-        </spacer>
+        <layout class="QHBoxLayout" name="layout_textbox_buttons_layout">
+         <item>
+          <widget class="QPushButton" name="add_textbox_to_layout_button">
+           <property name="text">
+            <string>Add Text Box</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="remove_selected_textbox_button">
+           <property name="text">
+            <string>Remove Selected Text Box</string>
+           </property>
+          </widget>
+         </item> <!-- This was incorrectly </widget> before, should be </item> -->
+        </layout> <!-- This was missing its closing tag -->
        </item>
       </layout>
      </widget>
@@ -511,89 +582,6 @@
        </item>
        <item>
         <spacer name="styles_tab_spacer">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>40</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
-      </layout>
-     </widget>
-     <widget class="QWidget" name="master_templates_tab">
-      <attribute name="title">
-       <string>Master Templates</string>
-      </attribute>
-      <layout class="QVBoxLayout" name="master_templates_tab_v_layout">
-      <item>
-        <layout class="QHBoxLayout" name="master_template_selector_layout">
-         <item>
-          <widget class="QLabel" name="master_template_selector_label">
-           <property name="text">
-            <string>Master Template:</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QComboBox" name="master_template_selector_combo">
-           <property name="sizePolicy">
-            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-             <horstretch>1</horstretch>
-             <verstretch>0</verstretch>
-            </sizepolicy>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="add_master_template_button">
-           <property name="text">
-            <string>+</string>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>30</width>
-             <height>16777215</height>
-            </size>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="remove_master_template_button">
-           <property name="text">
-            <string>-</string>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>30</width>
-             <height>16777215</height>
-            </size>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-       <item>
-        <widget class="QLabel" name="master_templates_placeholder_label">
-         <property name="text">
-          <string>Master Template Assembly UI:
-- List of existing Master Templates
-- Buttons: Add New Master, Edit Selected, Delete Selected
-- Editing area for selected Master Template (name, chosen Layout, mapping of Layout's text box IDs to Styles)</string>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <spacer name="master_templates_tab_spacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
          </property>

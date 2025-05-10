@@ -1,9 +1,32 @@
 import copy
 from typing import Dict, Any, List, Optional
+import json # Import the json module
+import os # For file path operations
 
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QColor # For default color values
 
-from data_models.slide_data import DEFAULT_TEMPLATE # For the initial default
+# --- New Default Definitions for the Structured Template System ---
+DEFAULT_STYLE_PROPS: Dict[str, Any] = {
+    "font_family": "Arial", "font_size": 48, "font_color": "#FFFFFF",
+    "preview_text": "Sample Text", "force_all_caps": False,
+    "text_shadow": False, "shadow_x": 1, "shadow_y": 1, "shadow_blur": 2, "shadow_color": QColor(0,0,0,128).name(QColor.NameFormat.HexArgb), # semi-transparent black
+    "text_outline": False, "outline_thickness": 1, "outline_color": "#000000"
+}
+
+DEFAULT_LAYOUT_PROPS: Dict[str, Any] = {
+    "text_boxes": [
+        {"id": "main", "x_pc": 10, "y_pc": 10, "width_pc": 80, "height_pc": 80, "h_align": "center", "v_align": "center"}
+    ],
+    "background_color": "#000000" # Default background for the layout itself
+}
+
+DEFAULT_MASTER_TEMPLATE_PROPS: Dict[str, Any] = {
+    "layout_name": "Default Layout", # Refers to a layout definition name
+    "text_box_styles": { # Maps text_box_id from the layout to a style_definition name
+        "main": "Default Style"
+    }
+}
 
 class TemplateManager(QObject):
     """Manages the collection of named presentation templates."""
@@ -12,79 +35,144 @@ class TemplateManager(QObject):
     # or when a specific template's content is updated.
     templates_changed = Signal()
 
+    # Define a path for the template collection file
+    CONFIG_DIR = os.path.dirname(os.path.abspath(__file__)) # Core directory
+    TEMPLATE_COLLECTION_FILE = os.path.join(CONFIG_DIR, "..", "settings", "templates_collection.json") # Place in a settings folder
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._named_templates: Dict[str, Dict[str, Any]] = {
-            "Default": DEFAULT_TEMPLATE.copy()
+        self._template_collection: Dict[str, Dict[str, Any]] = {
+            "styles": {
+                "Default Style": copy.deepcopy(DEFAULT_STYLE_PROPS)
+            },
+            "layouts": {
+                "Default Layout": copy.deepcopy(DEFAULT_LAYOUT_PROPS)
+            },
+            "master_templates": {
+                "Default Master": copy.deepcopy(DEFAULT_MASTER_TEMPLATE_PROPS)
+            }
         }
-
-    def get_template_names(self) -> List[str]:
-        """Returns a list of all current template names."""
-        return list(self._named_templates.keys())
-
-    def get_template_settings(self, template_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Returns a deep copy of the settings for a given template name.
-        Returns None if the template name doesn't exist.
-        """
-        if template_name in self._named_templates:
-            return copy.deepcopy(self._named_templates[template_name])
-        return None
+        # Note: The old DEFAULT_TEMPLATE from slide_data.py is no longer directly used here.
+        # This manager now deals with the structured collection.
+        self._ensure_settings_dir_exists()
+        self._load_templates_from_file() # Load templates on initialization
 
     def get_all_templates(self) -> Dict[str, Dict[str, Any]]:
-        """Returns a deep copy of the entire collection of named templates."""
-        return copy.deepcopy(self._named_templates)
-
-    def update_template_settings(self, template_name: str, new_settings: Dict[str, Any]):
-        """
-        Updates the settings for an existing template.
-        If the template doesn't exist, it can optionally create it or log a warning.
-        """
-        # For simplicity, we assume new_settings is a complete, valid template dict.
-        # If template_name doesn't exist, this will add it.
-        # If you want to strictly update existing, add: if template_name not in self._named_templates: return False
-        self._named_templates[template_name] = copy.deepcopy(new_settings)
-        self.templates_changed.emit()
-        print(f"TemplateManager: Template '{template_name}' updated/added.")
-
-    def add_new_template(self, new_template_name: str, base_template_name: Optional[str] = None) -> bool:
-        """Adds a new template, optionally based on an existing one or the default."""
-        if not new_template_name.strip() or new_template_name in self._named_templates:
-            print(f"TemplateManager: Invalid or duplicate new template name '{new_template_name}'.")
-            return False
-        
-        if base_template_name and base_template_name in self._named_templates:
-            self._named_templates[new_template_name] = copy.deepcopy(self._named_templates[base_template_name])
-        else:
-            self._named_templates[new_template_name] = DEFAULT_TEMPLATE.copy()
-        
-        self.templates_changed.emit()
-        print(f"TemplateManager: New template '{new_template_name}' added.")
-        return True
-
-    def delete_template(self, template_name: str) -> bool:
-        """Deletes a template. Prevents deleting the last template."""
-        if template_name not in self._named_templates:
-            print(f"TemplateManager: Template '{template_name}' not found for deletion.")
-            return False
-        if len(self._named_templates) <= 1 and "Default" in self._named_templates and template_name == "Default":
-            print("TemplateManager: Cannot delete the 'Default' template if it's the only one.")
-            # Or, more strictly, always prevent deleting "Default" if it exists.
-            # Or, if deleting last, re-add "Default". For now, prevent deleting last.
-            return False
-            
-        del self._named_templates[template_name]
-        if not self._named_templates: # Ensure "Default" always exists if all are deleted
-            self._named_templates["Default"] = DEFAULT_TEMPLATE.copy()
-
-        self.templates_changed.emit()
-        print(f"TemplateManager: Template '{template_name}' deleted.")
-        return True
+        """Returns a deep copy of the entire template collection (styles, layouts, master_templates)."""
+        return copy.deepcopy(self._template_collection)
 
     def update_from_collection(self, new_collection: Dict[str, Dict[str, Any]]):
-        """Replaces the entire internal collection with a new one. Used by TemplateEditorWindow."""
-        self._named_templates = copy.deepcopy(new_collection)
-        if "Default" not in self._named_templates: # Ensure "Default" always exists
-            self._named_templates["Default"] = DEFAULT_TEMPLATE.copy()
+        """
+        Replaces the entire internal collection with a new one.
+        Ensures default entries exist if missing.
+        Used by TemplateEditorWindow.
+        """
+        self._template_collection = copy.deepcopy(new_collection)
+        self._ensure_default_entries() # Ensure defaults after updating
+        self._save_templates_to_file() # Save to file after updating
         self.templates_changed.emit()
         print("TemplateManager: Entire template collection updated.")
+
+    # --- Category-Specific Getters (Optional, but good for other parts of the app) ---
+    def get_style_names(self) -> List[str]:
+        return list(self._template_collection.get("styles", {}).keys())
+
+    def get_style_definition(self, name: str) -> Optional[Dict[str, Any]]:
+        style_def = self._template_collection.get("styles", {}).get(name)
+        return copy.deepcopy(style_def) if style_def else None
+
+    def get_layout_names(self) -> List[str]:
+        return list(self._template_collection.get("layouts", {}).keys())
+
+    def get_layout_definition(self, name: str) -> Optional[Dict[str, Any]]:
+        layout_def = self._template_collection.get("layouts", {}).get(name)
+        return copy.deepcopy(layout_def) if layout_def else None
+
+    def get_master_template_names(self) -> List[str]:
+        return list(self._template_collection.get("master_templates", {}).keys())
+
+    def get_master_template_definition(self, name: str) -> Optional[Dict[str, Any]]:
+        master_def = self._template_collection.get("master_templates", {}).get(name)
+        return copy.deepcopy(master_def) if master_def else None
+
+    # --- Deprecated/Replaced Methods (from the old flat template structure) ---
+    # These methods are no longer directly applicable to the new structured system
+    # in the same way. The TemplateEditorWindow will now work with the full collection.
+    # If other parts of your application relied on these, they'll need to be updated
+    # to use the new category-specific getters or work with the full collection.
+
+    def get_template_names_old(self) -> List[str]:
+        """DEPRECATED: Returns a list of master template names as a stand-in."""
+        print("TemplateManager: get_template_names_old() is deprecated. Use get_master_template_names() or similar.")
+        return self.get_master_template_names()
+
+    def get_template_settings_old(self, template_name: str) -> Optional[Dict[str, Any]]:
+        """
+        DEPRECATED: Tries to return a master template definition as a stand-in.
+        The concept of a single 'template_settings' is replaced by structured data.
+        """
+        print(f"TemplateManager: get_template_settings_old('{template_name}') is deprecated. Use get_master_template_definition() or resolve styles/layouts.")
+        # This is a placeholder. The actual "settings" for a slide will come from resolving
+        # a master template, its layout, and the styles for its text boxes.
+        # For now, just return the master template definition if it exists.
+        master_def = self.get_master_template_definition(template_name)
+        if master_def:
+            return master_def # This isn't the final "renderable" settings, but it's the stored data.
+        return None
+
+    # The old add_new_template, delete_template, update_template_settings methods
+    # would need to be significantly refactored to work with categories (styles, layouts, master_templates)
+    # or be removed if all modifications are handled through the TemplateEditorWindow and update_from_collection.
+    # For now, they are effectively replaced by the editor's more comprehensive management.
+    # If direct API access to add/delete individual styles/layouts/masters is needed later,
+    # new methods like `add_style_definition`, `delete_layout_definition` etc. should be created.
+
+    def _ensure_settings_dir_exists(self):
+        """Ensures the directory for the settings file exists."""
+        settings_dir = os.path.dirname(self.TEMPLATE_COLLECTION_FILE)
+        if not os.path.exists(settings_dir):
+            try:
+                os.makedirs(settings_dir)
+                print(f"TemplateManager: Created settings directory at {settings_dir}")
+            except OSError as e:
+                print(f"TemplateManager: Error creating settings directory {settings_dir}: {e}")
+
+    def _ensure_default_entries(self):
+        """Ensures default categories and entries exist in the current collection."""
+        if "styles" not in self._template_collection or not isinstance(self._template_collection["styles"], dict):
+            self._template_collection["styles"] = {}
+        if "Default Style" not in self._template_collection["styles"]:
+            self._template_collection["styles"]["Default Style"] = copy.deepcopy(DEFAULT_STYLE_PROPS)
+            
+        if "layouts" not in self._template_collection or not isinstance(self._template_collection["layouts"], dict):
+            self._template_collection["layouts"] = {}
+        if "Default Layout" not in self._template_collection["layouts"]:
+            self._template_collection["layouts"]["Default Layout"] = copy.deepcopy(DEFAULT_LAYOUT_PROPS)
+
+        if "master_templates" not in self._template_collection or not isinstance(self._template_collection["master_templates"], dict):
+            self._template_collection["master_templates"] = {}
+        if "Default Master" not in self._template_collection["master_templates"]:
+            self._template_collection["master_templates"]["Default Master"] = copy.deepcopy(DEFAULT_MASTER_TEMPLATE_PROPS)
+
+    def _load_templates_from_file(self):
+        try:
+            if os.path.exists(self.TEMPLATE_COLLECTION_FILE):
+                with open(self.TEMPLATE_COLLECTION_FILE, 'r', encoding='utf-8') as f:
+                    loaded_collection = json.load(f)
+                    self._template_collection = loaded_collection # Replace defaults with loaded
+                print(f"TemplateManager: Templates loaded from {self.TEMPLATE_COLLECTION_FILE}")
+            else:
+                print(f"TemplateManager: Template file not found at {self.TEMPLATE_COLLECTION_FILE}. Using default templates.")
+        except json.JSONDecodeError:
+            print(f"TemplateManager: Error decoding JSON from {self.TEMPLATE_COLLECTION_FILE}. Using default templates.")
+        except Exception as e:
+            print(f"TemplateManager: Error loading templates from file: {e}. Using default templates.")
+        self._ensure_default_entries() # Always ensure defaults after attempting to load
+
+    def _save_templates_to_file(self):
+        try:
+            with open(self.TEMPLATE_COLLECTION_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self._template_collection, f, indent=2, ensure_ascii=False)
+            print(f"TemplateManager: Templates saved to {self.TEMPLATE_COLLECTION_FILE}")
+        except Exception as e:
+            print(f"TemplateManager: Error saving templates to file: {e}")
