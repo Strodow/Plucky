@@ -184,3 +184,12 @@ class PresentationManager(QObject):
         self.is_dirty = True
         self.presentation_changed.emit()
         print(f"PM: Redid command {command.__class__.__name__}. Undo stack size: {len(self.undo_stack)}")
+
+    def clear_presentation(self):
+        """Clears all slides and resets the presentation to a new, empty state."""
+        self.slides.clear()
+        self.current_filepath = None
+        self.is_dirty = False
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self.presentation_changed.emit()

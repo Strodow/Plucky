@@ -1,15 +1,17 @@
 import sys
 import os
-import uuid # For generating unique slide IDs for testing
+import json # Needed for saving/loading benchmark history
+# import uuid # For generating unique slide IDs for testing - Unused
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QFileDialog, QSlider,
-    QMessageBox, QVBoxLayout, QWidget, QPushButton, QInputDialog, QDialog, # QButtonGroup removed
-    QComboBox, QLabel, QHBoxLayout, QSplitter, QScrollArea, QButtonGroup
-)
+    QApplication, QMainWindow, QFileDialog, QSlider, QMenuBar, # Added QMenuBar
+    QMessageBox, QVBoxLayout, QWidget, QPushButton, QInputDialog, # QDialog, QButtonGroup removed
+    QComboBox, QLabel, QHBoxLayout, QSplitter, QScrollArea # QButtonGroup removed
+) #  QAction removed as it's not directly used
 from PySide6.QtGui import QScreen, QPixmap
 from PySide6.QtCore import Qt, QSize, Slot, QEvent # Added QEvent
 
+from windows.settings_window import SettingsWindow # Import the new settings window
 # --- Local Imports ---
 # Make sure these paths are correct relative to where you run main.py
 try:
@@ -44,20 +46,47 @@ except ImportError:
     from commands.slide_commands import (
         ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand
     )
+import time
 
 # Constants for button previews
 # These are now BASE dimensions for calculating scaled preview sizes
 BASE_PREVIEW_WIDTH = 160
 BASE_PREVIEW_HEIGHT = 90
 
+# Determine project root dynamically for benchmark history file
+SCRIPT_DIR_MW = os.path.dirname(os.path.abspath(__file__)) # /windows
+PROJECT_ROOT_MW = os.path.dirname(SCRIPT_DIR_MW) # /Plucky
+BENCHMARK_TEMP_DIR_MW = os.path.join(PROJECT_ROOT_MW, "temp")
+BENCHMARK_HISTORY_FILE_PATH_MW = os.path.join(BENCHMARK_TEMP_DIR_MW, ".pluckybenches.json")
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        mw_init_start_time = time.perf_counter()
+        self.mw_init_end_time = 0.0 # Will be set at the end of __init__
+
         self.setWindowTitle("Plucky Presentation")
         self.setGeometry(100, 100, 900, 700) # Adjusted size for more controls
+        self.setMenuBar(self.create_menu_bar())
 
         # MainWindow can have focus, but scroll_area is more important for this.
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus) 
+
+        # Initialize benchmark data store as an instance attribute
+        # This will hold current session data + loaded history for the last presentation
+        self.benchmark_data_store = {
+            "app_init": 0.0,  # Time from app start until MainWindow is shown (calculated in showEvent)
+            "mw_init": 0.0,   # Time for MainWindow.__init__ (calculated at end of __init__)
+            "mw_show": 0.0,   # Time from MainWindow.__init__ end until it's shown (calculated in showEvent)
+            "last_presentation_path": "None",
+            "last_presentation_pm_load": 0.0,
+            "last_presentation_ui_update": 0.0,
+            "last_presentation_render_total": 0.0,
+            "last_presentation_render_images": 0.0,
+            "last_presentation_render_fonts": 0.0,
+            "last_presentation_render_layout": 0.0,
+            "last_presentation_render_draw": 0.0,
+        }
         # self.setFocus() # Attempt to give focus to MainWindow initially
 
         # Instantiate the TemplateManager
@@ -74,8 +103,6 @@ class MainWindow(QMainWindow):
 
         self.current_slide_index = -1 # Tracks the selected slide button's index
         self.output_resolution = QSize(1920, 1080) # Default, updated on monitor select
-        # self.slide_button_group = QButtonGroup(self) # No longer using QButtonGroup for ScaledSlideButtons
-        # self.slide_button_group.setExclusive(True)   # No longer using QButtonGroup for ScaledSlideButtons
         self.slide_buttons_list = [] # List to store ScaledSlideButton instances
 
 
@@ -83,28 +110,17 @@ class MainWindow(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
-        # Top controls: Monitor and Live
-        self.monitor_combo = QComboBox()
-        self.refresh_monitors_button = QPushButton("Refresh Monitors")
+        # Top controls: Live button (Monitor selection moved to settings)
         self.go_live_button = QPushButton("Go Live")
 
-        # Top controls: File Operations
-        self.load_button = QPushButton("Load")
-        self.save_button = QPushButton("Save")
-        self.save_as_button = QPushButton("Save As...")
+        # Top controls: Undo/Redo (File ops moved to menu)
         self.undo_button = QPushButton("Undo") # New
         self.redo_button = QPushButton("Redo") # New
 
-        # Buttons related to features undergoing major rework for "multiple text boxes"
-        self.add_song_button = QPushButton("Add Song")
-        self.add_song_button.setEnabled(False)
-        self.add_song_button.setToolTip("Temporarily disabled pending multi-textbox feature.")
+        # Edit Template button
         self.edit_template_button = QPushButton("Edit Template")
         self.edit_template_button.setEnabled(True) # Re-enabled
         self.edit_template_button.setToolTip("Open the template editor.") # Updated tooltip
-
-        # Template Selector ComboBox - REMOVED
-        # self.template_selector_combo = QComboBox()
 
         # Button Size Slider
         self.button_size_slider = QSlider(Qt.Orientation.Horizontal)
@@ -128,22 +144,14 @@ class MainWindow(QMainWindow):
         left_panel_widget = QWidget()
         left_layout = QVBoxLayout(left_panel_widget)
 
-        # Monitor controls layout
-        monitor_layout = QHBoxLayout()
-        monitor_layout.addWidget(QLabel("Output Monitor:"))
-        monitor_layout.addWidget(self.monitor_combo, 1) # Add stretch factor
-        monitor_layout.addWidget(self.refresh_monitors_button)
-        monitor_layout.addWidget(self.go_live_button)
-        left_layout.addLayout(monitor_layout)
+        # Monitor layout is removed as Go Live button is moved
 
         # File operations layout
         file_ops_layout = QHBoxLayout()
-        file_ops_layout.addWidget(self.load_button)
-        file_ops_layout.addWidget(self.save_button)
-        file_ops_layout.addWidget(self.save_as_button)
-        file_ops_layout.addWidget(self.add_song_button) # Add to layout
-        file_ops_layout.addStretch(1) # Keep stretch before edit template
+        file_ops_layout.addStretch(1) # Stretch to push buttons to the right
+        file_ops_layout.addWidget(self.go_live_button) # Add Go Live button here
         file_ops_layout.addWidget(self.edit_template_button)
+        # Keep Undo/Redo buttons on the main UI
         file_ops_layout.addWidget(self.undo_button) # Add Undo button
         file_ops_layout.addWidget(self.redo_button) # Add Redo button
         left_layout.addLayout(file_ops_layout)
@@ -166,23 +174,14 @@ class MainWindow(QMainWindow):
         splitter.setSizes([350]) # Adjust initial size of left panel
         main_layout.addWidget(splitter)
 
-        self.refresh_monitors()
-
         # --- Connections ---
-        self.load_button.clicked.connect(self.handle_load)
-        self.save_button.clicked.connect(self.handle_save)
-        self.save_as_button.clicked.connect(self.handle_save_as)
-        self.add_song_button.clicked.connect(self.handle_add_song)
+        # Connections for load, save, save_as, add_song are now handled by menu actions
         self.edit_template_button.clicked.connect(self.handle_edit_template) # Connect signal
         self.undo_button.clicked.connect(self.handle_undo) # New
         self.redo_button.clicked.connect(self.handle_redo) # New
         self.button_size_slider.sliderReleased.connect(self.handle_button_size_change) # Changed signal
-        # self.template_selector_combo.currentTextChanged.connect(self.handle_active_template_changed) # REMOVED
 
-        self.refresh_monitors_button.clicked.connect(self.refresh_monitors)
         self.go_live_button.clicked.connect(self.toggle_live)
-        # The QButtonGroup signal is no longer used for ScaledSlideButtons.
-        # We will connect ScaledSlideButton.slide_selected directly.
 
         self.update_slide_display_and_selection() # Initial setup of slide display
         
@@ -190,22 +189,29 @@ class MainWindow(QMainWindow):
         self.scroll_area.installEventFilter(self)
         # Ensure QScrollArea can receive focus.
         self.scroll_area.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-            
-    def refresh_monitors(self):
-        self.monitor_combo.clear()
-        screens = QApplication.screens()
-        if not screens:
-            self.monitor_combo.addItem("No monitors found")
-            self.monitor_combo.setEnabled(False)
-            return
-        self.monitor_combo.setEnabled(True)
-        for i, screen in enumerate(screens):
-            geometry = screen.geometry()
-            self.monitor_combo.addItem(f"Monitor {i+1}: {screen.name()} ({geometry.width()}x{geometry.height()})", screen)
 
+        # Store initial app benchmark data
+        app_start_time = QApplication.instance().property("app_start_time")
+        # Store app_start_time (timestamp) temporarily for calculation in showEvent
+        self._app_start_time = app_start_time 
+
+        mw_init_duration = time.perf_counter() - mw_init_start_time
+        self.benchmark_data_store["mw_init"] = mw_init_duration
+        self.mw_init_end_time = time.perf_counter() # Store for calculating mw_show in showEvent
+
+        if app_start_time is not None: # Check if it was set
+            # app_init and mw_show will be calculated and printed in showEvent, using self._app_start_time
+            pass 
+        else:
+            print(f"[BENCHMARK] MainWindow.__init__ took: {self.benchmark_data_store['mw_init']:.4f} seconds (app_start_time not found)")
+            
     def toggle_live(self):
-        selected_data = self.monitor_combo.currentData()
-        if not selected_data and not self.output_window.isVisible(): # Only warn if trying to go live without selection
+        # The selected screen is now managed by SettingsWindow and communicated via a signal
+        # For now, we'll assume self.output_window.screen() holds the target if set.
+        # A more robust way would be to store the QScreen object selected from settings.
+        target_screen = getattr(self, '_target_output_screen', None)
+
+        if not target_screen and not self.output_window.isVisible(): # Only warn if trying to go live without selection
             QMessageBox.warning(self, "No Monitor Selected", "Please select a monitor to go live.")
             return
 
@@ -215,11 +221,10 @@ class MainWindow(QMainWindow):
             self._show_blank_on_output() # Good practice to blank it before hiding
             self.output_window.hide() # Explicitly hide the window
         else:
-            if not selected_data: return # Should have been caught above
+            if not target_screen: return # Should have been caught above
             self.go_live_button.setText("LIVE")
             self.go_live_button.setStyleSheet("background-color: red; color: white; font-weight: bold;")
-            screen = selected_data
-            output_geometry = screen.geometry()
+            output_geometry = target_screen.geometry()
             self.output_resolution = output_geometry.size()
             self.output_window.setGeometry(output_geometry)
             self.output_window.showFullScreen()
@@ -293,8 +298,23 @@ class MainWindow(QMainWindow):
         
         filepath, _ = QFileDialog.getOpenFileName(self, "Load Presentation", "", "Plucky Files (*.plucky *.json);;All Files (*)")
         if filepath:
+            # Reset presentation-specific benchmarks before loading
+            self.benchmark_data_store["last_presentation_path"] = filepath
+            self.benchmark_data_store["last_presentation_pm_load"] = 0.0
+            self.benchmark_data_store["last_presentation_ui_update"] = 0.0
+            self.benchmark_data_store["last_presentation_render_total"] = 0.0
+            self.benchmark_data_store["last_presentation_render_images"] = 0.0
+            self.benchmark_data_store["last_presentation_render_fonts"] = 0.0
+            self.benchmark_data_store["last_presentation_render_layout"] = 0.0
+            self.benchmark_data_store["last_presentation_render_draw"] = 0.0
+
+            load_pm_start_time = time.perf_counter()
             self.presentation_manager.load_presentation(filepath)
+            load_pm_duration = time.perf_counter() - load_pm_start_time
+            self.benchmark_data_store["last_presentation_pm_load"] = load_pm_duration
+            print(f"[BENCHMARK] PresentationManager.load_presentation() took: {load_pm_duration:.4f} seconds for {filepath}")
             # After UI update (triggered by presentation_changed), explicitly mark as not dirty
+            # The actual UI update (update_slide_display_and_selection) will be benchmarked separately as it's triggered by a signal.
             self.presentation_manager.is_dirty = False
 
     def handle_save(self) -> bool:
@@ -377,8 +397,17 @@ class MainWindow(QMainWindow):
         Called when presentation_manager.presentation_changed is emitted.
         """
         print("MainWindow: update_slide_display_and_selection called")
+        ui_update_start_time = time.perf_counter()
         
+        # Initialize accumulators for detailed render timings
+        total_aggregated_render_time = 0.0
+        total_aggregated_image_time = 0.0
+        total_aggregated_font_time = 0.0
+        total_aggregated_layout_time = 0.0
+        total_aggregated_draw_time = 0.0
+
         # --- 1. Rebuild Slide Buttons ---
+        # ... (rest of the method remains the same)
         old_selected_slide_index = self.current_slide_index # Preserve current selection if possible
         # Clear existing buttons first
         while self.slide_buttons_layout.count():
@@ -456,15 +485,27 @@ class MainWindow(QMainWindow):
             
             try:
                 # render_slide now returns (pixmap, has_font_error)
-                full_res_pixmap, has_font_error = self.slide_renderer.render_slide(
+                full_res_pixmap, has_font_error, slide_benchmarks = self.slide_renderer.render_slide(
                     slide_data, preview_render_width, preview_render_height
                 )
                 # print(f"      Full-res pixmap for slide {index}: isNull={full_res_pixmap.isNull()}, size={full_res_pixmap.size()}") # DEBUG
-                # if full_res_pixmap.isNull(): # DEBUG
-                    # print(f"      WARNING: Full-res pixmap is NULL for slide {index}. Renderer might have failed silently.") # DEBUG
+                
+                # Accumulate benchmark data
+                total_aggregated_render_time += slide_benchmarks.get("total_render", 0.0)
+                total_aggregated_image_time += slide_benchmarks.get("images", 0.0)
+                total_aggregated_font_time += slide_benchmarks.get("fonts", 0.0)
+                total_aggregated_layout_time += slide_benchmarks.get("layout", 0.0)
+                total_aggregated_draw_time += slide_benchmarks.get("draw", 0.0)
                 
                 preview_pixmap = full_res_pixmap.scaled(current_dynamic_preview_width, current_dynamic_preview_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 # print(f"      Preview pixmap for slide {index}: isNull={preview_pixmap.isNull()}, size={preview_pixmap.size()}") # DEBUG
+            except TypeError as te: # Catch if render_slide doesn't return 3 values
+                print(f"      ERROR unpacking render_slide result for slide {index} (ID {slide_data.id}): {te}. Assuming old renderer.")
+                # Fallback to old behavior if render_slide only returns 2 values
+                full_res_pixmap, has_font_error = self.slide_renderer.render_slide(
+                    slide_data, preview_render_width, preview_render_height
+                )
+                preview_pixmap = full_res_pixmap.scaled(current_dynamic_preview_width, current_dynamic_preview_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             except Exception as e: # Catch general rendering exceptions
                 print(f"      ERROR rendering preview for slide {index} (ID {slide_data.id}): {e}")
                 has_font_error = True # Treat general rendering errors as something to flag
@@ -529,6 +570,25 @@ class MainWindow(QMainWindow):
         else: # No slides, no selection
             self.current_slide_index = -1
             self._show_blank_on_output()
+        
+        ui_update_duration = time.perf_counter() - ui_update_start_time
+        # Store the UI update and aggregated render times in the global benchmark data
+        self.benchmark_data_store["last_presentation_ui_update"] = ui_update_duration
+        self.benchmark_data_store["last_presentation_render_total"] = total_aggregated_render_time
+        self.benchmark_data_store["last_presentation_render_images"] = total_aggregated_image_time
+        self.benchmark_data_store["last_presentation_render_fonts"] = total_aggregated_font_time
+        self.benchmark_data_store["last_presentation_render_layout"] = total_aggregated_layout_time
+        self.benchmark_data_store["last_presentation_render_draw"] = total_aggregated_draw_time
+
+        print(f"[BENCHMARK] update_slide_display_and_selection() took: {ui_update_duration:.4f} seconds for {len(slides)} slides.")
+        if slides: # Only print aggregated if there were slides to render
+            print(f"  [BENCHMARK_AGGREGATE] Total time spent in SlideRenderer (all previews):")
+            print(f"    Overall Render: {total_aggregated_render_time:.4f}s")
+            print(f"    Image Processing: {total_aggregated_image_time:.4f}s")
+            print(f"    Font Setup:     {total_aggregated_font_time:.4f}s")
+            print(f"    Text Layout:    {total_aggregated_layout_time:.4f}s")
+            print(f"    Text Drawing:   {total_aggregated_draw_time:.4f}s")
+
 
     def _update_all_button_overlay_labels(self):
         """Sets the overlay label on each button based on its corresponding SlideData."""
@@ -539,27 +599,6 @@ class MainWindow(QMainWindow):
             if button and isinstance(button, ScaledSlideButton):
                 # Pass the overlay_label from SlideData to the button
                 button.set_center_overlay_label(slide_data.overlay_label, emit_signal_on_change=False)
-
-    @Slot(int) # Receives slide_id (which is the index)
-    def _on_slide_button_selected_by_index(self, slide_index: int):
-        """Handles a slide button being clicked or programmatically selected."""
-        # THIS METHOD IS NOW REPLACED BY _handle_manual_slide_selection
-        # If you still have connections to this, they should be updated.
-        # For safety, let's just call the new handler.
-        print(f"DEPRECATED: _on_slide_button_selected_by_index called for {slide_index}. Redirecting.")
-        self._handle_manual_slide_selection(slide_index)
-        # slides = self.presentation_manager.get_slides()
-        # if 0 <= slide_index < len(slides):
-        #     self.current_slide_index = slide_index
-        #     print(f"_on_slide_button_selected_by_index: Slide {slide_index} selected. Current focus: {QApplication.focusWidget()}") # DEBUG
-        #     if self.output_window.isVisible():
-        #         self._display_slide(slide_index)
-        #     self.scroll_area.setFocus()
-        #     print(f"_on_slide_button_selected_by_index: Focus set to scroll_area. New focus: {QApplication.focusWidget()}") # DEBUG
-        # else:
-        #     print(f"Warning: Invalid slide index {slide_index} from button selection.")
-        #     self.current_slide_index = -1
-        #     self._show_blank_on_output()
 
     @Slot(int)
     def handle_edit_slide_requested(self, slide_index: int):
@@ -712,29 +751,51 @@ class MainWindow(QMainWindow):
         if not self.output_window.isVisible():
             return
 
+        render_output_start_time = time.perf_counter()
         slide_data = slides[index]
         try:
             # render_slide now returns (pixmap, has_font_error)
-            output_pixmap, has_font_error_on_output = self.slide_renderer.render_slide(
-                slide_data, self.output_resolution.width(), self.output_resolution.height()
+            # For live output, we don't aggregate these individual timings here, but still need to unpack.
+            render_result = self.slide_renderer.render_slide(
+                 slide_data, self.output_resolution.width(), self.output_resolution.height()
             )
-            self.output_window.set_pixmap(output_pixmap)
+            if len(render_result) == 3: # New renderer with benchmarks
+                output_pixmap, has_font_error_on_output, _ = render_result
+            else: # Old renderer
+                output_pixmap, has_font_error_on_output = render_result
+            
+            if not output_pixmap.isNull():
+                self.output_window.set_pixmap(output_pixmap)
+            
             # We don't directly use has_font_error_on_output here, but it's good practice
             # The button icon should already reflect this from the preview rendering.
         except Exception as e:
-            print(f"Error rendering slide {index} for output: {e}")
+            print(f"Error rendering slide {index} (ID: {slide_data.id}) for output: {e}")
             error_slide = SlideData(lyrics=f"Error rendering slide:\n{e}", background_color="#AA0000", template_settings={"color": "#FFFFFF"})
             # Render error slide, ignore its font error status for this specific display
             error_pixmap, _ = self.slide_renderer.render_slide(error_slide, self.output_resolution.width(), self.output_resolution.height())
-            self.output_window.set_pixmap(error_pixmap)
+            if len(render_result) == 3: # New renderer with benchmarks
+                error_pixmap, _, _ = self.slide_renderer.render_slide(error_slide, self.output_resolution.width(), self.output_resolution.height())
+            else: # Old renderer
+                error_pixmap, _ = self.slide_renderer.render_slide(error_slide, self.output_resolution.width(), self.output_resolution.height())
+            if not error_pixmap.isNull():
+                self.output_window.set_pixmap(error_pixmap)
             self.show_error_message(f"Error rendering slide {index} (ID: {slide_data.id}): {e}")
+        render_output_duration = time.perf_counter() - render_output_start_time
+        print(f"[BENCHMARK] _display_slide() for output took: {render_output_duration:.4f} seconds for slide {index}")
 
     def _show_blank_on_output(self):
         if self.output_window.isVisible():
             blank_slide = SlideData(lyrics="", background_color="#000000")
-            # Render blank slide, ignore its font error status
-            blank_pixmap, _ = self.slide_renderer.render_slide(blank_slide, self.output_resolution.width(), self.output_resolution.height())
-            self.output_window.set_pixmap(blank_pixmap)
+            # Render blank slide, ignore its font error status and benchmarks
+            render_result = self.slide_renderer.render_slide(blank_slide, self.output_resolution.width(), self.output_resolution.height())
+            if len(render_result) == 3: # New renderer
+                blank_pixmap, _, _ = render_result
+            else: # Old renderer
+                blank_pixmap, _ = render_result
+            
+            if not blank_pixmap.isNull():
+                self.output_window.set_pixmap(blank_pixmap)
 
     def show_error_message(self, message: str):
         QMessageBox.critical(self, "Error", message)
@@ -754,7 +815,73 @@ class MainWindow(QMainWindow):
                 return
         
         self.output_window.close()
+        self._save_benchmark_history() # Save benchmark history on close
         super().closeEvent(event)
+
+    def showEvent(self, event):
+        """Override showEvent to capture benchmark timings when the window is actually shown."""
+        # Calculate app_init and mw_show times when the window is first shown
+        if self._app_start_time is not None:
+            app_start_time = self._app_start_time
+            self.benchmark_data_store['app_init'] = time.perf_counter() - app_start_time
+            self.benchmark_data_store['mw_show'] = time.perf_counter() - self.mw_init_end_time # Time from end of __init__ to show
+            print(f"[BENCHMARK] Application ready (MainWindow.showEvent): {self.benchmark_data_store['app_init']:.4f}s")
+            print(f"[BENCHMARK] MainWindow show (from init end to showEvent): {self.benchmark_data_store['mw_show']:.4f}s")
+            self._app_start_time = None # Clear temporary storage
+        
+        # Load benchmark history when the window is shown
+        self._load_benchmark_history()
+
+        # Set a default target output screen if none is set yet
+        if not hasattr(self, '_target_output_screen') or self._target_output_screen is None:
+            screens = QApplication.screens()
+            if screens:
+                # Prefer primary screen if available
+                primary_screen = QApplication.primaryScreen()
+                if primary_screen and primary_screen in screens: # Check if primary_screen is not None
+                    self._target_output_screen = primary_screen
+                else:
+                    self._target_output_screen = screens[0] # Fallback to first screen
+                print(f"MainWindow: Defaulted target output screen to {self._target_output_screen.name()}")
+            else:
+                self._target_output_screen = None # Explicitly None if no screens
+                print("MainWindow: No screens found to set a default output target.")
+
+        super().showEvent(event)
+
+    def _save_benchmark_history(self):
+        """Saves the last presentation benchmark data to a file."""
+        data_to_save = {key: self.benchmark_data_store[key] for key in self.benchmark_data_store if key.startswith("last_presentation_")}
+        try:
+            os.makedirs(BENCHMARK_TEMP_DIR_MW, exist_ok=True) # Ensure the temp directory exists
+            with open(BENCHMARK_HISTORY_FILE_PATH_MW, 'w') as f:
+                json.dump(data_to_save, f, indent=4)
+            print(f"Saved benchmark history to {BENCHMARK_HISTORY_FILE_PATH_MW}")
+        except IOError as e:
+            print(f"Error saving benchmark history to {BENCHMARK_HISTORY_FILE_PATH_MW}: {e}")
+        except Exception as e:
+            print(f"Unexpected error saving benchmark history: {e}")
+
+    def _load_benchmark_history(self):
+        """Loads the last presentation benchmark data from a file."""
+        if os.path.exists(BENCHMARK_HISTORY_FILE_PATH_MW):
+            try:
+                with open(BENCHMARK_HISTORY_FILE_PATH_MW, 'r') as f:
+                    loaded_data = json.load(f)
+                if not isinstance(loaded_data, dict): # Basic validation
+                    print(f"Error: Benchmark history file {BENCHMARK_HISTORY_FILE_PATH_MW} does not contain a valid dictionary.")
+                    return
+                # Update only the relevant keys in the current store
+                for key, value in loaded_data.items():
+                    if key in self.benchmark_data_store:
+                        self.benchmark_data_store[key] = value
+                print(f"Loaded benchmark history from {BENCHMARK_HISTORY_FILE_PATH_MW}")
+            except (IOError, json.JSONDecodeError) as e:
+                print(f"Error loading benchmark history from {BENCHMARK_HISTORY_FILE_PATH_MW}: {e}")
+            except Exception as e: # Catch any other unexpected errors during loading/processing
+                 print(f"Unexpected error loading benchmark history: {e}")
+        else:
+            print(f"Benchmark history file not found: {BENCHMARK_HISTORY_FILE_PATH_MW}")
 
     @Slot()
     def on_template_collection_changed(self):
@@ -827,18 +954,73 @@ class MainWindow(QMainWindow):
                 return True # Event handled
 
         return super().eventFilter(watched_object, event) # Pass on unhandled events/objects
-    def keyPressEvent(self, event):
-        num_slides = len(self.presentation_manager.get_slides())
-        if num_slides == 0:
-            return super().keyPressEvent(event) # No slides, nothing to navigate
+    
+    def create_menu_bar(self):
+        menu_bar = QMenuBar(self)
+        
+        # File Menu
+        file_menu = menu_bar.addMenu("File")
+        load_action = file_menu.addAction("Load")
+        load_action.triggered.connect(self.handle_load)
+        save_action = file_menu.addAction("Save")
+        save_action.triggered.connect(self.handle_save)
+        save_as_action = file_menu.addAction("Save As...")
+        save_as_action.triggered.connect(self.handle_save_as)
+        
+        new_action = file_menu.addAction("New")
+        new_action.triggered.connect(self.handle_new)
+        # Edit Menu
+        edit_menu = menu_bar.addMenu("Edit")
+        undo_action = edit_menu.addAction("Undo")
+        undo_action.triggered.connect(self.handle_undo)
+        undo_action.setShortcut("Ctrl+Z") # Add standard shortcut
+        redo_action = edit_menu.addAction("Redo")
+        redo_action.triggered.connect(self.handle_redo)
+        
+        # Presentation Menu
+        presentation_menu = menu_bar.addMenu("Presentation")
+        go_live_action = presentation_menu.addAction("Go Live")
+        go_live_action.triggered.connect(self.toggle_live)
+        
+        add_song_action = presentation_menu.addAction("Add Song")
+        add_song_action.triggered.connect(self.handle_add_song)
+        # Keep it disabled as in the toolbar
+        add_song_action.setEnabled(False)
+        add_song_action.setToolTip("Temporarily disabled pending multi-textbox feature.")
 
-        # This method is now a last resort. If arrow keys get here, it means the event filter
-        # on the scroll_area.viewport() didn't catch them, which implies focus is
-        # directly on the MainWindow or another widget that doesn't filter.
-        print(f"MainWindow.keyPressEvent: Key {event.key()} received. Focus: {QApplication.focusWidget()}. THIS IS A FALLBACK.")
+        # Settings Menu (New)
+        settings_menu = menu_bar.addMenu("Settings")
+        open_settings_action = settings_menu.addAction("Open Settings...")
+        open_settings_action.triggered.connect(self.handle_open_settings)
+
+        return menu_bar
+    def handle_new(self):
+        """
+        Starts a new presentation.  If there are unsaved changes, prompts the user to save.
+        """
+        if self.presentation_manager.is_dirty:
+            reply = QMessageBox.question(self, 'Unsaved Changes',
+                                         "You have unsaved changes. Save before starting a new presentation?",
+                                         QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+            if reply == QMessageBox.Save:
+                if not self.handle_save():  # If save fails or is cancelled
+                    return
+            elif reply == QMessageBox.Cancel:
+                return
+
+        # Clear the current presentation (or load a blank one)
+        self.presentation_manager.clear_presentation()
+        # Reset the window title to reflect a new, unsaved presentation
+        self.setWindowTitle("Plucky Presentation - New Presentation")
+        # If you wish to force a save immediately to a new file you could do the following (uncomment).
+        # But I do not recommend forcing it. Let the user decide when to save:
+
+        # if not self.handle_save_as():
+        #     # Optionally, warn the user if even the 'Save As...' was cancelled.
+        #     QMessageBox.warning(self, "Action Cancelled", "New presentation cancelled.")
+
         # The event filter on QScrollArea should handle Left/Right.
-        super().keyPressEvent(event)
-    # handle_active_template_changed method REMOVED
+        #super().keyPressEvent(event)
 
     @Slot()
     def handle_undo(self):
@@ -850,6 +1032,20 @@ class MainWindow(QMainWindow):
         print("MainWindow: Redo action triggered.")
         self.presentation_manager.redo()
         
+    @Slot()
+    def handle_open_settings(self):
+        """Opens the settings dialog."""
+        current_target_screen = getattr(self, '_target_output_screen', None)
+        settings_dialog = SettingsWindow(
+            benchmark_data=self.benchmark_data_store,
+            current_output_screen=current_target_screen,
+            parent=self
+        )
+        settings_dialog.output_monitor_changed.connect(self._handle_settings_monitor_changed)
+        settings_dialog.exec() # Use exec() for modal dialog
+        # Disconnect after use to prevent issues if dialog is reopened or multiple instances exist
+        settings_dialog.output_monitor_changed.disconnect(self._handle_settings_monitor_changed)
+
     @Slot(dict)
     def _handle_editor_save_request(self, templates_collection: dict):
         """
@@ -861,10 +1057,24 @@ class MainWindow(QMainWindow):
         # Optionally, provide feedback to the user, e.g., via a status bar or a brief message.
         # For now, the print statement and the TemplateManager's own save confirmation (if any) will suffice.
 
+    @Slot(QScreen)
+    def _handle_settings_monitor_changed(self, selected_screen: QScreen):
+        """Handles the output_monitor_changed signal from the SettingsWindow."""
+        self._target_output_screen = selected_screen # Store the selected screen
+        print(f"MainWindow: Target output monitor updated to {selected_screen.name()} via settings.")
+        # If already live, you might want to move the output window, or just apply on next "Go Live"
+
 # Example of how to run this if it's the main entry point for testing
 # (Your main.py would typically handle this)
-if __name__ == '__main__':
+if __name__ == '__main__': # This block is for direct testing of MainWindow
+    # Simulate what main.py does for benchmarks
+    app_start_time_for_mw_test = time.perf_counter()
     app = QApplication(sys.argv)
+    QApplication.instance().setProperty("app_start_time", app_start_time_for_mw_test)
+
     main_win = MainWindow()
     main_win.show()
+
+    app_ready_duration_for_mw_test = time.perf_counter() - app_start_time_for_mw_test
+    print(f"[BENCHMARK_MW_TEST] Application ready (after show) took: {app_ready_duration_for_mw_test:.4f} seconds")
     sys.exit(app.exec())

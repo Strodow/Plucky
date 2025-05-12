@@ -1,8 +1,8 @@
 import copy # For deep copying templates
 from PySide6.QtWidgets import (
     QGroupBox, # Added QGroupBox
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDialogButtonBox,
-    QComboBox, QWidget, QScrollArea, QFormLayout, QInputDialog, QMessageBox, QCheckBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDialogButtonBox, # QFormLayout removed
+    QComboBox, QWidget, QScrollArea, QInputDialog, QMessageBox, QCheckBox, # QFormLayout removed
     QTabWidget, QFontComboBox, QSpinBox, QColorDialog, QLineEdit, 
     QGraphicsObject, # Changed from QGraphicsRectItem
     QGraphicsView, QGraphicsScene, QGraphicsTextItem, QGraphicsDropShadowEffect, QGraphicsItem, QApplication # Added QGraphicsItem, QApplication
@@ -10,16 +10,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont, QColor, QPalette, QPainter, QPen, QTextCharFormat, QTextCursor, QBrush # For font and color manipulation, and QPainter, Added QPen, QTextCharFormat, QTextCursor, QBrush
 from PySide6.QtCore import Qt, Slot, QDir, QFileInfo, Signal # Added Signal
 from PySide6.QtUiTools import QUiLoader
-
-from data_models.slide_data import DEFAULT_TEMPLATE # To access initial defaults
+# from data_models.slide_data import DEFAULT_TEMPLATE # To access initial defaults - Unused
 from PySide6.QtCore import QRectF # For QGraphicsObject bounding rect
 from typing import Optional # Import Optional for type hinting
 from PySide6.QtGui import QCursor
 # Default properties for a new layout definition (used in TemplateEditorWindow)
 from PySide6.QtGui import QFontMetrics, QTextOption # For text width calculation, Added QTextOption
 from PySide6.QtCore import QPointF # Import QPointF
-from PySide6.QtGui import QFontMetrics # For text width calculation
-from PySide6.QtWidgets import QStyle # For QStyle.State_Selected
+# from PySide6.QtWidgets import QStyle # For QStyle.State_Selected - Unused
 
 NEW_LAYOUT_DEFAULT_PROPS = {
     "text_boxes": [
@@ -129,14 +127,6 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
         # Margin for percentage text
         # Approximating text dimensions for bounding rect calculation
         text_offset_from_rect_edge = RESIZE_HANDLE_SIZE * 1.5 
-        # Use a temporary font similar to what's used in paint for measurements
-        measurement_font_approx = QFont()
-        measurement_font_approx.setPointSize(max(6, int(RESIZE_HANDLE_SIZE * 1.2)))
-        fm = QFontMetrics(measurement_font_approx)
-        
-        # Estimate width needed for "100.0%" text plus padding
-        percent_text_width_approx = fm.horizontalAdvance("100.0%") + 10 # 5px padding each side
-        measurement_text_height_approx = fm.height()
         # Use a temporary font similar to what's used in paint for measurements
         measurement_font_approx = QFont()
         measurement_font_approx.setPointSize(max(6, int(RESIZE_HANDLE_SIZE * 1.2)))
@@ -290,8 +280,6 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
                 self._mouse_press_pos = event.scenePos() # Store scene position for calculating delta
                 self._item_initial_pos_at_drag = self.pos() # Store item's current scene position
                 self._item_initial_rect_at_drag = QRectF(self._rect) # Store copy of item's current local rect
-                self._item_initial_pos_at_drag = self.pos() # Store item's current scene position
-                self._item_initial_rect_at_drag = QRectF(self._rect) # Store copy of item's current local rect
                 self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, False) # Disable moving while resizing
                 self.setSelected(True) # Ensure item is selected when resizing starts
                 event.accept() # Accept the event to start drag
@@ -374,8 +362,6 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
         if self._resize_mode:
             self._resize_mode = None
             self._mouse_press_pos = None
-            self._item_initial_pos_at_drag = None
-            self._item_initial_rect_at_drag = None
             self._item_initial_pos_at_drag = None
             self._item_initial_rect_at_drag = None
             self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, True) # Re-enable moving
@@ -916,7 +902,6 @@ class TemplateEditorWindow(QDialog):
                 initial_style_name=tb_props.get("style_name") # Pass current style name
             )
             # Connect the item's signal to a handler in the editor window
-            rect_item.geometry_changed_pc.connect(self._handle_layout_item_geometry_changed)
             rect_item.geometry_changed_pc.connect(self._handle_layout_item_geometry_changed)
             self.layout_preview_scene.addItem(rect_item)
             
@@ -1622,7 +1607,7 @@ class TemplateEditorWindow(QDialog):
         current_template_data = self.get_updated_templates()
         self.templates_save_requested.emit(current_template_data)
         print("Template Editor: 'Save' button clicked. templates_save_requested signal emitted.")
-        self._toggle_outline_detail_group()
+        # self._toggle_outline_detail_group() # This call seems out of place here
 
     def _update_style_remove_button_state(self):
         can_remove = self.style_selector_combo.count() > 1 and self._currently_editing_style_name is not None

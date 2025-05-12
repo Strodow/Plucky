@@ -1,6 +1,7 @@
 import sys
 import os
 import logging
+import time # For benchmarking
 from PySide6.QtWidgets import QApplication # Needed for testing QPixmap/QPainter
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QTextOption,
@@ -29,7 +30,7 @@ class SlideRenderer:
         # Potential future optimizations: cache fonts, etc.
         pass
 
-    def render_slide(self, slide_data: SlideData, width: int, height: int) -> tuple[QPixmap, bool]:
+    def render_slide(self, slide_data: SlideData, width: int, height: int) -> tuple[QPixmap, bool, dict]:
         """
         Renders the given slide data onto a QPixmap of the specified dimensions.
 
@@ -42,50 +43,79 @@ class SlideRenderer:
             A tuple containing:
                 - A QPixmap with the rendered slide.
                 - A boolean indicating if a font error/fallback occurred (True if error, False otherwise).
+                - A dictionary with detailed benchmark timings for this slide.
         """
+        total_render_start_time = time.perf_counter()
+        slide_id_for_log = slide_data.id if slide_data else "UNKNOWN_SLIDE"
+
         font_error_occurred = False # Initialize error flag
+        time_spent_on_images = 0.0
+        time_spent_on_fonts = 0.0
+        time_spent_on_text_layout = 0.0
+        time_spent_on_text_draw = 0.0
+        
+        benchmark_data = {
+            "total_render": 0.0, "images": 0.0, "fonts": 0.0, 
+            "layout": 0.0, "draw": 0.0
+        }
 
         if width <= 0 or height <= 0:
             logging.warning(f"Invalid dimensions for rendering slide: {width}x{height}. Returning blank pixmap.")
             pixmap = QPixmap(1, 1) 
             pixmap.fill(Qt.GlobalColor.transparent)
-            return pixmap, True # Indicate an error
+            benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
+            # Return True for font_error_occurred to signal a problem
+            return pixmap, True, benchmark_data
 
         # Create the target pixmap
         pixmap = QPixmap(width, height)
         if pixmap.isNull():
-            logging.error(f"Failed to create QPixmap of size {width}x{height} for slide_data: {slide_data.id}")
-            error_pixmap = QPixmap(1, 1)
-            error_pixmap.fill(Qt.GlobalColor.magenta) # Error indicator
-            return error_pixmap, True
+            logging.error(f"Failed to create QPixmap of size {width}x{height} for slide_data: {slide_data.id}") # Line 94
+            error_pixmap = QPixmap(1, 1) # Line 95
+            error_pixmap.fill(Qt.GlobalColor.magenta) # Error indicator # Line 96
+            benchmark_data["total_render"] = time.perf_counter() - total_render_start_time # Line 97
+            return error_pixmap, True, benchmark_data # Line 98
+
         pixmap.fill(QColor(slide_data.background_color))
 
         # --- Draw Background Image (if specified and valid) ---
+        bg_image_load_start_time = time.perf_counter()
         bg_pixmap = QPixmap()
         if slide_data.background_image_path and os.path.exists(slide_data.background_image_path):
             loaded_bg = QPixmap(slide_data.background_image_path)
             if not loaded_bg.isNull():
                 bg_pixmap = loaded_bg
             else:
-                logging.warning(f"Could not load background image: {slide_data.background_image_path}")
-
+                logging.warning(f"Could not load background image: {slide_data.background_image_path} for slide ID {slide_id_for_log}")
+        bg_image_load_duration = time.perf_counter() - bg_image_load_start_time
+        time_spent_on_images += bg_image_load_duration
+        # Only print if path was provided, to avoid noise for slides without images
+        # if slide_data.background_image_path: # This if is no longer needed if the print is the only content
+        #     # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - BG Image Load ('{slide_data.background_image_path}'): {bg_image_load_duration:.4f}s")
+            
         # --- Prepare Painter ---
         painter = QPainter(pixmap)
         if not painter.isActive():
             logging.error(f"QPainter could not be activated on pixmap for slide_data: {slide_data.id}")
             painter.end() 
             error_pixmap = QPixmap(1, 1)
-            error_pixmap.fill(Qt.GlobalColor.red) 
-            return error_pixmap, True
+            error_pixmap.fill(Qt.GlobalColor.red)
+            benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
+            return error_pixmap, True, benchmark_data
 
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
         # Draw background image if loaded
+        bg_image_draw_start_time = time.perf_counter()
         if not bg_pixmap.isNull():
             # Scale the image to cover the entire pixmap area
             painter.drawPixmap(pixmap.rect(), bg_pixmap)
+        bg_image_draw_duration = time.perf_counter() - bg_image_draw_start_time
+        time_spent_on_images += bg_image_draw_duration
+        # if not bg_pixmap.isNull(): # Only print if an image was actually drawn
+        #     # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - BG Image Draw: {bg_image_draw_duration:.4f}s")
 
         # --- Apply Template Settings ---
         # Merge slide-specific template settings with defaults if necessary
@@ -102,12 +132,13 @@ class SlideRenderer:
         shadow_settings = template.get("shadow", {})
 
         # --- Prepare Font ---
+        font_setup_start_time = time.perf_counter()
         font = QFont()
         font_family = font_settings.get("family", "Arial")
         font.setFamily(font_family)
         font_info_check = QFontInfo(font) # Check against the font set on the painter later
         if font_info_check.family().lower() != font_family.lower() and not font_info_check.exactMatch() :
-            logging.warning(f"Font family '{font_family}' not found or resolved differently. Using default.")
+            logging.warning(f"Font family '{font_family}' not found or resolved differently for slide ID {slide_id_for_log}. Using default or system fallback '{font_info_check.family()}'.")
             font_error_occurred = True
 
         # Calculate font point size based on target height (scaling from 1080p base)
@@ -125,6 +156,9 @@ class SlideRenderer:
         font.setItalic(font_settings.get("italic", False))
         font.setUnderline(font_settings.get("underline", False))
         painter.setFont(font)
+        font_setup_duration = time.perf_counter() - font_setup_start_time
+        time_spent_on_fonts += font_setup_duration
+        # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - Font Setup ('{font_family}', {actual_font_size_pt}pt): {font_setup_duration:.4f}s")
 
         # --- Prepare Text ---
         force_caps = font_settings.get('force_all_caps', False)
@@ -132,9 +166,17 @@ class SlideRenderer:
 
         if not text_to_draw: # Nothing more to do if no lyrics
             painter.end()
-            return pixmap, font_error_occurred # Still return the error flag
+            benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
+            benchmark_data["images"] = time_spent_on_images
+            benchmark_data["fonts"] = time_spent_on_fonts
+            # layout and draw remain 0.0
+            
+            # print(f"[BENCHMARK_RENDERER_SUMMARY] Slide ID {slide_id_for_log} - Total Render (no text): {benchmark_data['total_render']:.4f}s (Images: {benchmark_data['images']:.4f}s, Fonts: {benchmark_data['fonts']:.4f}s)")
+            return pixmap, font_error_occurred, benchmark_data
+
 
         # --- Calculate Text Layout ---
+        text_layout_start_time = time.perf_counter()
         font_metrics = QFontMetrics(font)
 
         # Max width for text wrapping
@@ -187,6 +229,9 @@ class SlideRenderer:
         text_option.setAlignment(h_align | Qt.AlignmentFlag.AlignTop)
         text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
 
+        text_layout_duration = time.perf_counter() - text_layout_start_time
+        time_spent_on_text_layout += text_layout_duration
+        # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - Text Layout Calc: {text_layout_duration:.4f}s")
         # --- Draw Text Effects and Main Text ---
         main_text_color = QColor(color_setting)
 
@@ -197,7 +242,9 @@ class SlideRenderer:
             shadow_offset_y = shadow_settings.get("offset_y", 3) * (height / 1080.0) # Scale offset
             shadow_rect = final_draw_rect.translated(shadow_offset_x, shadow_offset_y)
             painter.setPen(shadow_color)
+            shadow_draw_start_time = time.perf_counter()
             painter.drawText(shadow_rect, text_to_draw, text_option)
+            time_spent_on_text_draw += time.perf_counter() - shadow_draw_start_time
 
         # 2. Draw Outline
         if outline_settings.get("enabled", False):
@@ -206,20 +253,34 @@ class SlideRenderer:
             outline_width = max(1, int(outline_settings.get("width", 2) * (height / 1080.0)))
             painter.setPen(outline_color)
             # Simple multi-draw outline
+            outline_draw_start_time = time.perf_counter()
             for dx in range(-outline_width, outline_width + 1, outline_width):
                  for dy in range(-outline_width, outline_width + 1, outline_width):
                      if dx != 0 or dy != 0:
                          offset_rect = final_draw_rect.translated(dx, dy)
                          painter.drawText(offset_rect, text_to_draw, text_option)
+            time_spent_on_text_draw += time.perf_counter() - outline_draw_start_time
 
         # 3. Draw Main Text
+        main_text_draw_start_time = time.perf_counter()
         painter.setPen(main_text_color)
         painter.drawText(final_draw_rect, text_to_draw, text_option)
+        time_spent_on_text_draw += (time.perf_counter() - main_text_draw_start_time)
+        # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - Text Draw (incl. effects): {time_spent_on_text_draw:.4f}s")
 
         # --- Cleanup ---
         painter.end()
 
-        return pixmap, font_error_occurred
+        benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
+        benchmark_data["images"] = time_spent_on_images
+        benchmark_data["fonts"] = time_spent_on_fonts
+        benchmark_data["layout"] = time_spent_on_text_layout
+        benchmark_data["draw"] = time_spent_on_text_draw
+
+        # print(f"[BENCHMARK_RENDERER_SUMMARY] Slide ID {slide_id_for_log} - Total Render: {benchmark_data['total_render']:.4f}s (Images: {benchmark_data['images']:.4f}s, Fonts: {benchmark_data['fonts']:.4f}s, Layout: {benchmark_data['layout']:.4f}s, Draw: {benchmark_data['draw']:.4f}s)")
+
+        return pixmap, font_error_occurred, benchmark_data
+
 
 
 if __name__ == "__main__":
@@ -262,7 +323,7 @@ if __name__ == "__main__":
 
     for i, slide in enumerate(slides_to_test):
         print(f"Rendering slide {i+1}...")
-        rendered_pixmap = renderer.render_slide(slide, TARGET_WIDTH, TARGET_HEIGHT)
+        rendered_pixmap, _, _ = renderer.render_slide(slide, TARGET_WIDTH, TARGET_HEIGHT) # Ignore font error and benchmarks for this test
 
         output_filename = os.path.join(output_dir, f"test_render_{i+1}.png")
         if rendered_pixmap.save(output_filename):

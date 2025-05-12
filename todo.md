@@ -1,15 +1,17 @@
 # Project TODO List
 - get add song enabled and start on that window
-- change go live to enable output
+- change go live to circle that is red when on and no fill when off
+- change undo redo to arrows
+- change preview size to 1x,2x,3x etc
+- media pool toggle
+- move load save recents into a drop down file / project dropdown 
+- move settings and edit templates up there too ^
 - make a settings window (setup the OpenSource/Pro toggle/Dev toggle)
+- Chage edit template to templates
+- Check if the monitor selectors are working
 
 
-## Settings window
-- [ ] Open source / Pro / Dev toggle
-- [ ] Add Load stats back
-- [ ] Default Card background color (allow for transparent and checkerboard)
-- [ ] Move screen selection into the settings window
-
+# Existing windows
 ## Template Editor - Layout Tab Enhancements
 - [ ] Renaming existing layouts
 - [ ] Changing layout background color
@@ -21,23 +23,44 @@
 - [ ] Adding Rulers to the layout preview
 - [ ] Check on windows if the cursor changes on hover the drag points
 
+## Output window
+- [ ] Update the template info
+
 ## Main Window - Slides
 - [ ] Get the slides working with the new templates
 - [ ] Make a Song creation window
 - [ ] Add recent projects button
-
-## Song creation window
-- [ ] Button for adding simple lyrics (empty line with \n = new slide)
-- [ ] Color code templates
-- [ ] Drag and drop images
-### Low Prio
-- [ ] Add something for showing attribution (defalt attribution / title templates for quick adding)
+- [ ] Add a timer rotation button on the section bar
 
 ## Other Fucntionality
 - [ ] Black magic Deck link card integration
 - [ ] ^ C#/C++ dll for BM Decklink
+- [ ] Medium term cacheing thumbnails
+- [ ] better error handling when hovering over slide error (use the warning in output)
+- [ ] add a media pool and a way to clean it up or at least a space usage
 
 
-## Long term goals
+# New Windows
+## Song creation window
+- [ ] Button for adding simple lyrics (empty line with \n = new slide)
+- [ ] Button / tab for adding quick Title /  Attribution
+- [ ] Color code templates (to quickly ID if wrong template on slide)
+- [ ] Drag and drop images
+- [ ] add back lightweight spellcheck at least / custom dictionary
+- [ ] Songs vertical layout on left, large text center, controls right (add types/template)
+### Low Prio
+- [ ] Add something for showing attribution (defalt attribution / title templates for quick adding)
+- [ ] add a custom delimiter ("#.", "\")
+
+## Settings window
+- [ ] Open source / Pro / Dev toggle
+- [ ] place to set what the default templates and styles are
+- [ ] Add program Load time stats back
+- [ ] Default Card background color (allow for transparent and checkerboard)
+- [ ] Move screen selection into the settings window
+
+
+# Long term goals
 - [ ] PP, proP importing
 - [ ] Transitions
+- [ ] maybe output preview? (if it's still feeling light weight)
