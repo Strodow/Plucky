@@ -5,8 +5,8 @@ import json # Needed for saving/loading benchmark history
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QSlider, QMenuBar, # Added QMenuBar
-    QMessageBox, QVBoxLayout, QWidget, QPushButton, QInputDialog, # QDialog, QButtonGroup removed
-    QComboBox, QLabel, QHBoxLayout, QSplitter, QScrollArea # QButtonGroup removed
+    QMessageBox, QVBoxLayout, QWidget, QPushButton, QInputDialog, # QButtonGroup removed
+    QComboBox, QLabel, QHBoxLayout, QSplitter, QScrollArea, QDialog # QButtonGroup removed
 ) #  QAction removed as it's not directly used
 from PySide6.QtGui import QScreen, QPixmap
 from PySide6.QtCore import Qt, QSize, Slot, QEvent # Added QEvent
@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
         self.redo_button = QPushButton("Redo") # New
 
         # Edit Template button
-        self.edit_template_button = QPushButton("Edit Template")
+        self.edit_template_button = QPushButton("Edit Templates")
         self.edit_template_button.setEnabled(True) # Re-enabled
         self.edit_template_button.setToolTip("Open the template editor.") # Updated tooltip
 

@@ -1,25 +1,31 @@
 # Project TODO List
-- get add song enabled and start on that window
-- change go live to circle that is red when on and no fill when off
-- change undo redo to arrows
-- change preview size to 1x,2x,3x etc
-- media pool toggle
-- move load save recents into a drop down file / project dropdown 
-- move settings and edit templates up there too ^
-- make a settings window (setup the OpenSource/Pro toggle/Dev toggle)
-- Chage edit template to templates
-- Check if the monitor selectors are working
+### For the week
+- [] get add song enabled and start on that window (song window)
+- [] change go live to circle that is red when on and no fill when off
+- [] change undo redo to arrows
+- [] change preview size to 1x,2x,3x etc
+- [] media pool toggle
+- [X] move load save recents into a drop down file / project dropdown 
+- [X] move settings and edit templates up there too ^
+- [X] make a settings window (setup the OpenSource/Pro toggle/Dev toggle) (add logic still need)
+- [X] Chage edit template to templates
+- [] Check if the monitor selectors are working on windows
+- [] add collapseable for benchmarks
+- [] set the Icon for the different OSs
+- [] find a fast dictionary search highlighting or what modern things do
+- [] rereferance the app_settings.json file for the settings
 
 
 # Existing windows
 ## Template Editor - Layout Tab Enhancements
-- [ ] Renaming existing layouts
+- [X] Renaming existing layouts (add logic still)
 - [ ] Changing layout background color
 - [ ] Setup a color so they can be colorcoded for quick identification
+- [ ] Add a list of text boxes so if one gets sent to the ether they can delete it
 ### Low Prio
 - [ ] Locking/Unlocking text boxes (prevent move/resize)
 - [ ] Refactor: Pull Layout tab functionality into a separate Python file/module
-- [ ] Move textbox buttons above the editing area
+- [ ] Move textbox buttons above the editing area (error after moving, prob in ui file)
 - [ ] Adding Rulers to the layout preview
 - [ ] Check on windows if the cursor changes on hover the drag points
 
@@ -55,9 +61,9 @@
 ## Settings window
 - [ ] Open source / Pro / Dev toggle
 - [ ] place to set what the default templates and styles are
-- [ ] Add program Load time stats back
+- [X] Add program Load time stats back
 - [ ] Default Card background color (allow for transparent and checkerboard)
-- [ ] Move screen selection into the settings window
+- [X] Move screen selection into the settings window
 
 
 # Long term goals

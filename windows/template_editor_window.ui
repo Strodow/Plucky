@@ -69,6 +69,19 @@
            </property>
           </widget>
          </item>
+         <item>
+          <widget class="QPushButton" name="rename_layout_button">
+           <property name="text">
+            <string>~</string>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>30</width>
+             <height>16777215</height>
+            </size>
+           </property>
+          </widget>
+         </item>
         </layout>
        </item>
        <item>
@@ -87,6 +100,24 @@
           </widget>
          </item>
          <item>
+          <widget>
+            <layout class="QHBoxLayout" name="layout_textbox_buttons_layout">
+            <item>
+              <widget class="QPushButton" name="add_textbox_to_layout_button">
+              <property name="text">
+                <string>Add Text Box</string>
+              </property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QPushButton" name="remove_selected_textbox_button">
+              <property name="text">
+                <string>Remove Selected Text Box</string>
+              </property>
+              </widget>
+            </item> <!-- This was incorrectly </widget> before, should be </item> -->
+            </layout> <!-- This was missing its closing tag -->
+          </widget>
           <widget class="QGroupBox" name="textbox_properties_group">
            <property name="title">
             <string>Selected Text Box Properties</string>
@@ -152,24 +183,6 @@
           </widget>
          </item>
         </layout>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="layout_textbox_buttons_layout">
-         <item>
-          <widget class="QPushButton" name="add_textbox_to_layout_button">
-           <property name="text">
-            <string>Add Text Box</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="remove_selected_textbox_button">
-           <property name="text">
-            <string>Remove Selected Text Box</string>
-           </property>
-          </widget>
-         </item> <!-- This was incorrectly </widget> before, should be </item> -->
-        </layout> <!-- This was missing its closing tag -->
        </item>
       </layout>
      </widget>

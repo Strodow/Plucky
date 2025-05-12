@@ -632,6 +632,7 @@ class TemplateEditorWindow(QDialog):
         self.layout_selector_combo: QComboBox = self.ui.findChild(QComboBox, "layout_selector_combo")
         self.add_layout_button: QPushButton = self.ui.findChild(QPushButton, "add_layout_button")
         self.remove_layout_button: QPushButton = self.ui.findChild(QPushButton, "remove_layout_button")
+        self.rename_layout_button: QPushButton = self.ui.findChild(QPushButton, "rename_layout_button")
         self.layout_preview_graphics_view: ZoomableGraphicsView = self.ui.findChild(ZoomableGraphicsView, "layout_preview_graphics_view") # Use custom class
         self.add_textbox_to_layout_button: QPushButton = self.ui.findChild(QPushButton, "add_textbox_to_layout_button")
         self.remove_selected_textbox_button: QPushButton = self.ui.findChild(QPushButton, "remove_selected_textbox_button")
@@ -752,6 +753,7 @@ class TemplateEditorWindow(QDialog):
         # --- Layout Tab Connections ---
         self.add_layout_button.clicked.connect(self.add_new_layout_definition)
         self.remove_layout_button.clicked.connect(self.remove_selected_layout_definition)
+        self.rename_layout_button.clicked.connect(self.rename_selected_layout_definition)
         self.layout_selector_combo.currentTextChanged.connect(self.on_layout_selected)
         self.add_textbox_to_layout_button.clicked.connect(self.add_textbox_to_current_layout)
         self.remove_selected_textbox_button.clicked.connect(self._remove_selected_textbox_from_layout)
@@ -857,6 +859,23 @@ class TemplateEditorWindow(QDialog):
                 self.layout_selector_combo.setCurrentIndex(0)
             else:
                 self._clear_layout_preview()
+
+    @Slot()
+    def rename_selected_layout_definition(self):
+        layout_name, ok = QInputDialog.getText(self, "Rename Layout", "Enter name the name you want to change the layout to:")
+        if ok and layout_name:
+            layout_name = layout_name.strip()
+            if not layout_name:
+                QMessageBox.warning(self, "Invalid Name", "Layout name cannot be empty.")
+                return
+            if layout_name in self.layout_definitions:
+                QMessageBox.warning(self, "Name Exists", f"A layout named '{layout_name}' already exists.")
+                return
+            #logic to change the name of the layout goes here
+            print("waiting to implament name change :",layout_name)
+        
+        elif ok and not layout_name.strip():
+            QMessageBox.warning(self, "Invalid Name", "Layout name cannot be empty.")
 
     @Slot(str)
     def on_layout_selected(self, layout_name: str):
