@@ -120,6 +120,53 @@ class TemplateManager(QObject):
             return master_def # This isn't the final "renderable" settings, but it's the stored data.
         return None
 
+    def resolve_layout_template(self, layout_name: str) -> Dict[str, Any]:
+        """
+        Resolves a layout template by name, including resolving styles for its text boxes.
+        Returns a dictionary structure suitable for SlideData.template_settings.
+        """
+        layout_definitions = self._template_collection.get("layouts", {})
+        style_definitions = self._template_collection.get("styles", {})
+
+        if layout_name not in layout_definitions:
+            print(f"TemplateManager: Layout '{layout_name}' not found.")
+            if layout_name != "Default Layout" and "Default Layout" in layout_definitions:
+                print(f"TemplateManager: Falling back to 'Default Layout' for unresolved '{layout_name}'.")
+                return self.resolve_layout_template("Default Layout")
+            # Ultimate fallback: empty structure
+            return {"layout_name": layout_name, "background_color": "#000000", "text_boxes": [], "text_content": {}}
+
+        layout_def = layout_definitions[layout_name]
+        resolved_layout = {
+            "layout_name": layout_name,
+            "background_color": layout_def.get("background_color", "#000000"),
+            "text_boxes": [],
+            "text_content": {} # This will be populated by MainWindow or lyric editor later
+        }
+
+        for tb_def in layout_def.get("text_boxes", []):
+            resolved_tb = { # Start with geometry and alignment from layout
+                "id": tb_def.get("id", "unknown_tb_id"),
+                "x_pc": tb_def.get("x_pc", 0.0), "y_pc": tb_def.get("y_pc", 0.0),
+                "width_pc": tb_def.get("width_pc", 100.0), "height_pc": tb_def.get("height_pc", 100.0),
+                "h_align": tb_def.get("h_align", "center"), "v_align": tb_def.get("v_align", "center"),
+            }
+
+            style_name = tb_def.get("style_name") # Style name assigned in layout editor
+            # Get the actual style properties, falling back to "Default Style" or hardcoded defaults
+            actual_style_props = style_definitions.get(style_name, style_definitions.get("Default Style", copy.deepcopy(DEFAULT_STYLE_PROPS)))
+
+            # Merge (or rather, add) the resolved style properties into the text box definition
+            # These keys should match what SlideRenderer expects
+            resolved_tb.update({
+                "font_family": actual_style_props.get("font_family"), "font_size": actual_style_props.get("font_size"),
+                "font_color": actual_style_props.get("font_color"), "force_all_caps": actual_style_props.get("force_all_caps"),
+                "outline_enabled": actual_style_props.get("text_outline"), "outline_color": actual_style_props.get("outline_color"), "outline_width": actual_style_props.get("outline_thickness"),
+                "shadow_enabled": actual_style_props.get("text_shadow"), "shadow_color": actual_style_props.get("shadow_color"), "shadow_offset_x": actual_style_props.get("shadow_x"), "shadow_offset_y": actual_style_props.get("shadow_y"),
+            })
+            resolved_layout["text_boxes"].append(resolved_tb)
+        return resolved_layout
+
     # The old add_new_template, delete_template, update_template_settings methods
     # would need to be significantly refactored to work with categories (styles, layouts, master_templates)
     # or be removed if all modifications are handled through the TemplateEditorWindow and update_from_collection.

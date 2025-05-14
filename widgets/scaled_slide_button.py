@@ -152,19 +152,19 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         # Default border from stylesheet if not overridden by state
         if self.isChecked(): # Using our internal state
             current_border_color = QColor("#0078D7") # Checked color
-            current_border_width = 2
+            current_border_width = 2.0
             if self._is_hovered:
                 current_border_color = QColor("#50AFEF") # Checked + Hover
         elif self._is_hovered: # Not checked, but hovered
             current_border_color = QColor("#00A0F0") # Hover color
-            current_border_width = 2
+            current_border_width = 2.0
         else: # Default unckecked, not hovered
             current_border_color = QColor("#555")
-            current_border_width = 1
+            current_border_width = 1.0
         
         if self._is_pressed: # Overrides other border colors for visual feedback
             current_border_color = QColor("#FFFFFF") # Pressed color
-            current_border_width = 2
+            current_border_width = 2.0
 
         # Draw the border manually
         painter.setPen(QPen(current_border_color, current_border_width))
@@ -173,10 +173,10 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         painter.drawRect(border_draw_rect)
 
         # Define drawable_area for content (pixmap, overlay) *inside* the border
-        fixed_inset_for_content = 3 # This was the value that worked
+        inset = current_border_width
         drawable_image_content_area = image_area_total_rect.adjusted(
-            fixed_inset_for_content, fixed_inset_for_content, 
-            -fixed_inset_for_content, -fixed_inset_for_content 
+            inset, inset,
+            -inset, -inset
         )
 
         painter.save() # Save painter state for clipping
@@ -184,7 +184,7 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
 
         actual_pixmap_rect = QRectF()
-        if not self._pixmap_to_display.isNull() and drawable_image_content_area.height() > 0:
+        if not self._pixmap_to_display.isNull() and drawable_image_content_area.width() > 0 and drawable_image_content_area.height() > 0:
             target_w = min(self._pixmap_to_display.width(), drawable_image_content_area.width())
             target_h = min(self._pixmap_to_display.height(), drawable_image_content_area.height())
             actual_pixmap_rect = QRectF(
@@ -262,6 +262,9 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         banner_color_submenu = menu.addMenu("Change Banner Color")
         default_color_action = banner_color_submenu.addAction("Default Color")
         custom_color_action = banner_color_submenu.addAction("Choose Custom Color...")
+        menu.addSeparator() # Separator before Next/Previous
+        next_slide_action = menu.addAction("Next Slide")
+        previous_slide_action = menu.addAction("Previous Slide")
 
         action_selected = menu.exec(event.globalPos()) # Renamed 'action' to 'action_selected'
 
@@ -296,6 +299,10 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
                 color = QColorDialog.getColor(initial_color, self, "Choose Banner Color")
                 if color.isValid():
                     self.banner_widget.set_custom_color(color) # Delegate
+        elif action_selected == next_slide_action:
+            self.next_slide_requested_from_menu.emit(self._slide_id)
+        elif action_selected == previous_slide_action:
+            self.previous_slide_requested_from_menu.emit(self._slide_id)
 
     def set_available_templates(self, template_names: List[str]):
         self._available_template_names = template_names
@@ -313,8 +320,7 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
             super().keyPressEvent(event)
 
 
-if __name__ == "__main__": # pragma: no cover
-    print(f"DEBUG: scaled_slide_button.py INSIDE if __name__ == '__main__'") # DIAGNOSTIC
+if __name__ == "__main__":  # pragma: no cover
     app = QApplication(sys.argv)
 
     window = QWidget()
@@ -324,11 +330,8 @@ if __name__ == "__main__": # pragma: no cover
     window.setGeometry(100, 100, 800, 600) 
 
     num_buttons = 10
-    loaded_pixmaps = {} 
-
-    # QButtonGroup won't work directly with QWidget for setExclusive.
-    # We'll manage exclusivity manually in the on_slide_selected handler for this test.
-    all_slide_buttons_in_test = [] 
+    loaded_pixmaps = {}
+    all_slide_buttons_in_test = []
 
     placeholder_pixmap_test = QPixmap(BASE_TEST_PREVIEW_CONTENT_WIDTH, BASE_TEST_PREVIEW_CONTENT_HEIGHT) 
     placeholder_pixmap_test.fill(QColor("darkcyan"))
@@ -339,16 +342,16 @@ if __name__ == "__main__": # pragma: no cover
     temp_painter.end()
 
     def on_slide_selected(clicked_button_id): 
-        print(f"Button clicked! Slide ID: {clicked_button_id}")
+        print(f"Test: Button clicked! Slide ID: {clicked_button_id}")
         for btn_id, btn_widget in all_slide_buttons_in_test:
-            if btn_id != clicked_button_id:
-                btn_widget.setChecked(False) # Manual exclusivity
+            # In a real app, MainWindow would manage setChecked based on its current_slide_index
+            btn_widget.setChecked(btn_id == clicked_button_id)
 
     for i in range(num_buttons):
         button = ScaledSlideButton(slide_id=i)
-        button.set_available_templates(["Template Alpha", "Template Beta"]) # For context menu
-        
-        test_image_path = f"c:/Users/Logan/Documents/Plucky/Plucky/rendering/test_renders/test_render_{i+1}.png"
+        button.set_available_templates(["Template Alpha", "Template Beta", "Default Master"])
+
+        test_image_path = f"c:/Users/Logan/Documents/Plucky/Plucky/rendering/test_renders/test_render_{i + 1}.png"
 
         if test_image_path not in loaded_pixmaps:
             pixmap = QPixmap(test_image_path)
@@ -387,87 +390,6 @@ if __name__ == "__main__": # pragma: no cover
         button.slide_selected.connect(on_slide_selected)
         layout.addWidget(button)
         all_slide_buttons_in_test.append((i, button))
-
-    window.show()
-
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__": # pragma: no cover
-    print(f"DEBUG: scaled_slide_button.py INSIDE if __name__ == '__main__'") # DIAGNOSTIC
-    app = QApplication(sys.argv)
-
-    window = QWidget()
-    layout = QHBoxLayout(window) 
-    layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-    window.setWindowTitle("ScaledSlideButton Test")
-    window.setGeometry(100, 100, 800, 600) # Made window taller to see more buttons
-
-    num_buttons = 10
-    loaded_pixmaps = {} 
-
-    button_group = QButtonGroup(window) 
-    button_group.setExclusive(True)
-
-    placeholder_pixmap_test = QPixmap(BASE_TEST_PREVIEW_CONTENT_WIDTH, BASE_TEST_PREVIEW_CONTENT_HEIGHT) 
-    placeholder_pixmap_test.fill(QColor("darkcyan"))
-    temp_painter = QPainter(placeholder_pixmap_test)
-    temp_painter.setPen(QColor("white"))
-    temp_painter.setFont(QFont("Arial", 10)) 
-    temp_painter.drawText(placeholder_pixmap_test.rect(), Qt.AlignmentFlag.AlignCenter, "Test Slide")
-    temp_painter.end()
-
-    def on_slide_selected(slide_id_val): 
-        print(f"Button clicked! Slide ID: {slide_id_val}")
-
-    for i in range(num_buttons):
-        button = ScaledSlideButton(slide_id=i)
-        
-        test_image_path = f"c:/Users/Logan/Documents/Plucky/Plucky/rendering/test_renders/test_render_{i+1}.png"
-
-        if test_image_path not in loaded_pixmaps:
-            pixmap = QPixmap(test_image_path)
-            if pixmap.isNull():
-                loaded_pixmaps[test_image_path] = placeholder_pixmap_test 
-            else:
-                # Ensure test pixmap is scaled to base preview size for consistency in test
-                loaded_pixmaps[test_image_path] = pixmap.scaled(
-                    BASE_TEST_PREVIEW_CONTENT_WIDTH, 
-                    BASE_TEST_PREVIEW_CONTENT_HEIGHT, 
-                    Qt.AspectRatioMode.KeepAspectRatio, 
-                    Qt.TransformationMode.SmoothTransformation
-                )
-
-        button.set_pixmap(loaded_pixmaps[test_image_path])
-        
-        # Set slide info (number for banner, long label for banner)
-        button.set_slide_info(number=i + 1, label=f"Test Label {i+1}")
-
-        # Set center overlay label (now for banner)
-        # The set_slide_info above sets a "Test Label X" which will be overridden if section label is set
-        if i == 0:
-            button.set_center_overlay_label("Verse 1")
-        elif i == 2:
-            button.set_center_overlay_label("Chorus")
-        elif i == 4:
-            button.set_center_overlay_label("Bridge") # Label on image
-            button.set_banner_color(QColor("darkmagenta")) # Test custom banner color
-        elif i == 5:
-             button.set_center_overlay_label("") # Test blank overlay label
-
-        # Set icon states
-        if (i + 1) % 3 == 0: # Show error on every 3rd button
-            button.set_icon_state("error", True)
-        if (i + 1) % 4 == 0: # Show warning on every 4th button
-            button.set_icon_state("warning", True)
-        # Example: Show both on button 6
-        if (i + 1) == 6:
-             button.set_icon_state("error", True)
-             button.set_icon_state("warning", True)
-        
-        button.slide_selected.connect(on_slide_selected)
-        layout.addWidget(button)
-        button_group.addButton(button)
 
     window.show()
 

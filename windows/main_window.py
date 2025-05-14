@@ -1,6 +1,7 @@
 import sys
 import os
 import json # Needed for saving/loading benchmark history
+import copy # Needed for deepcopy when applying templates
 # import uuid # For generating unique slide IDs for testing - Unused
 
 from PySide6.QtWidgets import (
@@ -25,6 +26,7 @@ try:
     from widgets.song_header_widget import SongHeaderWidget # Import the new header widget
     from widgets.flow_layout import FlowLayout # Import the new FlowLayout
     from core.presentation_manager import PresentationManager
+    from dialogs.template_remapping_dialog import TemplateRemappingDialog # Import the new dialog
     from core.template_manager import TemplateManager # Import TemplateManager
     # --- Undo/Redo Command Imports ---
     from commands.slide_commands import (
@@ -42,6 +44,7 @@ except ImportError:
     from widgets.song_header_widget import SongHeaderWidget # Import the new header widget
     from widgets.flow_layout import FlowLayout # Import the new FlowLayout
     from core.presentation_manager import PresentationManager
+    from dialogs.template_remapping_dialog import TemplateRemappingDialog # Import the new dialog
     from core.template_manager import TemplateManager # Import TemplateManager
     # --- Undo/Redo Command Imports ---
     from commands.slide_commands import (
@@ -303,16 +306,23 @@ class MainWindow(QMainWindow):
                 return
             new_slides_data = []
             for stanza_lyrics in stanzas:
-                # New songs will use the resolved "Default Master" template
-                default_master_settings_for_song = self.template_manager.resolve_master_template_for_primary_text_box("Default Master")
-                if not default_master_settings_for_song:
-                    print("Warning: Could not resolve 'Default Master' template settings. Using empty settings for new song slide.")
-                    default_master_settings_for_song = {}
-
+                # For new songs, apply the "Default Layout" template.
+                # Ensure your TemplateManager has a "Default Layout" or handle its absence.
+                default_layout_settings = {}
+                if hasattr(self.template_manager, 'resolve_layout_template'):
+                    default_layout_settings = self.template_manager.resolve_layout_template("Default Layout")
+                if not default_layout_settings or not default_layout_settings.get("text_boxes"):
+                    print("MainWindow: Warning - Could not resolve 'Default Layout' or it's invalid. New slide will have basic settings.")
+                    default_layout_settings = {"layout_name": "Default Layout", "text_boxes": [], "text_content": {}} # Basic fallback
+                # Map the stanza lyrics to the first text box of the default layout
+                if default_layout_settings.get("text_boxes"):
+                    first_tb_id = default_layout_settings["text_boxes"][0].get("id")
+                    if first_tb_id:
+                        default_layout_settings.setdefault("text_content", {})[first_tb_id] = stanza_lyrics
                 new_slide = SlideData(lyrics=stanza_lyrics, 
                                       song_title=cleaned_song_title,
                                       overlay_label="", # Default for new song slides
-                                      template_settings=default_master_settings_for_song)
+                                      template_settings=default_layout_settings)
                 new_slides_data.append(new_slide)
             
             # For multiple slides, you might create a "MacroCommand" or execute individual AddSlideCommands
@@ -576,7 +586,15 @@ class MainWindow(QMainWindow):
             button.slide_selected.connect(self._handle_manual_slide_selection) # Connect to our new manual handler
             button.edit_requested.connect(self.handle_edit_slide_requested)
             button.delete_requested.connect(self.handle_delete_slide_requested)
-            button.set_available_templates(self.template_manager.get_master_template_names()) # Pass master template names
+
+            # Get layout template names for the context menu
+            layout_template_names_list = []
+            if hasattr(self.template_manager, 'get_layout_names'): # Use existing method
+                layout_template_names_list = self.template_manager.get_layout_names()
+            else:
+                print("MainWindow: WARNING - TemplateManager does not have 'get_layout_template_names'. Context menu for templates will be empty.")
+
+            button.set_available_templates(layout_template_names_list)
             button.apply_template_to_slide_requested.connect(self.handle_apply_template_to_slide)
             button.next_slide_requested_from_menu.connect(self.handle_next_slide_from_menu)
             button.previous_slide_requested_from_menu.connect(self.handle_previous_slide_from_menu)
@@ -731,23 +749,84 @@ class MainWindow(QMainWindow):
 
     @Slot(int, str)
     def handle_apply_template_to_slide(self, slide_index: int, template_name: str):
-        """Applies a named template to a specific slide."""
-        # 'template_name' here refers to a Master Template name.
-        # We need to resolve it to get the flat settings for SlideData.template_settings (interim step)
-        chosen_template_settings = self.template_manager.resolve_master_template_for_primary_text_box(template_name)
+        """Applies a named layout template to a specific slide."""
+        # 'template_name' here refers to a Layout Template name.
+        if not hasattr(self.template_manager, 'resolve_layout_template'):
+            self.show_error_message("Error: Template system (resolve_layout_template) is not available. Cannot apply layout template.")
+            return
+
+        new_layout_structure = self.template_manager.resolve_layout_template(template_name)
         
-        if not chosen_template_settings:
-            self.show_error_message(f"Could not resolve Master Template '{template_name}'.")
+        if not new_layout_structure or not new_layout_structure.get("text_boxes"):
+            self.show_error_message(f"Could not resolve Layout Template '{template_name}' or it defines no text boxes.")
             return
         
         slides = self.presentation_manager.get_slides()
         if not (0 <= slide_index < len(slides)):
             self.show_error_message(f"Cannot apply template: Slide index {slide_index} is invalid.")
             return
-        
-        old_settings = slides[slide_index].template_settings
-        cmd = ApplyTemplateCommand(self.presentation_manager, slide_index, old_settings, chosen_template_settings.copy())
-        self.presentation_manager.do_command(cmd)
+    
+        current_slide_data = slides[slide_index]
+        old_settings = current_slide_data.template_settings
+    
+        # Prepare the final settings to be applied
+        # Start with the fully resolved layout structure from TemplateManager
+        final_template_settings = copy.deepcopy(new_layout_structure) 
+
+        # Ensure 'text_content' dictionary exists
+        final_template_settings.setdefault("text_content", {})
+
+        # --- Advanced Lyric Mapping ---
+        old_text_content = {}
+        if old_settings and isinstance(old_settings.get("text_content"), dict):
+            old_text_content = old_settings["text_content"]
+        elif current_slide_data.lyrics: # Fallback to legacy lyrics if no structured text_content
+            # Try to find the ID of the first text box in the *old* layout if possible,
+            # otherwise use a generic key.
+            old_first_box_id = "legacy_lyrics"
+            if old_settings and isinstance(old_settings.get("text_boxes"), list) and old_settings["text_boxes"]:
+                old_first_box_id = old_settings["text_boxes"][0].get("id", "legacy_lyrics")
+            old_text_content = {old_first_box_id: current_slide_data.lyrics}
+
+        new_tb_ids = [tb.get("id") for tb in final_template_settings.get("text_boxes", []) if tb.get("id")]
+
+        # Determine if remapping dialog is needed
+        # Show if there was old content AND (different number of new boxes OR different new box IDs)
+        old_tb_ids_set = set(old_text_content.keys())
+        new_tb_ids_set = set(new_tb_ids)
+
+        show_remapping_dialog = False
+        if old_text_content: # Only if there's something to remap
+            if len(old_tb_ids_set) != len(new_tb_ids_set) or old_tb_ids_set != new_tb_ids_set:
+                show_remapping_dialog = True
+
+        if show_remapping_dialog:
+            remapping_dialog = TemplateRemappingDialog(old_text_content, new_tb_ids, self)
+            if remapping_dialog.exec():
+                user_mapping = remapping_dialog.get_remapping()
+                for new_id, old_id_source in user_mapping.items():
+                    if old_id_source and old_id_source in old_text_content:
+                        final_template_settings["text_content"][new_id] = old_text_content[old_id_source]
+                    # If old_id_source is None, the new box remains empty (or default if any)
+            else: # User cancelled the remapping dialog
+                QMessageBox.information(self, "Template Change Cancelled", "Template application was cancelled.")
+                return # Abort applying the template
+        elif old_text_content and new_tb_ids: # Auto-map if IDs are the same or simple case
+            # If only one old box and one new box, map it directly
+            if len(old_text_content) == 1 and len(new_tb_ids) == 1:
+                 final_template_settings["text_content"][new_tb_ids[0]] = next(iter(old_text_content.values()))
+            else: # Try to map by matching IDs
+                for new_id in new_tb_ids:
+                    if new_id in old_text_content:
+                        final_template_settings["text_content"][new_id] = old_text_content[new_id]
+                    elif not final_template_settings["text_content"] and new_id == new_tb_ids[0] and current_slide_data.lyrics:
+                        # Fallback: if no content mapped yet, and it's the first new box, use legacy lyrics
+                        final_template_settings["text_content"][new_id] = current_slide_data.lyrics
+
+        # Note: current_slide_data.lyrics itself is not cleared here. SlideRenderer will prioritize text_content.
+
+        cmd = ApplyTemplateCommand(self.presentation_manager, slide_index, old_settings, final_template_settings)
+        self.presentation_manager.do_command(cmd) # Apply
 
     @Slot(int)
     def handle_slide_overlay_label_changed(self, slide_index: int, new_label: str):

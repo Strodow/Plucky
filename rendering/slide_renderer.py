@@ -85,12 +85,12 @@ class SlideRenderer:
             # The slide's own background (if any) will be drawn over this.
         else:
             if base_pixmap: # Log if provided but invalid (e.g., wrong size)
-                logging.warning(
-                    f"Provided base_pixmap for slide {slide_id_for_log} is invalid "
-                    f"(isNull: {base_pixmap.isNull()}, size: {base_pixmap.size()} vs target: {width}x{height}). "
-                    "Creating new pixmap instead."
-                )
+                logging.warning(f"Provided base_pixmap for slide {slide_id_for_log} is invalid "
+                                f"(isNull: {base_pixmap.isNull()}, size: {base_pixmap.size()} vs target: {width}x{height}). "
+                                "Creating new pixmap instead.")
             pixmap = QPixmap(width, height)
+
+
             # Initialize new pixmap to be fully transparent.
             # This is the base if no opaque background is specified or drawn for this slide.
             pixmap.fill(Qt.GlobalColor.transparent)
@@ -98,8 +98,7 @@ class SlideRenderer:
         if pixmap.isNull():
             logging.error(f"Failed to create QPixmap of size {width}x{height} for slide_data: {slide_data.id}") # Line 94
             error_pixmap = QPixmap(1, 1) # Line 95
-            error_pixmap.fill(Qt.GlobalColor.magenta) # Error indicator # Line 96
-            benchmark_data["total_render"] = time.perf_counter() - total_render_start_time # Line 97
+            error_pixmap.fill(Qt.GlobalColor.magenta)
             return error_pixmap, True, benchmark_data # Line 98
 
         
@@ -112,163 +111,160 @@ class SlideRenderer:
             error_pixmap = QPixmap(1, 1); error_pixmap.fill(Qt.GlobalColor.red)
             benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
             return error_pixmap, True, benchmark_data
-
         self._setup_painter_hints(painter)
 
         # --- Draw Background (Image, Color, or Checkerboard) ---
         time_spent_on_images += self._render_background(painter, slide_data, pixmap.rect(), slide_id_for_log, is_on_base, is_final_output)
 
-        
-        # --- Apply Template Settings ---
-        # Merge slide-specific template settings with defaults if necessary
-        # For simplicity now, assume slide_data.template_settings is complete
-        template = slide_data.template_settings
+        # --- Render Text Boxes from Layout ---
+        current_template_settings = slide_data.template_settings if slide_data.template_settings else {}
+        defined_text_boxes = current_template_settings.get("text_boxes", [])
+        slide_text_content_map = current_template_settings.get("text_content", {})
 
-        font_settings = template.get("font", {})
-        color_setting = template.get("color", "#FFFFFF")
-        position_settings = template.get("position", {"x": "50%", "y": "80%"})
-        alignment_setting = template.get("alignment", "center")
-        vertical_alignment_setting = template.get("vertical_alignment", "center")
-        max_width_setting = template.get("max_width", "90%")
-        outline_settings = template.get("outline", {})
-        shadow_settings = template.get("shadow", {})
+        # Fallback for slides that only have slide_data.lyrics (older format or simple slides)
+        # If no text_boxes are defined in template_settings, but lyrics exist, render them with a default.
+        if not defined_text_boxes and slide_data.lyrics:
+            # Use a simplified default text box definition for rendering legacy lyrics
+            # This ensures something is shown.
+            # These properties should match the expected keys from a resolved style.
+            logging.info(f"Slide {slide_id_for_log}: No text_boxes in template_settings, falling back to rendering slide_data.lyrics with defaults.")
+            defined_text_boxes = [{
+                "id": "legacy_lyrics_box", # Internal ID for this fallback
+                "x_pc": 5.0, "y_pc": 5.0, "width_pc": 90.0, "height_pc": 90.0, # Default position/size
+                "h_align": "center", "v_align": "center", # Default alignment
+                # Resolved style properties (not just a style name)
+                "font_family": "Arial", 
+                "font_size": 58, # Base size for 1080p
+                "font_color": "#FFFFFF",
+                "force_all_caps": False,
+                "outline_enabled": False, 
+                # "outline_color": "#000000", "outline_width": 2,
+                "shadow_enabled": False,
+                # "shadow_color": "#00000080", "shadow_offset_x": 2, "shadow_offset_y": 2, "shadow_blur_radius": 4
+                # Add other style properties as needed for the fallback (bold, italic, etc.)
+            }]
+            # Use the slide's main lyrics for this fallback box
+            slide_text_content_map = {"legacy_lyrics_box": slide_data.lyrics}
 
-        # --- Prepare Font ---
-        font_setup_start_time = time.perf_counter()
-        font = QFont()
-        font_family = font_settings.get("family", "Arial")
-        font.setFamily(font_family)
-        font_info_check = QFontInfo(font) # Check against the font set on the painter later
-        if font_info_check.family().lower() != font_family.lower() and not font_info_check.exactMatch() :
-            logging.warning(f"Font family '{font_family}' not found or resolved differently for slide ID {slide_id_for_log}. Using default or system fallback '{font_info_check.family()}'.")
-            font_error_occurred = True
-
-        # Calculate font point size based on target height (scaling from 1080p base)
-        base_font_size_pt = font_settings.get("size", 58) # Base size for 1080p
-        target_output_height = 1080 # The height the base size is designed for
-        if target_output_height > 0 and height > 0:
-            scaling_factor = height / target_output_height
-            actual_font_size_pt = int(base_font_size_pt * scaling_factor)
-        else:
-            actual_font_size_pt = int(base_font_size_pt)
-        actual_font_size_pt = max(8, actual_font_size_pt) # Ensure minimum size
-        font.setPointSize(actual_font_size_pt)
-
-        font.setBold(font_settings.get("bold", False))
-        font.setItalic(font_settings.get("italic", False))
-        font.setUnderline(font_settings.get("underline", False))
-        painter.setFont(font)
-        font_setup_duration = time.perf_counter() - font_setup_start_time
-        time_spent_on_fonts += font_setup_duration
-        # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - Font Setup ('{font_family}', {actual_font_size_pt}pt): {font_setup_duration:.4f}s")
-
-        # --- Prepare Text ---
-        force_caps = font_settings.get('force_all_caps', False)
-        text_to_draw = slide_data.lyrics.upper() if force_caps else slide_data.lyrics
-
-        if not text_to_draw: # Nothing more to do if no lyrics
+        if not defined_text_boxes: # No text boxes to render, even after fallback
             painter.end()
             benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
             benchmark_data["images"] = time_spent_on_images
             benchmark_data["fonts"] = time_spent_on_fonts
-            # layout and draw remain 0.0
-            
-            # print(f"[BENCHMARK_RENDERER_SUMMARY] Slide ID {slide_id_for_log} - Total Render (no text): {benchmark_data['total_render']:.4f}s (Images: {benchmark_data['images']:.4f}s, Fonts: {benchmark_data['fonts']:.4f}s)")
             return pixmap, font_error_occurred, benchmark_data
 
+        for tb_props in defined_text_boxes:
+            tb_id = tb_props.get("id", "unknown_box")
+            text_to_draw = slide_text_content_map.get(tb_id, "") # Get text for this specific box
 
-        # --- Calculate Text Layout ---
-        text_layout_start_time = time.perf_counter()
-        font_metrics = QFontMetrics(font)
+            if not text_to_draw.strip(): # Skip if no text for this box
+                continue
 
-        # Max width for text wrapping
-        max_text_width_px = width # Default to full width
-        if isinstance(max_width_setting, str) and max_width_setting.endswith('%'):
-            try:
-                percentage = float(max_width_setting[:-1]) / 100.0
-                max_text_width_px = int(width * percentage)
-            except ValueError: pass
-        elif isinstance(max_width_setting, (int, float)):
-             # Scale fixed pixel width based on target width vs a base (e.g., 1920)
-             base_width = 1920
-             scaling_factor = width / base_width if base_width > 0 else 1
-             max_text_width_px = int(float(max_width_setting) * scaling_factor)
-        max_text_width_px = max(10, min(max_text_width_px, width)) # Clamp
+            # --- Prepare Font for this text box (using resolved style properties from tb_props) ---
+            font_setup_start_time = time.perf_counter()
+            font = QFont()
+            font_family = tb_props.get("font_family", "Arial") # Default from resolved style
+            font.setFamily(font_family)
+            font_info_check = QFontInfo(font)
+            if font_info_check.family().lower() != font_family.lower() and not font_info_check.exactMatch():
+                logging.warning(f"Font family '{font_family}' for textbox '{tb_id}' (slide {slide_id_for_log}) not found. Using fallback '{font_info_check.family()}'.")
+                font_error_occurred = True # Flag that a font issue occurred on this slide
 
-        # Calculate text bounding rect with wrapping
-        text_flags = Qt.TextFlag.TextWordWrap
-        # Use a large height for calculation to get the true wrapped height
-        text_bounding_rect = font_metrics.boundingRect(QRect(0, 0, max_text_width_px, height * 2), text_flags, text_to_draw)
+            base_font_size_pt = tb_props.get("font_size", 58) # Default from resolved style
+            target_output_height_for_font_scaling = 1080 # The height the base_font_size_pt is designed for
+            
+            font_scaling_factor = 1.0
+            if target_output_height_for_font_scaling > 0 and height > 0:
+                 font_scaling_factor = height / target_output_height_for_font_scaling
+            
+            actual_font_size_pt = max(8, int(base_font_size_pt * font_scaling_factor))
+            font.setPointSize(actual_font_size_pt)
 
-        # Calculate anchor point
-        anchor_x = 0
-        anchor_y = 0
-        pos_x = position_settings.get("x", "50%")
-        if isinstance(pos_x, str) and pos_x.endswith('%'): anchor_x = int(width * (float(pos_x[:-1]) / 100.0))
-        elif isinstance(pos_x, (int, float)): anchor_x = int(pos_x * (width / 1920.0)) # Scale fixed pos
-        pos_y = position_settings.get("y", "80%")
-        if isinstance(pos_y, str) and pos_y.endswith('%'): anchor_y = int(height * (float(pos_y[:-1]) / 100.0))
-        elif isinstance(pos_y, (int, float)): anchor_y = int(pos_y * (height / 1080.0)) # Scale fixed pos
+            # Apply other font properties from tb_props (resolved style)
+            # font.setBold(tb_props.get("font_bold", False)) # Example
+            # font.setItalic(tb_props.get("font_italic", False)) # Example
+            painter.setFont(font)
+            time_spent_on_fonts += (time.perf_counter() - font_setup_start_time)
 
-        # Calculate final drawing rectangle top-left based on anchor and alignment
-        draw_rect_x = anchor_x
-        if alignment_setting == "center": draw_rect_x -= text_bounding_rect.width() // 2
-        elif alignment_setting == "right": draw_rect_x -= text_bounding_rect.width()
+            # --- Prepare Text for this text box ---
+            if tb_props.get("force_all_caps", False): # From resolved style
+                text_to_draw = text_to_draw.upper()
 
-        draw_rect_y = anchor_y
-        if vertical_alignment_setting == "center": draw_rect_y -= text_bounding_rect.height() // 2
-        elif vertical_alignment_setting == "top": draw_rect_y = anchor_y
-        elif vertical_alignment_setting == "bottom": draw_rect_y -= text_bounding_rect.height()
+            # --- Calculate Text Layout for this text box ---
+            text_layout_start_time = time.perf_counter()
 
-        final_draw_rect = QRectF(draw_rect_x, draw_rect_y, text_bounding_rect.width(), text_bounding_rect.height())
+            # Calculate pixel rectangle for this text box based on percentages from tb_props
+            tb_x_pc = tb_props.get("x_pc", 0.0)
+            tb_y_pc = tb_props.get("y_pc", 0.0)
+            tb_w_pc = tb_props.get("width_pc", 100.0)
+            tb_h_pc = tb_props.get("height_pc", 100.0)
 
-        # --- Prepare Text Options for Drawing ---
-        text_option = QTextOption()
-        h_align = Qt.AlignmentFlag.AlignHCenter
-        if alignment_setting == "left": h_align = Qt.AlignmentFlag.AlignLeft
-        elif alignment_setting == "right": h_align = Qt.AlignmentFlag.AlignRight
-        # Vertical alignment within the drawText rect is usually AlignTop when using boundingRect result
-        text_option.setAlignment(h_align | Qt.AlignmentFlag.AlignTop)
-        text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
+            tb_pixel_rect_x = (tb_x_pc / 100.0) * width
+            tb_pixel_rect_y = (tb_y_pc / 100.0) * height
+            tb_pixel_rect_w = (tb_w_pc / 100.0) * width
+            tb_pixel_rect_h = (tb_h_pc / 100.0) * height
+            # This is the QRectF where painter.drawText will place the text, respecting alignment.
+            text_box_draw_rect = QRectF(tb_pixel_rect_x, tb_pixel_rect_y, tb_pixel_rect_w, tb_pixel_rect_h)
 
-        text_layout_duration = time.perf_counter() - text_layout_start_time
-        time_spent_on_text_layout += text_layout_duration
-        # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - Text Layout Calc: {text_layout_duration:.4f}s")
-        # --- Draw Text Effects and Main Text ---
-        main_text_color = QColor(color_setting)
+            # Text alignment options for this text box
+            tb_text_option = QTextOption()
+            h_align_str = tb_props.get("h_align", "center") # From layout definition
+            v_align_str = tb_props.get("v_align", "center") # From layout definition
 
-        # 1. Draw Shadow
-        if shadow_settings.get("enabled", False):
-            shadow_color = QColor(shadow_settings.get("color", "#000000"))
-            shadow_offset_x = shadow_settings.get("offset_x", 3) * (width / 1920.0) # Scale offset
-            shadow_offset_y = shadow_settings.get("offset_y", 3) * (height / 1080.0) # Scale offset
-            shadow_rect = final_draw_rect.translated(shadow_offset_x, shadow_offset_y)
-            painter.setPen(shadow_color)
-            shadow_draw_start_time = time.perf_counter()
-            painter.drawText(shadow_rect, text_to_draw, text_option)
-            time_spent_on_text_draw += time.perf_counter() - shadow_draw_start_time
+            qt_h_align = Qt.AlignmentFlag.AlignHCenter
+            if h_align_str == "left": qt_h_align = Qt.AlignmentFlag.AlignLeft
+            elif h_align_str == "right": qt_h_align = Qt.AlignmentFlag.AlignRight
 
-        # 2. Draw Outline
-        if outline_settings.get("enabled", False):
-            outline_color = QColor(outline_settings.get("color", "#000000"))
-            # Scale outline width slightly
-            outline_width = max(1, int(outline_settings.get("width", 2) * (height / 1080.0)))
-            painter.setPen(outline_color)
-            # Simple multi-draw outline
-            outline_draw_start_time = time.perf_counter()
-            for dx in range(-outline_width, outline_width + 1, outline_width):
-                 for dy in range(-outline_width, outline_width + 1, outline_width):
-                     if dx != 0 or dy != 0:
-                         offset_rect = final_draw_rect.translated(dx, dy)
-                         painter.drawText(offset_rect, text_to_draw, text_option)
-            time_spent_on_text_draw += time.perf_counter() - outline_draw_start_time
+            qt_v_align = Qt.AlignmentFlag.AlignVCenter
+            if v_align_str == "top": qt_v_align = Qt.AlignmentFlag.AlignTop
+            elif v_align_str == "bottom": qt_v_align = Qt.AlignmentFlag.AlignBottom
+            
+            tb_text_option.setAlignment(qt_h_align | qt_v_align)
+            tb_text_option.setWrapMode(QTextOption.WrapMode.WordWrap) # Text will wrap within text_box_draw_rect
+            
+            time_spent_on_text_layout += (time.perf_counter() - text_layout_start_time)
 
-        # 3. Draw Main Text
-        main_text_draw_start_time = time.perf_counter()
-        painter.setPen(main_text_color)
-        painter.drawText(final_draw_rect, text_to_draw, text_option)
-        time_spent_on_text_draw += (time.perf_counter() - main_text_draw_start_time)
-        # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - Text Draw (incl. effects): {time_spent_on_text_draw:.4f}s")
+            # --- Draw Text Effects and Main Text for this text box ---
+            # All colors, offsets, etc., should come from tb_props (resolved style)
+            tb_main_text_color = QColor(tb_props.get("font_color", "#FFFFFF"))
+
+            # Shadow for this text box
+            if tb_props.get("shadow_enabled", False):
+                shadow_color = QColor(tb_props.get("shadow_color", "#00000080")) # Default from resolved style
+                # Scale shadow offsets by the same factor as font size for consistency relative to text
+                shadow_offset_x = tb_props.get("shadow_offset_x", 2) * font_scaling_factor
+                shadow_offset_y = tb_props.get("shadow_offset_y", 2) * font_scaling_factor
+                # Note: QPainter.drawText doesn't have a direct blur radius for shadow.
+                # A true blur would require more complex rendering (e.g., QGraphicsDropShadowEffect on a QGraphicsTextItem,
+                # then rendering that scene to a pixmap, or manual multi-pass drawing with varying opacity).
+                # For now, we just use the offset.
+                shadow_rect = text_box_draw_rect.translated(shadow_offset_x, shadow_offset_y)
+                painter.setPen(shadow_color)
+                draw_call_start_time = time.perf_counter()
+                painter.drawText(shadow_rect, text_to_draw, tb_text_option)
+                time_spent_on_text_draw += (time.perf_counter() - draw_call_start_time)
+
+            # Outline for this text box
+            if tb_props.get("outline_enabled", False):
+                outline_color = QColor(tb_props.get("outline_color", "#000000")) # Default from resolved style
+                # Scale outline width by font_scaling_factor to keep it proportional to text size
+                outline_width_px = max(1, int(tb_props.get("outline_width", 1) * font_scaling_factor)) 
+                
+                painter.setPen(outline_color) # Pen for outline color
+                draw_call_start_time = time.perf_counter()
+                # Simple multi-draw outline: draw text at 8 surrounding points
+                for dx_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
+                    for dy_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
+                        if dx_o != 0 or dy_o != 0: # Don't draw center point (main text will cover)
+                            offset_rect = text_box_draw_rect.translated(dx_o, dy_o)
+                            painter.drawText(offset_rect, text_to_draw, tb_text_option)
+                time_spent_on_text_draw += (time.perf_counter() - draw_call_start_time)
+
+            # Main Text for this text box (drawn on top of shadow/outline)
+            painter.setPen(tb_main_text_color)
+            draw_call_start_time = time.perf_counter()
+            painter.drawText(text_box_draw_rect, text_to_draw, tb_text_option)
+            time_spent_on_text_draw += (time.perf_counter() - draw_call_start_time)
 
         # --- Cleanup ---
         painter.end()
@@ -278,8 +274,6 @@ class SlideRenderer:
         benchmark_data["fonts"] = time_spent_on_fonts
         benchmark_data["layout"] = time_spent_on_text_layout
         benchmark_data["draw"] = time_spent_on_text_draw
-
-        # print(f"[BENCHMARK_RENDERER_SUMMARY] Slide ID {slide_id_for_log} - Total Render: {benchmark_data['total_render']:.4f}s (Images: {benchmark_data['images']:.4f}s, Fonts: {benchmark_data['fonts']:.4f}s, Layout: {benchmark_data['layout']:.4f}s, Draw: {benchmark_data['draw']:.4f}s)")
 
         return pixmap, font_error_occurred, benchmark_data
     def _init_checkerboard_style(self):
