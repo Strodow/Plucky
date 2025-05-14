@@ -5,11 +5,12 @@ import json # Needed for saving/loading benchmark history
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QSlider, QMenuBar, # Added QMenuBar
-    QMessageBox, QVBoxLayout, QWidget, QPushButton, QInputDialog, # QButtonGroup removed
-    QComboBox, QLabel, QHBoxLayout, QSplitter, QScrollArea, QDialog # QButtonGroup removed
+    QMessageBox, QVBoxLayout, QWidget, QPushButton, QInputDialog, QSpinBox,
+    QComboBox, QLabel, QHBoxLayout, QSplitter, QScrollArea, QDialog
 ) #  QAction removed as it's not directly used
-from PySide6.QtGui import QScreen, QPixmap
-from PySide6.QtCore import Qt, QSize, Slot, QEvent # Added QEvent
+from PySide6.QtGui import QScreen, QPixmap, QColor
+from PySide6.QtCore import Qt, QSize, Slot, QEvent, QStandardPaths # Added QStandardPaths
+from typing import Optional # Import Optional for type hinting
 
 from windows.settings_window import SettingsWindow # Import the new settings window
 # --- Local Imports ---
@@ -59,6 +60,11 @@ PROJECT_ROOT_MW = os.path.dirname(SCRIPT_DIR_MW) # /Plucky
 BENCHMARK_TEMP_DIR_MW = os.path.join(PROJECT_ROOT_MW, "temp")
 BENCHMARK_HISTORY_FILE_PATH_MW = os.path.join(BENCHMARK_TEMP_DIR_MW, ".pluckybenches.json")
 
+# Define the path for the settings file
+# Use QStandardPaths for a platform-independent way to find config directory
+SETTINGS_FILE_PATH = os.path.join(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation), "app_settings.json")
+RECENT_FILES_FILE_PATH = os.path.join(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation), "recent_files.json")
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -67,10 +73,14 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Plucky Presentation")
         self.setGeometry(100, 100, 900, 700) # Adjusted size for more controls
-        self.setMenuBar(self.create_menu_bar())
 
         # MainWindow can have focus, but scroll_area is more important for this.
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus) 
+
+        # Initialize recent files list (will be loaded in showEvent)
+        self._recent_files_list: list[str] = []
+        self.MAX_RECENT_FILES = 10 # Maximum number of recent files to remember
+        self.setMenuBar(self.create_menu_bar()) # Create menu bar AFTER recent files list is initialized
 
         # Initialize benchmark data store as an instance attribute
         # This will hold current session data + loaded history for the last presentation
@@ -95,7 +105,7 @@ class MainWindow(QMainWindow):
 
         # --- Core Components ---
         self.output_window = OutputWindow()
-        self.slide_renderer = SlideRenderer()
+        self.slide_renderer = SlideRenderer(app_settings=self) # Pass MainWindow as settings provider
         self.presentation_manager = PresentationManager() # Assuming this is already here
         self.presentation_manager.presentation_changed.connect(self.update_slide_display_and_selection)
         self.presentation_manager.error_occurred.connect(self.show_error_message)
@@ -104,6 +114,8 @@ class MainWindow(QMainWindow):
         self.current_slide_index = -1 # Tracks the selected slide button's index
         self.output_resolution = QSize(1920, 1080) # Default, updated on monitor select
         self.slide_buttons_list = [] # List to store ScaledSlideButton instances
+        
+        self.current_live_background_pixmap: QPixmap | None = None
 
 
         # --- UI Elements ---
@@ -111,7 +123,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
 
         # Top controls: Live button (Monitor selection moved to settings)
-        self.go_live_button = QPushButton("Go Live")
+        self.go_live_button = QPushButton("") # Text removed, will be a circle
+        self.go_live_button.setFixedSize(24, 24) # Make it smaller
+        self.go_live_button.setCheckable(True) # To manage its state
+        self._update_go_live_button_appearance() # Initial appearance
 
         # Top controls: Undo/Redo (File ops moved to menu)
         self.undo_button = QPushButton("Undo") # New
@@ -122,12 +137,12 @@ class MainWindow(QMainWindow):
         self.edit_template_button.setEnabled(True) # Re-enabled
         self.edit_template_button.setToolTip("Open the template editor.") # Updated tooltip
 
-        # Button Size Slider
-        self.button_size_slider = QSlider(Qt.Orientation.Horizontal)
-        self.button_size_slider.setMinimum(100) # Represents 1.0x scale (base size)
-        self.button_size_slider.setMaximum(300) # Represents 3.0x scale (allows for larger previews)
-        self.button_size_slider.setValue(100)   # Default to 1.0x scale
-        self.button_size_slider.setToolTip("Adjust Slide Preview Size")
+        # Preview Size Spinbox (replaces slider)
+        self.preview_size_spinbox = QSpinBox()
+        self.preview_size_spinbox.setMinimum(1)
+        self.preview_size_spinbox.setMaximum(4)
+        self.preview_size_spinbox.setSuffix("x") # Add 'x' suffix
+        self.preview_size_spinbox.setToolTip("Adjust Slide Preview Size (1x-4x)") # Changed to spinbox and updated tooltip
 
         # Slide Button Area
         self.scroll_area = QScrollArea()
@@ -143,26 +158,34 @@ class MainWindow(QMainWindow):
         main_layout = QHBoxLayout(self.central_widget)
         left_panel_widget = QWidget()
         left_layout = QVBoxLayout(left_panel_widget)
+        # Remove default margins to prevent extra space above the first elements
+        left_layout.setContentsMargins(0, 0, 0, 0)
 
         # Monitor layout is removed as Go Live button is moved
 
         # File operations layout
         file_ops_layout = QHBoxLayout()
-        file_ops_layout.addStretch(1) # Stretch to push buttons to the right
-        file_ops_layout.addWidget(self.go_live_button) # Add Go Live button here
+
+        # Add Preview Size controls to the far left
+        file_ops_layout.addWidget(QLabel("Preview Size:"))
+        file_ops_layout.addWidget(self.preview_size_spinbox)
+        file_ops_layout.addSpacing(10) # Space after preview size
+
+        # Add middle buttons
         file_ops_layout.addWidget(self.edit_template_button)
-        # Keep Undo/Redo buttons on the main UI
-        file_ops_layout.addWidget(self.undo_button) # Add Undo button
-        file_ops_layout.addWidget(self.redo_button) # Add Redo button
-        left_layout.addLayout(file_ops_layout)
-        
-        # Template selector layout - REMOVED
-        
-        # Button size slider layout
-        slider_layout = QHBoxLayout()
-        slider_layout.addWidget(QLabel("Preview Size:"))
-        slider_layout.addWidget(self.button_size_slider)
-        left_layout.addLayout(slider_layout)
+        file_ops_layout.addWidget(self.undo_button)
+        file_ops_layout.addWidget(self.redo_button)
+
+        file_ops_layout.addStretch(1) # Add stretch to push Output control to the far right
+
+        # Output (Go Live) button with label
+        output_control_layout = QVBoxLayout()
+        output_label = QLabel("Output")
+        output_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        output_control_layout.addWidget(output_label)
+        output_control_layout.addWidget(self.go_live_button, 0, Qt.AlignmentFlag.AlignHCenter) # Add Go Live button here, centered
+        file_ops_layout.addLayout(output_control_layout)
+        left_layout.addLayout(file_ops_layout) # Add the file_ops_layout which now contains all top buttons and preview size
 
         left_layout.addSpacing(10)
         left_layout.addWidget(QLabel("Slides:"))
@@ -179,7 +202,7 @@ class MainWindow(QMainWindow):
         self.edit_template_button.clicked.connect(self.handle_edit_template) # Connect signal
         self.undo_button.clicked.connect(self.handle_undo) # New
         self.redo_button.clicked.connect(self.handle_redo) # New
-        self.button_size_slider.sliderReleased.connect(self.handle_button_size_change) # Changed signal
+        self.preview_size_spinbox.valueChanged.connect(self.handle_preview_size_change) # Connect spinbox signal
 
         self.go_live_button.clicked.connect(self.toggle_live)
 
@@ -195,6 +218,9 @@ class MainWindow(QMainWindow):
         # Store app_start_time (timestamp) temporarily for calculation in showEvent
         self._app_start_time = app_start_time 
 
+        # Initialize settings attributes (will be loaded in showEvent)
+        self._target_output_screen: Optional[QScreen] = None
+        
         mw_init_duration = time.perf_counter() - mw_init_start_time
         self.benchmark_data_store["mw_init"] = mw_init_duration
         self.mw_init_end_time = time.perf_counter() # Store for calculating mw_show in showEvent
@@ -204,7 +230,16 @@ class MainWindow(QMainWindow):
             pass 
         else:
             print(f"[BENCHMARK] MainWindow.__init__ took: {self.benchmark_data_store['mw_init']:.4f} seconds (app_start_time not found)")
-            
+
+    def _update_go_live_button_appearance(self):
+        if self.go_live_button.isChecked(): # Live
+            self.go_live_button.setToolTip("Output is LIVE")
+            self.go_live_button.setStyleSheet("QPushButton { background-color: red; border-radius: 12px; border: 1px solid darkred; } QPushButton:hover { background-color: #FF4C4C; }")
+        else: # Not live
+            self.go_live_button.setToolTip("Go Live")
+            self.go_live_button.setStyleSheet("QPushButton { background-color: palette(button); border-radius: 12px; border: 2px solid gray; } QPushButton:hover { border: 2px solid darkgray; }")
+            # The pass statement below is optional if no other code follows in this else block.
+            pass 
     def toggle_live(self):
         # The selected screen is now managed by SettingsWindow and communicated via a signal
         # For now, we'll assume self.output_window.screen() holds the target if set.
@@ -216,14 +251,12 @@ class MainWindow(QMainWindow):
             return
 
         if self.output_window.isVisible():
-            self.go_live_button.setText("Go Live")
-            self.go_live_button.setStyleSheet("")
+            self.go_live_button.setChecked(False)
             self._show_blank_on_output() # Good practice to blank it before hiding
             self.output_window.hide() # Explicitly hide the window
         else:
             if not target_screen: return # Should have been caught above
-            self.go_live_button.setText("LIVE")
-            self.go_live_button.setStyleSheet("background-color: red; color: white; font-weight: bold;")
+            self.go_live_button.setChecked(True)
             output_geometry = target_screen.geometry()
             self.output_resolution = output_geometry.size()
             self.output_window.setGeometry(output_geometry)
@@ -232,6 +265,8 @@ class MainWindow(QMainWindow):
                 self._display_slide(self.current_slide_index)
             else:
                 self._show_blank_on_output()
+        self._update_go_live_button_appearance()
+
 
     def handle_add_song(self):
         """
@@ -281,12 +316,15 @@ class MainWindow(QMainWindow):
                 new_slides_data.append(new_slide)
             
             # For multiple slides, you might create a "MacroCommand" or execute individual AddSlideCommands
-            # For simplicity now, let's assume add_slides is not directly undoable as one step,
             # or we create multiple commands. Here, we'll just call the PM method.
             self.presentation_manager.add_slides(new_slides_data) # This won't be a single undo step
 
-    def handle_load(self):
-        if self.presentation_manager.is_dirty:
+    def handle_load(self, filepath: Optional[str] = None):
+        """
+        Loads a presentation from a file. Prompts to save unsaved changes.
+        If filepath is provided, loads that file directly; otherwise, opens a file dialog.
+        """
+        if self.presentation_manager.is_dirty and filepath is None: # Only prompt if loading via dialog
             reply = QMessageBox.question(self, 'Unsaved Changes',
                                          "You have unsaved changes. Save before loading new file?",
                                          QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
@@ -296,8 +334,10 @@ class MainWindow(QMainWindow):
             elif reply == QMessageBox.Cancel:
                 return
         
-        filepath, _ = QFileDialog.getOpenFileName(self, "Load Presentation", "", "Plucky Files (*.plucky *.json);;All Files (*)")
-        if filepath:
+        if filepath is None: # If no filepath was provided, open the dialog
+            filepath, _ = QFileDialog.getOpenFileName(self, "Load Presentation", "", "Plucky Files (*.plucky *.json);;All Files (*)")
+
+        if filepath: # Proceed if we have a filepath (either provided or from dialog)
             # Reset presentation-specific benchmarks before loading
             self.benchmark_data_store["last_presentation_path"] = filepath
             self.benchmark_data_store["last_presentation_pm_load"] = 0.0
@@ -316,15 +356,21 @@ class MainWindow(QMainWindow):
             # After UI update (triggered by presentation_changed), explicitly mark as not dirty
             # The actual UI update (update_slide_display_and_selection) will be benchmarked separately as it's triggered by a signal.
             self.presentation_manager.is_dirty = False
+            self._add_recent_file(filepath) # Add to recents list on successful load
+
 
     def handle_save(self) -> bool:
         if not self.presentation_manager.current_filepath:
             return self.handle_save_as()
         else:
-            if self.presentation_manager.save_presentation():
+            filepath = self.presentation_manager.current_filepath
+            if self.presentation_manager.save_presentation(filepath):
                 # Optionally add status bar message: "Presentation saved."
+                self._add_recent_file(filepath) # Add to recents list on successful save
                 return True
             # Error message handled by show_error_message via signal
+            # If save failed, don't add to recents
+            print(f"Error saving presentation to {filepath}")
             return False
 
     def handle_save_as(self) -> bool:
@@ -332,14 +378,17 @@ class MainWindow(QMainWindow):
         if filepath:
             if self.presentation_manager.save_presentation(filepath):
                 # Optionally add status bar message: "Presentation saved to {filepath}."
+                self._add_recent_file(filepath) # Add to recents list on successful save as
                 return True
+            # Error message handled by show_error_message via signal
             return False
+        # User cancelled dialog, don't add to recents
         return False # User cancelled dialog
 
     @Slot() # No longer receives an int directly from the signal
-    def handle_button_size_change(self):
-        value = self.button_size_slider.value() # Get the current value from the slider
-        self.button_scale_factor = value / 100.0  # Convert slider value (50-200) to scale (0.5-2.0)
+    def handle_preview_size_change(self, value: int):
+        """Handles the valueChanged signal from the preview size spinbox."""
+        self.button_scale_factor = float(value)  # Use the integer value directly as the scale factor (1x, 2x, etc.)
         # This will trigger a full rebuild of the slide buttons with the new scale
         self.update_slide_display_and_selection()
 
@@ -486,7 +535,8 @@ class MainWindow(QMainWindow):
             try:
                 # render_slide now returns (pixmap, has_font_error)
                 full_res_pixmap, has_font_error, slide_benchmarks = self.slide_renderer.render_slide(
-                    slide_data, preview_render_width, preview_render_height
+                    slide_data, preview_render_width, preview_render_height, is_final_output=False
+
                 )
                 # print(f"      Full-res pixmap for slide {index}: isNull={full_res_pixmap.isNull()}, size={full_res_pixmap.size()}") # DEBUG
                 
@@ -503,7 +553,8 @@ class MainWindow(QMainWindow):
                 print(f"      ERROR unpacking render_slide result for slide {index} (ID {slide_data.id}): {te}. Assuming old renderer.")
                 # Fallback to old behavior if render_slide only returns 2 values
                 full_res_pixmap, has_font_error = self.slide_renderer.render_slide(
-                    slide_data, preview_render_width, preview_render_height
+                    slide_data, preview_render_width, preview_render_height, is_final_output=False
+
                 )
                 preview_pixmap = full_res_pixmap.scaled(current_dynamic_preview_width, current_dynamic_preview_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             except Exception as e: # Catch general rendering exceptions
@@ -753,16 +804,45 @@ class MainWindow(QMainWindow):
 
         render_output_start_time = time.perf_counter()
         slide_data = slides[index]
+        base_pixmap_for_render = None
+        output_width = self.output_resolution.width()
+        output_height = self.output_resolution.height()
+
+        # Determine if this slide should overlay an existing background
+        slide_bg_qcolor = QColor(slide_data.background_color)
+        is_slide_bg_effectively_transparent = (
+            not slide_data.background_image_path and
+            slide_bg_qcolor.isValid() and
+            slide_bg_qcolor.alpha() == 0
+        )
+        has_lyrics = bool(slide_data.lyrics and slide_data.lyrics.strip())
+
+        if has_lyrics and is_slide_bg_effectively_transparent:
+            if self.current_live_background_pixmap and \
+               self.current_live_background_pixmap.size() == self.output_resolution:
+                base_pixmap_for_render = self.current_live_background_pixmap
+            # else: No valid persistent background to overlay on, or size mismatch.
+            # This transparent slide will render standalone (which means it will be transparent).
+            # If it renders standalone and is transparent, it won't become the new background.
         try:
             # render_slide now returns (pixmap, has_font_error)
             # For live output, we don't aggregate these individual timings here, but still need to unpack.
             render_result = self.slide_renderer.render_slide(
-                 slide_data, self.output_resolution.width(), self.output_resolution.height()
+                 slide_data, output_width, output_height, base_pixmap=base_pixmap_for_render, is_final_output=True
             )
             if len(render_result) == 3: # New renderer with benchmarks
                 output_pixmap, has_font_error_on_output, _ = render_result
             else: # Old renderer
                 output_pixmap, has_font_error_on_output = render_result
+                
+            # After rendering, decide if this render should BECOME the new live background
+            if base_pixmap_for_render is None: # Only if it was rendered standalone
+                is_potential_new_bg = (
+                    slide_data.background_image_path or
+                    (slide_bg_qcolor.isValid() and slide_bg_qcolor.alpha() > 0) # Has image or non-transparent color
+                )
+                self.current_live_background_pixmap = output_pixmap.copy() if is_potential_new_bg and output_pixmap and not output_pixmap.isNull() else None
+            # If base_pixmap_for_render was used, self.current_live_background_pixmap remains unchanged.
             
             if not output_pixmap.isNull():
                 self.output_window.set_pixmap(output_pixmap)
@@ -772,12 +852,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error rendering slide {index} (ID: {slide_data.id}) for output: {e}")
             error_slide = SlideData(lyrics=f"Error rendering slide:\n{e}", background_color="#AA0000", template_settings={"color": "#FFFFFF"})
-            # Render error slide, ignore its font error status for this specific display
-            error_pixmap, _ = self.slide_renderer.render_slide(error_slide, self.output_resolution.width(), self.output_resolution.height())
+            # Render error slide standalone, ignore its font error status and benchmarks for this specific display
+            render_result = self.slide_renderer.render_slide(error_slide, output_width, output_height, base_pixmap=None, is_final_output=True)
+
             if len(render_result) == 3: # New renderer with benchmarks
-                error_pixmap, _, _ = self.slide_renderer.render_slide(error_slide, self.output_resolution.width(), self.output_resolution.height())
+                error_pixmap, _, _ = render_result
             else: # Old renderer
-                error_pixmap, _ = self.slide_renderer.render_slide(error_slide, self.output_resolution.width(), self.output_resolution.height())
+                error_pixmap, _ = render_result
             if not error_pixmap.isNull():
                 self.output_window.set_pixmap(error_pixmap)
             self.show_error_message(f"Error rendering slide {index} (ID: {slide_data.id}): {e}")
@@ -787,8 +868,10 @@ class MainWindow(QMainWindow):
     def _show_blank_on_output(self):
         if self.output_window.isVisible():
             blank_slide = SlideData(lyrics="", background_color="#000000")
-            # Render blank slide, ignore its font error status and benchmarks
-            render_result = self.slide_renderer.render_slide(blank_slide, self.output_resolution.width(), self.output_resolution.height())
+            # Render blank slide standalone, ignore its font error status and benchmarks
+            render_result = self.slide_renderer.render_slide(
+                blank_slide, self.output_resolution.width(), self.output_resolution.height(), base_pixmap=None, is_final_output=True
+            )
             if len(render_result) == 3: # New renderer
                 blank_pixmap, _, _ = render_result
             else: # Old renderer
@@ -796,6 +879,7 @@ class MainWindow(QMainWindow):
             
             if not blank_pixmap.isNull():
                 self.output_window.set_pixmap(blank_pixmap)
+        self.current_live_background_pixmap = None # Clear any persistent background
 
     def show_error_message(self, message: str):
         QMessageBox.critical(self, "Error", message)
@@ -815,6 +899,7 @@ class MainWindow(QMainWindow):
                 return
         
         self.output_window.close()
+        self._save_settings() # Save settings before closing
         self._save_benchmark_history() # Save benchmark history on close
         super().closeEvent(event)
 
@@ -829,23 +914,10 @@ class MainWindow(QMainWindow):
             print(f"[BENCHMARK] MainWindow show (from init end to showEvent): {self.benchmark_data_store['mw_show']:.4f}s")
             self._app_start_time = None # Clear temporary storage
         
-        # Load benchmark history when the window is shown
+        # Load settings and benchmark history when the window is shown
+        self._load_settings() # Load settings first
+        self._load_recent_files() # Load recent files
         self._load_benchmark_history()
-
-        # Set a default target output screen if none is set yet
-        if not hasattr(self, '_target_output_screen') or self._target_output_screen is None:
-            screens = QApplication.screens()
-            if screens:
-                # Prefer primary screen if available
-                primary_screen = QApplication.primaryScreen()
-                if primary_screen and primary_screen in screens: # Check if primary_screen is not None
-                    self._target_output_screen = primary_screen
-                else:
-                    self._target_output_screen = screens[0] # Fallback to first screen
-                print(f"MainWindow: Defaulted target output screen to {self._target_output_screen.name()}")
-            else:
-                self._target_output_screen = None # Explicitly None if no screens
-                print("MainWindow: No screens found to set a default output target.")
 
         super().showEvent(event)
 
@@ -882,6 +954,129 @@ class MainWindow(QMainWindow):
                  print(f"Unexpected error loading benchmark history: {e}")
         else:
             print(f"Benchmark history file not found: {BENCHMARK_HISTORY_FILE_PATH_MW}")
+
+    def _load_settings(self):
+        """Loads application settings from the JSON file."""
+        print(f"Attempting to load settings from {SETTINGS_FILE_PATH}")
+        if os.path.exists(SETTINGS_FILE_PATH):
+            try:
+                with open(SETTINGS_FILE_PATH, 'r') as f:
+                    settings = json.load(f)
+                
+                if not isinstance(settings, dict):
+                     print(f"Error loading settings: File {SETTINGS_FILE_PATH} does not contain a valid dictionary.")
+                     return
+
+                # Load output screen index
+                output_screen_index = settings.get("output_screen_index")
+                screens = QApplication.screens()
+                if screens and isinstance(output_screen_index, int) and 0 <= output_screen_index < len(screens):
+                    self._target_output_screen = screens[output_screen_index]
+                    print(f"Loaded target output screen: {self._target_output_screen.name()} (Index {output_screen_index})")
+                else:
+                    print(f"Settings: Invalid or missing 'output_screen_index'. Defaulting.")
+                    self._set_default_output_screen() # Set default if loading fails
+
+                # card_background_color is currently unused in the new UI structure, but we load it
+                # to keep the file structure consistent if needed later.
+                # card_bg_color = settings.get("card_background_color")
+                # print(f"Loaded card_background_color: {card_bg_color} (currently unused)")
+
+            except (IOError, json.JSONDecodeError) as e:
+                print(f"Error loading settings from {SETTINGS_FILE_PATH}: {e}")
+                self._set_default_output_screen() # Set default on error
+            except Exception as e:
+                print(f"Unexpected error loading settings: {e}")
+                self._set_default_output_screen() # Set default on error
+        else:
+            print(f"Settings file not found: {SETTINGS_FILE_PATH}. Using default settings.")
+            self._set_default_output_screen() # Set default if file doesn't exist
+
+    def _save_settings(self):
+        """Saves application settings to the JSON file."""
+        settings = {}
+        # Save output screen index
+        if self._target_output_screen:
+            try:
+                settings["output_screen_index"] = QApplication.screens().index(self._target_output_screen)
+            except ValueError: # Should not happen if _target_output_screen is a valid screen
+                 print(f"Warning: Could not find index for target output screen {self._target_output_screen.name()} during save.")
+                 settings["output_screen_index"] = -1 # Save an invalid index
+        else:
+            settings["output_screen_index"] = -1 # Save -1 if no screen is selected
+        
+        try:
+            # Ensure the directory exists before writing
+            settings_dir = os.path.dirname(SETTINGS_FILE_PATH)
+            os.makedirs(settings_dir, exist_ok=True)
+            
+            with open(SETTINGS_FILE_PATH, 'w') as f:
+                json.dump(settings, f, indent=4)
+            print(f"Saved settings to {SETTINGS_FILE_PATH}")
+        except IOError as e:
+            print(f"Error saving settings to {SETTINGS_FILE_PATH}: {e}")
+        except Exception as e:
+            print(f"Unexpected error saving settings: {e}")
+
+    def _load_recent_files(self):
+        """Loads the list of recent files from the JSON file."""
+        print(f"Attempting to load recent files from {RECENT_FILES_FILE_PATH}")
+        if os.path.exists(RECENT_FILES_FILE_PATH):
+            try:
+                with open(RECENT_FILES_FILE_PATH, 'r') as f:
+                    recent_files = json.load(f)
+                if isinstance(recent_files, list):
+                    # Filter out non-string entries and limit size
+                    self._recent_files_list = [f for f in recent_files if isinstance(f, str)][:self.MAX_RECENT_FILES]
+                    print(f"Loaded {len(self._recent_files_list)} recent files.")
+                else:
+                    print(f"Error loading recent files: File {RECENT_FILES_FILE_PATH} does not contain a valid list.")
+            except (IOError, json.JSONDecodeError) as e:
+                print(f"Error loading recent files from {RECENT_FILES_FILE_PATH}: {e}")
+        else:
+            print(f"Recent files history file not found: {RECENT_FILES_FILE_PATH}. Starting with empty list.")
+        self._update_recent_files_menu() # Update the menu after loading
+
+    def _save_recent_files(self):
+        """Saves the current list of recent files to the JSON file."""
+        try:
+            # Ensure the directory exists before writing
+            recent_dir = os.path.dirname(RECENT_FILES_FILE_PATH)
+            os.makedirs(recent_dir, exist_ok=True)
+            with open(RECENT_FILES_FILE_PATH, 'w') as f:
+                json.dump(self._recent_files_list, f, indent=4)
+        except IOError as e:
+            print(f"Error saving recent files to {RECENT_FILES_FILE_PATH}: {e}")
+
+    def _set_default_output_screen(self):
+        """Sets the default output screen if none is loaded or found."""
+        screens = QApplication.screens()
+        if screens:
+            # Prefer primary screen if available
+            primary_screen = QApplication.primaryScreen()
+            if primary_screen and primary_screen in screens: # Check if primary_screen is not None
+                self._target_output_screen = primary_screen
+            else:
+                self._target_output_screen = screens[0] # Fallback to first screen
+            print(f"MainWindow: Defaulted target output screen to {self._target_output_screen.name()}")
+        else:
+            self._target_output_screen = None # Explicitly None if no screens
+            print("MainWindow: No screens found to set a default output target.")
+            
+    def _add_recent_file(self, filepath: str):
+        """Adds a file path to the list of recent files, ensuring uniqueness and limit."""
+        filepath = os.path.abspath(filepath) # Use absolute path for consistency
+        if filepath in self._recent_files_list:
+            self._recent_files_list.remove(filepath) # Move to top
+        self._recent_files_list.insert(0, filepath) # Add to beginning
+        
+        # Trim list if it exceeds the maximum size
+        if len(self._recent_files_list) > self.MAX_RECENT_FILES:
+            self._recent_files_list = self._recent_files_list[:self.MAX_RECENT_FILES]
+            
+        self._save_recent_files() # Save the updated list
+        self._update_recent_files_menu() # Update the menu
+        print(f"Added '{filepath}' to recent files.")
 
     @Slot()
     def on_template_collection_changed(self):
@@ -957,11 +1152,13 @@ class MainWindow(QMainWindow):
     
     def create_menu_bar(self):
         menu_bar = QMenuBar(self)
+        # Set a theme-aware background color for the menu bar to make it more distinct
+        menu_bar.setStyleSheet("QMenuBar { background-color: palette(button); }")
         
         # File Menu
         file_menu = menu_bar.addMenu("File")
         load_action = file_menu.addAction("Load")
-        load_action.triggered.connect(self.handle_load)
+        load_action.triggered.connect(lambda: self.handle_load(filepath=None)) # Ensure filepath is None
         save_action = file_menu.addAction("Save")
         save_action.triggered.connect(self.handle_save)
         save_as_action = file_menu.addAction("Save As...")
@@ -970,6 +1167,10 @@ class MainWindow(QMainWindow):
         new_action = file_menu.addAction("New")
         new_action.triggered.connect(self.handle_new)
         # Edit Menu
+        file_menu.addSeparator()
+        self.recent_files_menu = file_menu.addMenu("Recents") # Store as instance member
+        self._update_recent_files_menu() # Initial population
+        file_menu.addSeparator()
         edit_menu = menu_bar.addMenu("Edit")
         undo_action = edit_menu.addAction("Undo")
         undo_action.triggered.connect(self.handle_undo)
@@ -994,6 +1195,25 @@ class MainWindow(QMainWindow):
         open_settings_action.triggered.connect(self.handle_open_settings)
 
         return menu_bar
+    
+    def _update_recent_files_menu(self):
+        """Clears and repopulates the 'Recents' submenu."""
+        if not hasattr(self, 'recent_files_menu') or self.recent_files_menu is None:
+            # This can happen if called before create_menu_bar (e.g., during init if load_recent_files is too early)
+            # Or if the menu bar structure changes unexpectedly.
+            print("Warning: 'recent_files_menu' attribute not found or is None. Cannot update recents menu.")
+            return
+
+        self.recent_files_menu.clear() # Clear existing actions
+        if not self._recent_files_list:
+            self.recent_files_menu.setEnabled(False)
+            return
+
+        self.recent_files_menu.setEnabled(True)
+        for filepath in self._recent_files_list:
+            action = self.recent_files_menu.addAction(os.path.basename(filepath)) # Display just the filename
+            action.triggered.connect(lambda checked, path=filepath: self._load_recent_file_action(path)) # Use lambda to pass argument
+    
     def handle_new(self):
         """
         Starts a new presentation.  If there are unsaved changes, prompts the user to save.
@@ -1035,7 +1255,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def handle_open_settings(self):
         """Opens the settings dialog."""
-        current_target_screen = getattr(self, '_target_output_screen', None)
+        current_target_screen = self._target_output_screen # Use the attribute directly
         settings_dialog = SettingsWindow(
             benchmark_data=self.benchmark_data_store,
             current_output_screen=current_target_screen,
@@ -1047,6 +1267,11 @@ class MainWindow(QMainWindow):
         settings_dialog.output_monitor_changed.disconnect(self._handle_settings_monitor_changed)
 
     @Slot(dict)
+    def _load_recent_file_action(self, filepath: str):
+        """Handler for clicking a recent file action in the menu."""
+        print(f"Loading recent file: {filepath}")
+        # Call the handle_load method with the specific filepath
+        self.handle_load(filepath=filepath)
     def _handle_editor_save_request(self, templates_collection: dict):
         """
         Handles the templates_save_requested signal from the TemplateEditorWindow.
@@ -1063,6 +1288,17 @@ class MainWindow(QMainWindow):
         self._target_output_screen = selected_screen # Store the selected screen
         print(f"MainWindow: Target output monitor updated to {selected_screen.name()} via settings.")
         # If already live, you might want to move the output window, or just apply on next "Go Live"
+        
+    def get_setting(self, key: str, default_value=None):
+        """
+        Provides a way for other components (like SlideRenderer) to get settings
+        managed or known by MainWindow.
+        """
+        if key == "display_checkerboard_for_transparency":
+            # TODO: This setting should eventually be loaded from self._load_settings()
+            # and be configurable via SettingsWindow. For now, default to True.
+            return True
+        return default_value
 
 # Example of how to run this if it's the main entry point for testing
 # (Your main.py would typically handle this)

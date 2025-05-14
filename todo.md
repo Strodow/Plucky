@@ -1,19 +1,19 @@
 # Project TODO List
 ### For the week
-- [] get add song enabled and start on that window (song window)
-- [] change go live to circle that is red when on and no fill when off
-- [] change undo redo to arrows
-- [] change preview size to 1x,2x,3x etc
-- [] media pool toggle
+- [ ] get add song enabled and start on that window (song window)
+- [X] change go live to circle that is red when on and no fill when off
+- [ ] change undo redo to arrows
+- [X] change preview size to 1x,2x,3x etc
+- [ ] media pool toggle
 - [X] move load save recents into a drop down file / project dropdown 
 - [X] move settings and edit templates up there too ^
 - [X] make a settings window (setup the OpenSource/Pro toggle/Dev toggle) (add logic still need)
 - [X] Chage edit template to templates
-- [] Check if the monitor selectors are working on windows
-- [] add collapseable for benchmarks
-- [] set the Icon for the different OSs
-- [] find a fast dictionary search highlighting or what modern things do
-- [] rereferance the app_settings.json file for the settings
+- [X] Check if the monitor selectors are working on windows
+- [X] add collapseable for benchmarks
+- [X] set the Icon for the different OSs
+- [ ] find a fast dictionary search highlighting or what modern things do
+- [X] rereferance the app_settings.json file for the settings
 
 
 # Existing windows

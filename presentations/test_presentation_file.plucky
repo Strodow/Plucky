@@ -5,7 +5,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Intro",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -45,7 +45,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Verse 1",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -85,7 +85,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Verse 1",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -125,7 +125,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Verse 1",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -165,7 +165,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Chorus",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -205,7 +205,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Chorus",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -245,7 +245,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Verse 2",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -285,7 +285,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Verse 2",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -325,7 +325,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Verse 2",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -365,7 +365,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Chorus",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -405,7 +405,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Chorus",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -445,7 +445,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Outro",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -485,7 +485,7 @@
         "background_image_path": null,
         "song_title": "test",
         "overlay_label": "Outro",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -525,7 +525,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -565,7 +565,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -605,7 +605,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -645,7 +645,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -685,7 +685,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -725,7 +725,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -765,7 +765,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -805,7 +805,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -845,7 +845,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -885,7 +885,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -925,7 +925,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -965,7 +965,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1005,7 +1005,7 @@
         "background_image_path": null,
         "song_title": "abba abba",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1045,7 +1045,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1085,7 +1085,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1125,7 +1125,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1165,7 +1165,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1205,7 +1205,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1245,7 +1245,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1285,7 +1285,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1325,7 +1325,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1365,7 +1365,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1405,7 +1405,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1445,7 +1445,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1485,7 +1485,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",
@@ -1525,7 +1525,7 @@
         "background_image_path": null,
         "song_title": "test3",
         "overlay_label": "",
-        "background_color": "#000000",
+        "background_color": "#00000000",
         "template_settings": {
             "font": {
                 "family": "Arial",

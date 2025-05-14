@@ -862,19 +862,38 @@ class TemplateEditorWindow(QDialog):
 
     @Slot()
     def rename_selected_layout_definition(self):
-        layout_name, ok = QInputDialog.getText(self, "Rename Layout", "Enter name the name you want to change the layout to:")
-        if ok and layout_name:
-            layout_name = layout_name.strip()
-            if not layout_name:
+        if not self._currently_editing_layout_name:
+            QMessageBox.information(self, "No Layout Selected", "Please select a layout to rename.")
+            return
+
+        old_layout_name = self._currently_editing_layout_name
+        new_layout_name, ok = QInputDialog.getText(self, "Rename Layout",
+                                                   f"Enter the new name for layout '{old_layout_name}':",
+                                                   QLineEdit.EchoMode.Normal, # QLineEdit.Normal for PySide2
+                                                   old_layout_name) # Pre-fill with current name
+
+        if ok and new_layout_name:
+            new_layout_name = new_layout_name.strip()
+            if not new_layout_name:
                 QMessageBox.warning(self, "Invalid Name", "Layout name cannot be empty.")
                 return
-            if layout_name in self.layout_definitions:
-                QMessageBox.warning(self, "Name Exists", f"A layout named '{layout_name}' already exists.")
+
+            if new_layout_name == old_layout_name:
+                # Name hasn't changed, do nothing
                 return
-            #logic to change the name of the layout goes here
-            print("waiting to implament name change :",layout_name)
-        
-        elif ok and not layout_name.strip():
+
+            if new_layout_name in self.layout_definitions:
+                QMessageBox.warning(self, "Name Exists", f"A layout named '{new_layout_name}' already exists.")
+                return
+
+            # Perform the rename
+            layout_properties = self.layout_definitions.pop(old_layout_name)
+            self.layout_definitions[new_layout_name] = layout_properties
+            self._currently_editing_layout_name = new_layout_name # Update the tracked name
+            self._populate_layout_selector() # Refresh the combo box
+            self.layout_selector_combo.setCurrentText(new_layout_name) # Select the new name, triggers on_layout_selected
+            print(f"DEBUG: Renamed layout from '{old_layout_name}' to '{new_layout_name}'")
+        elif ok and not new_layout_name.strip(): # User pressed OK but the input was empty or just whitespace
             QMessageBox.warning(self, "Invalid Name", "Layout name cannot be empty.")
 
     @Slot(str)

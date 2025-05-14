@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QWidget, QDialogButtonBox, QTabWidget, QLabel,
-    QComboBox, QPushButton, QApplication, QMessageBox
+    QComboBox, QPushButton, QApplication, QMessageBox, QGroupBox
 )
 from PySide6.QtCore import QDir, QFileInfo, Slot, Signal
 from PySide6.QtGui import QScreen
@@ -45,6 +45,7 @@ class SettingsWindow(QDialog):
         self.label_render_fonts: QLabel = self.ui.findChild(QLabel, "label_render_fonts")
         self.label_render_layout: QLabel = self.ui.findChild(QLabel, "label_render_layout")
         self.label_render_draw: QLabel = self.ui.findChild(QLabel, "label_render_draw")
+        self.benchmarking_group_box: QGroupBox = self.ui.findChild(QGroupBox, "benchmarkingGroupBox")
 
         # Access Output Monitor controls from the loaded UI (General Tab)
         self.monitor_selection_combo: QComboBox = self.ui.findChild(QComboBox, "monitorSelectionComboBox")
@@ -69,6 +70,12 @@ class SettingsWindow(QDialog):
         if self.monitor_selection_combo:
             self.monitor_selection_combo.currentIndexChanged.connect(self._handle_monitor_selection_changed)
         self.populate_monitor_combo() # Initial population
+
+        # Connect the toggled signal for the benchmarking group box
+        if self.benchmarking_group_box and self.benchmarking_group_box.isCheckable():
+            self.benchmarking_group_box.toggled.connect(self._on_benchmarking_group_toggled)
+            # Set initial visibility of contents based on the checked state from UI
+            self._on_benchmarking_group_toggled(self.benchmarking_group_box.isChecked())
 
     def update_benchmarking_display(self, data: dict):
         """Updates the labels in the benchmarking section with provided data."""
@@ -146,3 +153,18 @@ class SettingsWindow(QDialog):
             self._current_output_screen = selected_screen
             self.output_monitor_changed.emit(selected_screen)
             print(f"SettingsWindow: Output monitor changed to {selected_screen.name()}")
+
+    @Slot(bool)
+    def _on_benchmarking_group_toggled(self, checked: bool):
+        """Shows or hides the contents of the benchmarking group box."""
+        if not self.benchmarking_group_box:
+            return
+        
+        # Iterate over the children of the group box's layout and set their visibility
+        # The group box's layout is named "benchmarkingLayout" in the UI
+        layout = self.benchmarking_group_box.layout()
+        if layout:
+            for i in range(layout.count()):
+                widget_item = layout.itemAt(i).widget()
+                if widget_item: # Check if it's a widget (not a spacer)
+                    widget_item.setVisible(checked)

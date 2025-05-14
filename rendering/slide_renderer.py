@@ -26,11 +26,16 @@ except ImportError:
 class SlideRenderer:
     """Renders SlideData onto a QPixmap."""
 
-    def __init__(self):
-        # Potential future optimizations: cache fonts, etc.
-        pass
+    def __init__(self, app_settings=None):
+        """
+        Initializes the SlideRenderer.
+        app_settings: Optional application settings object to control features
+                      like checkerboard for transparency.
+        """
+        self.app_settings = app_settings
+        self._init_checkerboard_style()
 
-    def render_slide(self, slide_data: SlideData, width: int, height: int) -> tuple[QPixmap, bool, dict]:
+    def render_slide(self, slide_data: SlideData, width: int, height: int, base_pixmap: QPixmap = None, is_final_output: bool = False) -> tuple[QPixmap, bool, dict]:
         """
         Renders the given slide data onto a QPixmap of the specified dimensions.
 
@@ -38,6 +43,10 @@ class SlideRenderer:
             slide_data: An instance of SlideData containing the content and style.
             width: The target width of the output pixmap.
             height: The target height of the output pixmap.
+            base_pixmap: Optional. If provided, this pixmap is used as the base layer.
+                         The current slide's content will be rendered on top of it.
+            is_final_output: bool. True if this render is for the live output window,
+                                  False for previews (e.g., slide buttons).
 
         Returns:
             A tuple containing:
@@ -67,8 +76,25 @@ class SlideRenderer:
             # Return True for font_error_occurred to signal a problem
             return pixmap, True, benchmark_data
 
-        # Create the target pixmap
-        pixmap = QPixmap(width, height)
+        is_on_base = False
+        if base_pixmap and not base_pixmap.isNull() and base_pixmap.size() == QSize(width, height):
+            pixmap = base_pixmap.copy() # Work on a copy to not alter the original base
+            is_on_base = True
+            # If using a base, we don't fill it with transparent initially,
+            # as we want to preserve the base_pixmap's content.
+            # The slide's own background (if any) will be drawn over this.
+        else:
+            if base_pixmap: # Log if provided but invalid (e.g., wrong size)
+                logging.warning(
+                    f"Provided base_pixmap for slide {slide_id_for_log} is invalid "
+                    f"(isNull: {base_pixmap.isNull()}, size: {base_pixmap.size()} vs target: {width}x{height}). "
+                    "Creating new pixmap instead."
+                )
+            pixmap = QPixmap(width, height)
+            # Initialize new pixmap to be fully transparent.
+            # This is the base if no opaque background is specified or drawn for this slide.
+            pixmap.fill(Qt.GlobalColor.transparent)
+            
         if pixmap.isNull():
             logging.error(f"Failed to create QPixmap of size {width}x{height} for slide_data: {slide_data.id}") # Line 94
             error_pixmap = QPixmap(1, 1) # Line 95
@@ -76,47 +102,23 @@ class SlideRenderer:
             benchmark_data["total_render"] = time.perf_counter() - total_render_start_time # Line 97
             return error_pixmap, True, benchmark_data # Line 98
 
-        pixmap.fill(QColor(slide_data.background_color))
-
-        # --- Draw Background Image (if specified and valid) ---
-        bg_image_load_start_time = time.perf_counter()
-        bg_pixmap = QPixmap()
-        if slide_data.background_image_path and os.path.exists(slide_data.background_image_path):
-            loaded_bg = QPixmap(slide_data.background_image_path)
-            if not loaded_bg.isNull():
-                bg_pixmap = loaded_bg
-            else:
-                logging.warning(f"Could not load background image: {slide_data.background_image_path} for slide ID {slide_id_for_log}")
-        bg_image_load_duration = time.perf_counter() - bg_image_load_start_time
-        time_spent_on_images += bg_image_load_duration
-        # Only print if path was provided, to avoid noise for slides without images
-        # if slide_data.background_image_path: # This if is no longer needed if the print is the only content
-        #     # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - BG Image Load ('{slide_data.background_image_path}'): {bg_image_load_duration:.4f}s")
+        
             
         # --- Prepare Painter ---
         painter = QPainter(pixmap)
         if not painter.isActive():
             logging.error(f"QPainter could not be activated on pixmap for slide_data: {slide_data.id}")
             painter.end() 
-            error_pixmap = QPixmap(1, 1)
-            error_pixmap.fill(Qt.GlobalColor.red)
+            error_pixmap = QPixmap(1, 1); error_pixmap.fill(Qt.GlobalColor.red)
             benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
             return error_pixmap, True, benchmark_data
 
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self._setup_painter_hints(painter)
 
-        # Draw background image if loaded
-        bg_image_draw_start_time = time.perf_counter()
-        if not bg_pixmap.isNull():
-            # Scale the image to cover the entire pixmap area
-            painter.drawPixmap(pixmap.rect(), bg_pixmap)
-        bg_image_draw_duration = time.perf_counter() - bg_image_draw_start_time
-        time_spent_on_images += bg_image_draw_duration
-        # if not bg_pixmap.isNull(): # Only print if an image was actually drawn
-        #     # print(f"[BENCHMARK_RENDERER_DETAIL] Slide ID {slide_id_for_log} - BG Image Draw: {bg_image_draw_duration:.4f}s")
+        # --- Draw Background (Image, Color, or Checkerboard) ---
+        time_spent_on_images += self._render_background(painter, slide_data, pixmap.rect(), slide_id_for_log, is_on_base, is_final_output)
 
+        
         # --- Apply Template Settings ---
         # Merge slide-specific template settings with defaults if necessary
         # For simplicity now, assume slide_data.template_settings is complete
@@ -280,6 +282,71 @@ class SlideRenderer:
         # print(f"[BENCHMARK_RENDERER_SUMMARY] Slide ID {slide_id_for_log} - Total Render: {benchmark_data['total_render']:.4f}s (Images: {benchmark_data['images']:.4f}s, Fonts: {benchmark_data['fonts']:.4f}s, Layout: {benchmark_data['layout']:.4f}s, Draw: {benchmark_data['draw']:.4f}s)")
 
         return pixmap, font_error_occurred, benchmark_data
+    def _init_checkerboard_style(self):
+        """Initializes checkerboard style attributes."""
+        self.checker_color1 = QColor(220, 220, 220)  # Light gray
+        self.checker_color2 = QColor(200, 200, 200)  # Slightly darker gray
+        self.checker_size = 10  # Size of each square in pixels
+
+    def _setup_painter_hints(self, painter: QPainter):
+        """Sets common render hints for the painter."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+    def _draw_checkerboard_pattern(self, painter: QPainter, target_rect: QRect):
+        """Draws a checkerboard pattern within the target_rect."""
+        painter.save()
+        painter.setPen(Qt.NoPen)
+        for y_start in range(target_rect.top(), target_rect.bottom(), self.checker_size):
+            for x_start in range(target_rect.left(), target_rect.right(), self.checker_size):
+                is_even_row = ((y_start - target_rect.top()) // self.checker_size) % 2 == 0
+                is_even_col = ((x_start - target_rect.left()) // self.checker_size) % 2 == 0
+                current_color = self.checker_color1 if is_even_row == is_even_col else self.checker_color2
+                cell_width = min(self.checker_size, target_rect.right() - x_start + 1)
+                cell_height = min(self.checker_size, target_rect.bottom() - y_start + 1)
+                painter.fillRect(x_start, y_start, cell_width, cell_height, current_color)
+        painter.restore()
+
+    def _render_background(self, painter: QPainter, slide_data: SlideData, target_rect: QRect, slide_id_for_log: str, is_on_base: bool, is_final_output: bool) -> float:
+        """Renders the background (image, color, or checkerboard) and returns time spent on image operations."""
+        time_spent_on_images_local = 0.0
+
+        # 1. Try Background Image first
+        bg_image_load_start_time = time.perf_counter()
+        bg_pixmap_loaded = None
+        if slide_data.background_image_path and os.path.exists(slide_data.background_image_path):
+            loaded_bg = QPixmap(slide_data.background_image_path)
+            if not loaded_bg.isNull():
+                bg_pixmap_loaded = loaded_bg
+            else:
+                logging.warning(f"Could not load background image: {slide_data.background_image_path} for slide ID {slide_id_for_log}")
+        time_spent_on_images_local += (time.perf_counter() - bg_image_load_start_time)
+
+        if bg_pixmap_loaded:
+            bg_image_draw_start_time = time.perf_counter()
+            painter.drawPixmap(target_rect, bg_pixmap_loaded)
+            time_spent_on_images_local += (time.perf_counter() - bg_image_draw_start_time)
+        else:
+            # No valid background image, so use background_color or checkerboard
+            bg_qcolor = QColor(slide_data.background_color)
+            if not bg_qcolor.isValid():
+                logging.warning(f"Invalid background_color string: '{slide_data.background_color}' for slide ID {slide_id_for_log}. Defaulting to transparent.")
+                bg_qcolor = QColor(Qt.GlobalColor.transparent)
+
+            if bg_qcolor.alpha() == 0:  # Fully transparent color
+                # Only show checkerboard if this slide is standalone (not on a base)
+                # and the setting is enabled, AND it's not for final output.
+                show_checkerboard_setting = True # Default if no app_settings
+                if self.app_settings and hasattr(self.app_settings, 'get_setting'):
+                    show_checkerboard_setting = self.app_settings.get_setting("display_checkerboard_for_transparency", True)
+                
+                if show_checkerboard_setting and not is_on_base and not is_final_output:
+                    self._draw_checkerboard_pattern(painter, target_rect)
+                # If is_on_base is True, or show_checkerboard_setting is False, do nothing, leaving the underlying pixmap visible.
+            else:  # Opaque or semi-transparent color
+                painter.fillRect(target_rect, bg_qcolor)
+        return time_spent_on_images_local
 
 
 
@@ -296,6 +363,7 @@ if __name__ == "__main__":
     # --- Create Sample Slide Data ---
     slides_to_test = []
     slides_to_test.append(SlideData(lyrics="Just simple lyrics.\nSecond line."))
+    slides_to_test.append(SlideData(lyrics="Transparent BG (Checkerboard)", background_color="#00000000")) # Alpha = 00
     slides_to_test.append(SlideData(lyrics="Lyrics with Red Background", background_color="#800000"))
     # Use a real path to an image if you have one, otherwise this will just show the background color
     slides_to_test.append(SlideData(lyrics="Lyrics with Background Image", background_image_path="c:/Users/Logan/Documents/Plucky/Plucky/resources/default_background.png"))
@@ -310,9 +378,16 @@ if __name__ == "__main__":
     all_caps_template = DEFAULT_TEMPLATE.copy()
     all_caps_template["font"]["force_all_caps"] = True
     slides_to_test.append(SlideData(lyrics="This should be all caps", template_settings=all_caps_template))
-
+    
+    # Mock AppSettings for testing checkerboard
+    class MockAppSettings:
+        def get_setting(self, key, default_value):
+            if key == "display_checkerboard_for_transparency":
+                return True # Test with checkerboard enabled
+            return default_value
+    
     # --- Create Renderer ---
-    renderer = SlideRenderer()
+    renderer = SlideRenderer(app_settings=MockAppSettings())
 
     # --- Render and Save Each Slide ---
     # Get the directory where this script is located
@@ -322,14 +397,50 @@ if __name__ == "__main__":
     os.makedirs(output_dir, exist_ok=True)
 
     for i, slide in enumerate(slides_to_test):
-        print(f"Rendering slide {i+1}...")
-        rendered_pixmap, _, _ = renderer.render_slide(slide, TARGET_WIDTH, TARGET_HEIGHT) # Ignore font error and benchmarks for this test
+        print(f"Rendering standalone slide {i+1}...")
+        rendered_pixmap, _, _ = renderer.render_slide(slide, TARGET_WIDTH, TARGET_HEIGHT, is_final_output=False) # For preview, show checkerboard
+
 
         output_filename = os.path.join(output_dir, f"test_render_{i+1}.png")
         if rendered_pixmap.save(output_filename):
             print(f"Saved: {output_filename}")
         else:
             print(f"Error saving: {output_filename}")
+    
+    print("\n--- Testing Layered Rendering ---")
+    # Create a base background slide (e.g., with an image)
+    base_bg_slide_data = SlideData(lyrics="", background_image_path="c:/Users/Logan/Documents/Plucky/Plucky/resources/default_background.png")
+    if not os.path.exists(base_bg_slide_data.background_image_path):
+        print(f"WARNING: Base background image not found: {base_bg_slide_data.background_image_path}. Layered test might not show image.")
+        # Fallback to a color if image not found for test
+        base_bg_slide_data = SlideData(lyrics="", background_color="#3333DD") # A noticeable color
+
+    print("Rendering base background layer...")
+    base_bg_pixmap, _, _ = renderer.render_slide(base_bg_slide_data, TARGET_WIDTH, TARGET_HEIGHT, is_final_output=True) # This is for a live output base
+    base_bg_pixmap.save(os.path.join(output_dir, "test_render_LAYER_0_base_background.png"))
+    print("Saved: test_render_LAYER_0_base_background.png")
+
+    # Create a lyric slide with a fully transparent background
+    lyric_slide_overlay_data = SlideData(
+        lyrics="Lyrics Overlaid on Image\n(Transparent Slide Background)",
+        background_color="#00000000", # Fully transparent
+        template_settings={"color": "#FFFF00", "font": {"size": 70, "family": "Arial"}, "alignment": "center"}
+    )
+    print("Rendering lyric slide ON TOP of base background...")
+    layered_pixmap, _, _ = renderer.render_slide(lyric_slide_overlay_data, TARGET_WIDTH, TARGET_HEIGHT, base_pixmap=base_bg_pixmap, is_final_output=True)
+    layered_pixmap.save(os.path.join(output_dir, "test_render_LAYER_1_lyrics_on_base.png"))
+    print("Saved: test_render_LAYER_1_lyrics_on_base.png")
+
+    # Create another lyric slide, this time with a semi-transparent background of its own
+    semi_transparent_overlay_data = SlideData(
+        lyrics="Text on Semi-Transparent Bar",
+        background_color="#80000000", # Semi-transparent black
+        template_settings={"color": "#FFFFFF", "font": {"size": 60, "family": "Verdana"}, "alignment": "center", "position": {"y": "50%"}}
+    )
+    print("Rendering semi-transparent lyric slide ON TOP of base background...")
+    layered_semi_pixmap, _, _ = renderer.render_slide(semi_transparent_overlay_data, TARGET_WIDTH, TARGET_HEIGHT, base_pixmap=base_bg_pixmap, is_final_output=True)
+    layered_semi_pixmap.save(os.path.join(output_dir, "test_render_LAYER_2_semi_transparent_on_base.png"))
+    print("Saved: test_render_LAYER_2_semi_transparent_on_base.png")
 
     print("\nTest rendering complete. Check the 'test_renders' directory.")
     # Note: QApplication doesn't need exec() here as we're not showing windows.

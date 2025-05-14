@@ -100,86 +100,108 @@
           </widget>
          </item>
          <item>
-          <widget>
-            <layout class="QHBoxLayout" name="layout_textbox_buttons_layout">
+          <widget class="QWidget"> <!-- New anonymous container QWidget for the right panel -->
+           <layout class="QVBoxLayout"> <!-- New anonymous QVBoxLayout for the container -->
             <item>
-              <widget class="QPushButton" name="add_textbox_to_layout_button">
-              <property name="text">
-                <string>Add Text Box</string>
-              </property>
-              </widget>
+              <layout class="QHBoxLayout" name="layout_textbox_buttons_layout">
+               <item>
+                <widget class="QPushButton" name="add_textbox_to_layout_button">
+                 <property name="text">
+                  <string>Add Text Box</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="remove_selected_textbox_button">
+                 <property name="text">
+                  <string>Remove Selected Text Box</string>
+                 </property>
+                </widget>
+               </item> <!-- This was incorrectly </widget> before, should be </item> -->
+              </layout>
             </item>
             <item>
-              <widget class="QPushButton" name="remove_selected_textbox_button">
-              <property name="text">
-                <string>Remove Selected Text Box</string>
+             <widget class="QGroupBox" name="textbox_properties_group">
+              <property name="title">
+               <string>Selected Text Box Properties</string>
               </property>
-              </widget>
-            </item> <!-- This was incorrectly </widget> before, should be </item> -->
-            </layout> <!-- This was missing its closing tag -->
-          </widget>
-          <widget class="QGroupBox" name="textbox_properties_group">
-           <property name="title">
-            <string>Selected Text Box Properties</string>
-           </property>
-           <property name="enabled">
-            <bool>false</bool> <!-- Initially disabled -->
-           </property>
-           <layout class="QFormLayout" name="textbox_properties_form_layout">
-            <item row="0" column="0">
-             <widget class="QLabel" name="textbox_id_label">
-              <property name="text">
-               <string>ID/Name:</string>
+              <property name="enabled">
+               <bool>false</bool> <!-- Initially disabled -->
               </property>
+              <layout class="QFormLayout" name="textbox_properties_form_layout">
+               <item row="0" column="0">
+                <widget class="QLabel" name="textbox_id_label">
+                 <property name="text">
+                  <string>ID/Name:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="1">
+                <widget class="QLineEdit" name="selected_textbox_id_edit"/>
+               </item>
+               <item row="1" column="0">
+                <widget class="QLabel" name="textbox_style_label">
+                 <property name="text">
+                  <string>Style:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <widget class="QComboBox" name="selected_textbox_style_combo"/>
+               </item>
+               <item row="2" column="0">
+                <widget class="QLabel" name="label_halign">
+                 <property name="text">
+                  <string>H. Align:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="1">
+                <widget class="QComboBox" name="selected_textbox_halign_combo"/>
+               </item>
+               <item row="3" column="0"> <!-- New row for V. Align -->
+                <widget class="QLabel" name="label_valign">
+                 <property name="text">
+                  <string>V. Align:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1"> <!-- New row for V. Align -->
+                <widget class="QComboBox" name="selected_textbox_valign_combo"/>
+               </item>
+               <item row="4" column="0"> <!-- Spacer moved down -->
+                <spacer name="textbox_properties_spacer">
+                 <property name="orientation">
+                  <enum>Qt::Vertical</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>40</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+              </layout>
              </widget>
             </item>
-            <item row="0" column="1">
-             <widget class="QLineEdit" name="selected_textbox_id_edit"/>
-            </item>
-            <item row="1" column="0">
-             <widget class="QLabel" name="textbox_style_label">
-              <property name="text">
-               <string>Style:</string>
-              </property>
-             </widget>
-            </item>
-            <item row="1" column="1">
-             <widget class="QComboBox" name="selected_textbox_style_combo"/>
-            </item>
-            <item row="2" column="0">
-             <widget class="QLabel" name="label_halign">
-              <property name="text">
-               <string>H. Align:</string>
-              </property>
-             </widget>
-            </item>
-            <item row="2" column="1">
-             <widget class="QComboBox" name="selected_textbox_halign_combo"/>
-            </item>
-            <item row="3" column="0"> <!-- New row for V. Align -->
-             <widget class="QLabel" name="label_valign">
-              <property name="text">
-               <string>V. Align:</string>
-              </property>
-             </widget>
-            </item>
-            <item row="3" column="1"> <!-- New row for V. Align -->
-             <widget class="QComboBox" name="selected_textbox_valign_combo"/>
-            </item>
-            <item row="4" column="0"> <!-- Spacer moved down -->
-             <spacer name="textbox_properties_spacer">
+            <item>
+             <spacer name="right_panel_vertical_spacer">
               <property name="orientation">
                <enum>Qt::Vertical</enum>
+              </property>
+              <property name="sizeType">
+               <enum>QSizePolicy::Expanding</enum>
               </property>
               <property name="sizeHint" stdset="0">
                <size>
                 <width>20</width>
-                <height>40</height>
+                <height>10</height> <!-- Height will expand -->
                </size>
               </property>
              </spacer>
             </item>
-           </layout>
+           </layout> <!-- Closes the new QVBoxLayout -->
           </widget>
          </item>
         </layout>
