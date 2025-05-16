@@ -35,6 +35,7 @@ try:
     from core.slide_drag_drop_handler import SlideDragDropHandler # Import new DND handler
     from core.constants import PLUCKY_SLIDE_MIME_TYPE, BASE_PREVIEW_HEIGHT # Import from new constants file
     from dialogs.edit_slide_content_dialog import EditSlideContentDialog # New Dialog
+    from core.slide_edit_handler import SlideEditHandler # Import the new handler
     # --- Undo/Redo Command Imports ---
     from commands.slide_commands import (
         ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand
@@ -57,6 +58,7 @@ except ImportError:
     from core.slide_drag_drop_handler import SlideDragDropHandler # Import new DND handler
     from core.constants import PLUCKY_SLIDE_MIME_TYPE, BASE_PREVIEW_HEIGHT # Import from new constants file
     from dialogs.edit_slide_content_dialog import EditSlideContentDialog # New Dialog
+    from core.slide_edit_handler import SlideEditHandler # Import the new handler
     # --- Undo/Redo Command Imports ---
     from commands.slide_commands import (
         ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand
@@ -124,6 +126,9 @@ class MainWindow(QMainWindow):
         self.presentation_manager.presentation_changed.connect(self.update_slide_display_and_selection)
         self.presentation_manager.slide_visual_property_changed.connect(self._handle_slide_visual_property_change) # New connection
         self.presentation_manager.error_occurred.connect(self.show_error_message)
+
+        # Instantiate the SlideEditHandler
+        self.slide_edit_handler = SlideEditHandler(self.presentation_manager, self)
         self.button_scale_factor = 1.0 # Default scale
         self._selected_slide_indices: Set[int] = set() # New: Set to store indices of selected slides
 
@@ -678,7 +683,7 @@ class MainWindow(QMainWindow):
             button.setToolTip(f"Slide {index + 1}: {slide_data.lyrics.splitlines()[0] if slide_data.lyrics else 'Empty'}")
             button.toggle_selection_requested.connect(self._handle_toggle_selection) # Connect new signal
             button.slide_selected.connect(self._handle_manual_slide_selection) # Connect to our new manual handler
-            button.edit_requested.connect(self.handle_edit_slide_requested)
+            button.edit_requested.connect(self.slide_edit_handler.handle_edit_slide_requested) # Connect to the handler
             button.delete_requested.connect(self.handle_delete_slide_requested)
 
             # For background slides, the "Edit Lyrics" might be less relevant,
@@ -828,8 +833,15 @@ class MainWindow(QMainWindow):
         print(f"MainWindow: _handle_manual_slide_selection for slide_index {selected_slide_index}")
         
         # Clear any existing multi-selection
-        self._selected_slide_indices.clear()
-        self._selected_slide_indices.add(selected_slide_index)
+        self._selected_slide_indices.clear() # Clear any multi-selection
+        self._selected_slide_indices.add(selected_slide_index) # Add the clicked slide
+        # Determine if actual changes were made
+        # This is a bit more complex now. We need to compare dictionaries.
+        # A simple way: check if the new dictionary is different from the old one.
+        # Or, if the dialog used the "legacy_lyrics" key, compare that.
+        
+        content_changed = False
+        new_legacy_lyrics_from_dialog: Optional[str] = None
         self.current_slide_index = selected_slide_index # Update our tracking variable
 
         # Update the visual state of all buttons
@@ -854,56 +866,7 @@ class MainWindow(QMainWindow):
                 # Pass the overlay_label from SlideData to the button
                 button.set_center_overlay_label(slide_data.overlay_label, emit_signal_on_change=False)
 
-    @Slot(int)
-    def handle_edit_slide_requested(self, slide_index: int):
-        slides = self.presentation_manager.get_slides()
-        if not (0 <= slide_index < len(slides)):
-            self.show_error_message(f"Cannot edit slide: Index {slide_index} is invalid.")
-            return
-
-        slide_data = slides[slide_index]
-
-        # Get current text content from template_settings or fallback to legacy lyrics
-        old_text_content: dict[str, str] = {}
-        old_legacy_lyrics: Optional[str] = None
-
-        if slide_data.template_settings and isinstance(slide_data.template_settings.get("text_content"), dict):
-            old_text_content = copy.deepcopy(slide_data.template_settings["text_content"])
-        
-        # The dialog will handle the case where text_boxes are not defined and use slide_data.lyrics
-        # So, we also need to capture the old legacy lyrics for the command.
-        old_legacy_lyrics = slide_data.lyrics
-
-        dialog = EditSlideContentDialog(slide_data, self)
-        if dialog.exec(): # QDialog.DialogCode.Accepted
-            new_text_content_from_dialog = dialog.get_updated_content()
-
-            # Determine if actual changes were made
-            # This is a bit more complex now. We need to compare dictionaries.
-            # A simple way: check if the new dictionary is different from the old one.
-            # Or, if the dialog used the "legacy_lyrics" key, compare that.
-            
-            content_changed = False
-            new_legacy_lyrics_from_dialog: Optional[str] = None
-
-            if "legacy_lyrics" in new_text_content_from_dialog: # Dialog was in legacy mode
-                new_legacy_lyrics_from_dialog = new_text_content_from_dialog["legacy_lyrics"]
-                if new_legacy_lyrics_from_dialog != old_legacy_lyrics:
-                    content_changed = True
-                # For the command, pass only the legacy part if that's what was edited
-                new_text_content_for_command = {"legacy_lyrics": new_legacy_lyrics_from_dialog}
-            else: # Dialog was in template mode
-                if new_text_content_from_dialog != old_text_content:
-                    content_changed = True
-                new_text_content_for_command = new_text_content_from_dialog
-
-            if not content_changed:
-                return # No actual changes made
-
-            cmd = EditLyricsCommand(self.presentation_manager, slide_index,
-                                    old_text_content, new_text_content_for_command,
-                                    old_legacy_lyrics, new_legacy_lyrics_from_dialog)
-            self.presentation_manager.do_command(cmd)
+    # The handle_edit_slide_requested method has been moved to SlideEditHandler
 
     @Slot(int)
     def handle_delete_slide_requested(self, slide_index: int):
