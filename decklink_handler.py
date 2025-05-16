@@ -24,8 +24,8 @@ def load_dll():
     project_root = get_project_root()
     
     possible_dll_paths = [
-        os.path.join(project_root, "DLLs", DLL_NAME),
-        os.path.join(project_root, DLL_NAME),
+        os.path.join(project_root, DLL_NAME), # Primary location is now the project root
+        # os.path.join(project_root, "DLLs", DLL_NAME), # Old location, removed as per new structure
         # os.path.join(project_root, "x64", "Debug", DLL_NAME), # If built there
         # os.path.join(project_root, "x64", "Release", DLL_NAME), # If built there
     ]
