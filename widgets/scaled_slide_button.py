@@ -1,14 +1,15 @@
 import sys
-print(f"DEBUG: scaled_slide_button.py TOP LEVEL, __name__ is {__name__}") # DIAGNOSTIC
 import os
 from PySide6.QtWidgets import (  # type: ignore
     QApplication, QWidget, QSizePolicy, QHBoxLayout, QVBoxLayout, QButtonGroup, QStyle, QMenu, QStyleOption
 )
 from PySide6.QtGui import (
-    QPixmap, QPainter, QColor, QFont, QFontMetrics, QPalette, QPen, QMouseEvent, QContextMenuEvent, QKeyEvent
+    QPixmap, QPainter, QColor, QFont, QFontMetrics, QPalette, QPen, QMouseEvent, QContextMenuEvent, QKeyEvent, QDrag, QRegion
+
+
 )
 from PySide6.QtCore import (
-    Qt, QSize, Signal, Slot, QRectF, QPoint, QEvent
+    Qt, QSize, Signal, Slot, QRectF, QPoint, QEvent, QMimeData, QByteArray
 )
 from typing import Optional, List, cast
 
@@ -25,21 +26,29 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
     slide_selected = Signal(int) # Emits the slide_id (which is its index in MainWindow)
     edit_requested = Signal(int) # Emits slide_id when edit is requested
     delete_requested = Signal(int) # Emits slide_id when delete is requested
-    next_slide_requested_from_menu = Signal(int) # Emits current slide_id
-    previous_slide_requested_from_menu = Signal(int) # Emits current slide_id
+    toggle_selection_requested = Signal(int) # New: Emits slide_id when Ctrl+Click toggles selection
+    """next_slide_requested_from_menu = Signal(int) # Emits current slide_id
+    previous_slide_requested_from_menu = Signal(int) # Emits current slide_id"""
     apply_template_to_slide_requested = Signal(int, str) # Emits slide_id, template_name
     center_overlay_label_changed = Signal(int, str) # Emits slide_id, new_label_text
-    def __init__(self, slide_id: int, parent=None):
+    banner_color_change_requested = Signal(int, QColor) # Emits slide_id, new_color (None for default)
+
+    # New signal for inserting slide from layout
+    insert_slide_from_layout_requested = Signal(int, str) # slide_id (to insert after), layout_name
+    def __init__(self, slide_id: int, plucky_slide_mime_type: str, parent=None): # Added plucky_slide_mime_type
         super().__init__(parent)
         self._pixmap_to_display = QPixmap() # Stores the pixmap (already scaled by MainWindow)
         self._slide_id = slide_id
         self._center_overlay_label: Optional[str] = "" # New: For the prominent centered label
         self._available_template_names: List[str] = [] # Will be set by MainWindow
+        self._is_background_slide: bool = False # New property
 
         self._banner_height = 25
         self._is_checked = False
         self._is_hovered = False 
         self._is_pressed = False 
+        self._drag_start_position: Optional[QPoint] = None # For drag initiation
+        self.plucky_slide_mime_type = plucky_slide_mime_type # Store the MIME type
 
         self.banner_widget = InfoBannerWidget(banner_height=self._banner_height, parent=self)
 
@@ -114,6 +123,8 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
     def set_icon_state(self, icon_name: str, visible: bool):
         """Sets the icon visibility for the banner widget."""
         self.banner_widget.set_icon_state(icon_name, visible)
+        self.banner_widget.update() # Explicitly tell the banner to repaint
+        self.update() # Also tell the ScaledSlideButton to repaint
 
     def set_center_overlay_label(self, text: Optional[str], emit_signal_on_change: bool = True):
         new_label_value = text if text is not None else ""
@@ -122,7 +133,11 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
             self._center_overlay_label = new_label_value
             if emit_signal_on_change:
                 self.center_overlay_label_changed.emit(self._slide_id, self._center_overlay_label)
-        self.banner_widget.set_section_label(new_label_value) # Pass to banner for display
+
+        # Only set the section_label on the banner if this is NOT a background slide.
+        # For background slides, the banner's primary label is "BG", set via set_info.
+        if not self._is_background_slide:
+            self.banner_widget.set_section_label(new_label_value) # Pass to banner for display
         self.update()
 
     def set_banner_color(self, color: Optional[QColor]):
@@ -130,6 +145,11 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         self.banner_widget.set_custom_color(color)
 
     def sizeHint(self) -> QSize:
+        # If this button is for a background slide, it might not have a pixmap from lyrics.
+        # Ensure we use the base preview dimensions if _pixmap_to_display is small/default.
+        # This logic might need refinement based on how background slide previews are generated.
+        # For now, assume _pixmap_to_display is correctly sized by MainWindow.
+
         content_width = self._pixmap_to_display.width() if not self._pixmap_to_display.isNull() else BASE_TEST_PREVIEW_CONTENT_WIDTH
         content_height = self._pixmap_to_display.height() if not self._pixmap_to_display.isNull() else BASE_TEST_PREVIEW_CONTENT_HEIGHT
         # The banner widget has a fixed height, so we add that.
@@ -208,18 +228,74 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             self._is_pressed = True
+            self._drag_start_position = event.pos() # Store position for drag detection
             self.update()
-            event.accept()
+            # Don't accept yet, mouseMoveEvent might start a drag or mouseReleaseEvent will handle click
         else:
             super().mousePressEvent(event)
+            
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+        if self._drag_start_position is None: # Should not happen if press was captured
+            super().mouseMoveEvent(event)
+            return
 
+        # Check if drag distance exceeds threshold
+        if (event.pos() - self._drag_start_position).manhattanLength() < QApplication.startDragDistance():
+            super().mouseMoveEvent(event)
+            return
+
+        # --- Start Drag Operation ---
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        
+        # Use the stored MIME type and slide_id
+        slide_id_bytes = QByteArray(str(self._slide_id).encode('utf-8'))
+        mime_data.setData(self.plucky_slide_mime_type, slide_id_bytes)
+        
+        # Create a semi-transparent pixmap of the button itself for drag visual
+        # Ensure the pixmap captures the current look, including banner
+        preview_pixmap = QPixmap(self.size())
+        preview_pixmap.fill(Qt.GlobalColor.transparent) # Ensure transparent background for the drag pixmap
+        temp_painter = QPainter(preview_pixmap)
+        temp_painter.setOpacity(0.75) # Make it slightly transparent
+        # Render the entire widget (including children like the banner) to the pixmap
+        self.render(temp_painter, QPoint(), QRegion(), QWidget.RenderFlag.DrawChildren)
+        temp_painter.end()
+        
+        drag.setPixmap(preview_pixmap)
+        drag.setHotSpot(event.pos()) # Hotspot relative to the button's top-left
+        drag.setMimeData(mime_data)
+
+        # Execute the drag
+        # print(f"ScaledSlideButton {self._slide_id}: Starting drag exec...") # DEBUG
+        drop_action = drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction, Qt.DropAction.MoveAction) # Suggest MoveAction primarily
+
+        # Reset states after drag attempt, regardless of outcome
+        self._is_pressed = False # Ensure pressed state is cleared
+        self._drag_start_position = None # Clear drag start position
+        self.update() # Repaint to clear pressed state visual
+
+        # if drop_action == Qt.DropAction.MoveAction:
+        #     print(f"ScaledSlideButton {self._slide_id}: Drag resulted in MoveAction.") # DEBUG
+        # else:
+        #     print(f"ScaledSlideButton {self._slide_id}: Drag cancelled or resulted in NoAction/CopyAction.") # DEBUG
+
+            
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton and self._is_pressed:
-            self._is_pressed = False
-            if self.rect().contains(event.pos()): # Check if release is within bounds
-                current_checked_state = self.isChecked()
-                self.setChecked(not current_checked_state) 
-                self.slide_selected.emit(self._slide_id) 
+            # If _drag_start_position is still set, it means a drag didn't initiate (it was a click)
+            if self._drag_start_position is not None and \
+               (event.pos() - self._drag_start_position).manhattanLength() < QApplication.startDragDistance():
+                if self.rect().contains(event.pos()): # Click was within the button
+                    if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                        self.toggle_selection_requested.emit(self._slide_id)
+                    else:
+                        self.slide_selected.emit(self._slide_id)
+            self._is_pressed = False # Reset pressed state
+            self._drag_start_position = None # Reset drag start position
             self.update()
             event.accept()
         else:
@@ -236,10 +312,39 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         super().leaveEvent(event)
 
     def contextMenuEvent(self, event: QContextMenuEvent): # Changed from QEvent to QContextMenuEvent
+        # Check if this button is part of a multi-selection
+        is_multi_selection_active = False
+        # Get the top-level window (MainWindow) and check if it has the method
+        main_window = self.window()
+        if main_window and hasattr(main_window, 'get_selected_slide_indices'):
+            selected_indices = main_window.get_selected_slide_indices() # type: ignore
+            is_multi_selection_active = len(selected_indices) > 1 and self._slide_id in selected_indices
+
         menu = QMenu(self)
-        edit_action = menu.addAction("Edit Slide Lyrics")
+        edit_action = menu.addAction("Edit Contents")
         delete_action = menu.addAction("Delete Slide")
-        menu.addSeparator()
+        menu.addSeparator() # Separator before Template/Label/Color
+
+        # --- Insert Slide from Layout Submenu ---
+        insert_slide_submenu = menu.addMenu("Insert Slide from Layout")
+        if self._available_template_names:
+            for layout_name in self._available_template_names:
+                action = insert_slide_submenu.addAction(layout_name)
+                # Emit with self._slide_id (to insert AFTER this one) and layout_name
+                action.triggered.connect(
+                    lambda checked=False, name=layout_name: self.insert_slide_from_layout_requested.emit(self._slide_id, name)
+                )
+            insert_slide_submenu.addSeparator()
+            insert_blank_action = insert_slide_submenu.addAction("Insert Blank Slide (Default Layout)")
+            if "Default Layout" in self._available_template_names:
+                 insert_blank_action.triggered.connect(
+                    lambda: self.insert_slide_from_layout_requested.emit(self._slide_id, "Default Layout")
+                )
+            else:
+                insert_blank_action.setEnabled(False)
+                insert_blank_action.setToolTip("Default Layout template not found.")
+        else: # No layout templates available
+            insert_slide_submenu.setEnabled(False)
         
         apply_template_submenu = menu.addMenu("Apply Template")
         if self._available_template_names:
@@ -258,23 +363,35 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         label_submenu.addSeparator()
         edit_custom_label_action = label_submenu.addAction("Edit Custom Label...")
 
+        # Disable Edit and Label actions if multi-selection is active
+        if is_multi_selection_active:
+            edit_action.setEnabled(False) # Gray out "Edit Contents"
+            label_submenu.setEnabled(False) # Disable the whole label submenu
+
         menu.addSeparator()
         banner_color_submenu = menu.addMenu("Change Banner Color")
         default_color_action = banner_color_submenu.addAction("Default Color")
         custom_color_action = banner_color_submenu.addAction("Choose Custom Color...")
-        menu.addSeparator() # Separator before Next/Previous
+        """menu.addSeparator() # Separator before Next/Previous
         next_slide_action = menu.addAction("Next Slide")
-        previous_slide_action = menu.addAction("Previous Slide")
+        previous_slide_action = menu.addAction("Previous Slide")"""
+        print(f"DEBUG ScaledSlideButton: Context menu opened for slide {self._slide_id}") # DEBUG
 
         action_selected = menu.exec(event.globalPos()) # Renamed 'action' to 'action_selected'
 
         if action_selected == edit_action:
             self.edit_requested.emit(self._slide_id)
+            # Delete, Apply Template, and Change Banner Color actions will operate on the selection
+            # if multi-select is active and the right-clicked button is part of it.
+            # MainWindow will handle checking the selection state when receiving the signal.
+            print(f"DEBUG ScaledSlideButton: Context menu action selected: {action_selected}") # DEBUG
         elif action_selected == delete_action:
             self.delete_requested.emit(self._slide_id)
         elif action_selected and action_selected.parent() == apply_template_submenu:
+            # This is for applying a template to the *current* slide(s)
             chosen_template_name = action_selected.data()
-            if chosen_template_name:
+            if chosen_template_name: # Check if data is not None or empty
+                print(f"DEBUG ScaledSlideButton: Emitting apply_template_to_slide_requested for slide {self._slide_id}, template '{chosen_template_name}'") # ADD THIS DEBUG
                 self.apply_template_to_slide_requested.emit(self._slide_id, chosen_template_name)
         elif action_selected and action_selected.parent() == label_submenu:
             if action_selected == edit_custom_label_action:
@@ -285,6 +402,7 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
                 if ok:
                     self.set_center_overlay_label(new_label)
             else:
+                # This branch is disabled if is_multi_selection_active is true
                 chosen_label = action_selected.data()
                 if chosen_label == "Blank":
                     self.set_center_overlay_label("")
@@ -292,21 +410,30 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
                     self.set_center_overlay_label(chosen_label)
         elif action_selected and action_selected.parent() == banner_color_submenu:
             if action_selected == default_color_action:
-                self.banner_widget.set_custom_color(None) # Delegate to banner widget
+                # Signal MainWindow to change color for selected slides
+                self.banner_color_change_requested.emit(self._slide_id, None) # Pass clicked ID and None for default
             elif action_selected == custom_color_action:
                 from PySide6.QtWidgets import QColorDialog # type: ignore
                 initial_color = self.banner_widget._custom_banner_color if self.banner_widget._custom_banner_color else QColor("#202020")
                 color = QColorDialog.getColor(initial_color, self, "Choose Banner Color")
+                # Signal MainWindow to change color for selected slides
                 if color.isValid():
-                    self.banner_widget.set_custom_color(color) # Delegate
-        elif action_selected == next_slide_action:
+                    self.banner_color_change_requested.emit(self._slide_id, color) # Pass clicked ID and chosen color
+        # Note: The insert_slide_from_layout_requested signal is emitted directly by the action's triggered.connect
+        # in the submenu creation, so no explicit handling for it is needed here in the main menu's exec result.
+
+        """elif action_selected == next_slide_action:
             self.next_slide_requested_from_menu.emit(self._slide_id)
         elif action_selected == previous_slide_action:
-            self.previous_slide_requested_from_menu.emit(self._slide_id)
+            self.previous_slide_requested_from_menu.emit(self._slide_id)"""
 
     def set_available_templates(self, template_names: List[str]):
         self._available_template_names = template_names
         
+    def set_is_background_slide(self, is_background: bool):
+        self._is_background_slide = is_background
+        self.update() # May want to trigger a style change or icon update
+
     def keyPressEvent(self, event: QKeyEvent): # Changed QEvent to QKeyEvent
         key = event.key()
         if key == Qt.Key_Space or key == Qt.Key_Return: # Emulate button press
@@ -341,11 +468,34 @@ if __name__ == "__main__":  # pragma: no cover
     temp_painter.drawText(placeholder_pixmap_test.rect(), Qt.AlignmentFlag.AlignCenter, "Test Slide")
     temp_painter.end()
 
-    def on_slide_selected(clicked_button_id): 
-        print(f"Test: Button clicked! Slide ID: {clicked_button_id}")
+    # Simulate MainWindow's selection handling for testing
+    selected_slide_ids_test = set()
+
+    def update_button_checked_states_test():
         for btn_id, btn_widget in all_slide_buttons_in_test:
-            # In a real app, MainWindow would manage setChecked based on its current_slide_index
-            btn_widget.setChecked(btn_id == clicked_button_id)
+             btn_widget.setChecked(btn_id in selected_slide_ids_test)
+
+    def on_slide_selected_test(clicked_button_id):
+        print(f"Test: Button clicked! Slide ID: {clicked_button_id}")
+        # Simulate MainWindow clearing other selections and selecting this one
+        selected_slide_ids_test.clear()
+        selected_slide_ids_test.add(clicked_button_id)
+        update_button_checked_states_test()
+
+    def on_toggle_selection_test(clicked_button_id):
+        print(f"Test: Ctrl+Click! Slide ID: {clicked_button_id}")
+        # Simulate MainWindow toggling this button's selection
+        if clicked_button_id in selected_slide_ids_test:
+            selected_slide_ids_test.remove(clicked_button_id)
+        else:
+            selected_slide_ids_test.add(clicked_button_id)
+        update_button_checked_states_test()
+
+    # Add a dummy get_selected_slide_indices method to the window for the button's context menu (if it needs it later)
+    # For this step, it's not strictly necessary but good for future steps.
+    def get_selected_slide_indices_test():
+        return list(selected_slide_ids_test)
+    window.get_selected_slide_indices = get_selected_slide_indices_test # Monkey patch for testing
 
     for i in range(num_buttons):
         button = ScaledSlideButton(slide_id=i)
@@ -387,7 +537,8 @@ if __name__ == "__main__":  # pragma: no cover
              button.set_icon_state("error", True)
              button.set_icon_state("warning", True)
         
-        button.slide_selected.connect(on_slide_selected)
+        button.slide_selected.connect(on_slide_selected_test)
+        button.toggle_selection_requested.connect(on_toggle_selection_test) # Connect the new signal
         layout.addWidget(button)
         all_slide_buttons_in_test.append((i, button))
 

@@ -134,15 +134,19 @@ class TemplateManager(QObject):
                 print(f"TemplateManager: Falling back to 'Default Layout' for unresolved '{layout_name}'.")
                 return self.resolve_layout_template("Default Layout")
             # Ultimate fallback: empty structure
-            return {"layout_name": layout_name, "background_color": "#000000", "text_boxes": [], "text_content": {}}
+            # Ensure this fallback also doesn't force a background_color if not intended
+            return {"layout_name": layout_name, "text_boxes": [], "text_content": {}}
 
         layout_def = layout_definitions[layout_name]
         resolved_layout = {
             "layout_name": layout_name,
-            "background_color": layout_def.get("background_color", "#000000"),
             "text_boxes": [],
             "text_content": {} # This will be populated by MainWindow or lyric editor later
         }
+        
+        # Only add background_color to resolved_layout if it's explicitly in layout_def
+        if "background_color" in layout_def:
+            resolved_layout["background_color"] = layout_def.get("background_color")
 
         for tb_def in layout_def.get("text_boxes", []):
             resolved_tb = { # Start with geometry and alignment from layout

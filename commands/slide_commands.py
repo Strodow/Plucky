@@ -1,105 +1,158 @@
-from typing import Dict, Any, Optional, TYPE_CHECKING
-from commands.base_command import Command
-from data_models.slide_data import SlideData
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Dict, Any, Optional
+import copy # For deep copying dictionaries
 
 if TYPE_CHECKING:
-    from core.presentation_manager import PresentationManager # Forward declaration
+    from core.presentation_manager import PresentationManager
+    from data_models.slide_data import SlideData
+
+
+class Command(ABC):
+    """Abstract base class for commands."""
+    @abstractmethod
+    def execute(self):
+        pass
+
+
+    @abstractmethod
+    def undo(self):
+        pass
+
+
+class AddSlideCommand(Command):
+    def __init__(self, manager: 'PresentationManager', slide_data: 'SlideData', at_index: Optional[int] = None):
+        self.manager = manager
+        self.slide_data = slide_data
+        self.at_index = at_index if at_index is not None else len(manager.get_slides())
+
+    def execute(self):
+        # This command inherently changes the structure, so it should use the general signal.
+        # PresentationManager.add_slide handles this.
+        self.manager.add_slide(self.slide_data, self.at_index, _execute_command=False) # _execute_command=False to prevent double signal from PM.do_command
+
+    def undo(self):
+        # This command inherently changes the structure, so it should use the general signal.
+        # PresentationManager.remove_slide handles this.
+        self.manager.remove_slide(self.at_index, _execute_command=False)
+
+
+class DeleteSlideCommand(Command):
+    def __init__(self, manager: 'PresentationManager', slide_index: int):
+        self.manager = manager
+        self.slide_index = slide_index
+        self.deleted_slide_data: Optional['SlideData'] = None
+
+    def execute(self):
+        slides = self.manager.get_slides()
+        if 0 <= self.slide_index < len(slides):
+            self.deleted_slide_data = slides[self.slide_index]
+            # This command inherently changes the structure, so it should use the general signal.
+            self.manager.remove_slide(self.slide_index, _execute_command=False)
+
+    def undo(self):
+        if self.deleted_slide_data:
+            # This command inherently changes the structure, so it should use the general signal.
+            self.manager.add_slide(self.deleted_slide_data, self.slide_index, _execute_command=False)
+
+
+class EditLyricsCommand(Command):
+    """Command to edit the text content of a slide, supporting multiple text boxes."""
+    def __init__(self, manager: 'PresentationManager', slide_index: int,
+                 old_text_content: Dict[str, str], new_text_content: Dict[str, str],
+                 old_legacy_lyrics: Optional[str] = None, new_legacy_lyrics: Optional[str] = None):
+        self.manager = manager
+        self.slide_index = slide_index
+        self.old_text_content = copy.deepcopy(old_text_content)
+        self.new_text_content = copy.deepcopy(new_text_content)
+        self.old_legacy_lyrics = old_legacy_lyrics
+        self.new_legacy_lyrics = new_legacy_lyrics
+
+    def execute(self):
+        if not (0 <= self.slide_index < len(self.manager.slides)):
+            return
+
+        slide = self.manager.slides[self.slide_index]
+
+        # Update template_settings.text_content
+        if slide.template_settings is None: # Ensure template_settings dictionary exists
+            slide.template_settings = {}
+        slide.template_settings["text_content"] = copy.deepcopy(self.new_text_content)
+
+        # Update legacy slide.lyrics
+        # Priority: 1. Explicit new_legacy_lyrics (if dialog was in legacy mode)
+        #           2. Content of the first text_box (if template defines text_boxes)
+        #           3. First value from new_text_content (if no specific first_tb_id)
+        #           4. Empty string as a last resort
+        if self.new_legacy_lyrics is not None:
+            slide.lyrics = self.new_legacy_lyrics
+        elif self.new_text_content:
+            first_tb_id = None
+            text_boxes_config = slide.template_settings.get("text_boxes")
+            if isinstance(text_boxes_config, list) and text_boxes_config:
+                first_tb_id = text_boxes_config[0].get("id")
+            
+            if first_tb_id and first_tb_id in self.new_text_content:
+                slide.lyrics = self.new_text_content[first_tb_id]
+            else: # Fallback to the first available text content or empty
+                slide.lyrics = next(iter(self.new_text_content.values()), "")
+        else: # No new text content provided at all
+            slide.lyrics = ""
+            
+        self.manager.slide_visual_property_changed.emit([self.slide_index])
+
+    def undo(self):
+        if not (0 <= self.slide_index < len(self.manager.slides)):
+            return
+            
+        slide = self.manager.slides[self.slide_index]
+
+        if slide.template_settings is None:
+            slide.template_settings = {}
+        slide.template_settings["text_content"] = copy.deepcopy(self.old_text_content)
+
+        if self.old_legacy_lyrics is not None: # If we explicitly stored old legacy lyrics, restore it
+            slide.lyrics = self.old_legacy_lyrics
+        elif self.old_text_content: # Otherwise, derive from old_text_content like in execute
+            first_tb_id = None
+            text_boxes_config = slide.template_settings.get("text_boxes")
+            if isinstance(text_boxes_config, list) and text_boxes_config:
+                first_tb_id = text_boxes_config[0].get("id")
+            
+            if first_tb_id and first_tb_id in self.old_text_content:
+                slide.lyrics = self.old_text_content[first_tb_id]
+            else:
+                slide.lyrics = next(iter(self.old_text_content.values()), "")
+        else:
+            slide.lyrics = ""
+
+        self.manager.slide_visual_property_changed.emit([self.slide_index])
+
+
+class ApplyTemplateCommand(Command):
+    def __init__(self, manager: 'PresentationManager', slide_index: int, old_settings: Optional[Dict[str, Any]], new_settings: Dict[str, Any]):
+        self.manager = manager
+        self.slide_index = slide_index
+        self.old_settings = old_settings if old_settings is not None else {} # Ensure old_settings is a dict
+        self.new_settings = new_settings
+
+    def execute(self):
+        self.manager.set_slide_template_settings(self.slide_index, self.new_settings, _suppress_signal=True)
+
+    def undo(self):
+        self.manager.set_slide_template_settings(self.slide_index, self.old_settings, _suppress_signal=True)
 
 
 class ChangeOverlayLabelCommand(Command):
     def __init__(self, manager: 'PresentationManager', slide_index: int, old_label: str, new_label: str):
-        super().__init__(manager)
+        self.manager = manager
         self.slide_index = slide_index
         self.old_label = old_label
         self.new_label = new_label
 
     def execute(self):
-        slide = self.manager.slides[self.slide_index]
-        slide.overlay_label = self.new_label
-        # The manager's do_command will handle dirty flag and presentation_changed signal
+        self.manager.slides[self.slide_index].overlay_label = self.new_label
+        self.manager.slide_visual_property_changed.emit([self.slide_index]) # Directly emit specific signal
 
     def undo(self):
-        slide = self.manager.slides[self.slide_index]
-        slide.overlay_label = self.old_label
-
-
-class EditLyricsCommand(Command):
-    def __init__(self, manager: 'PresentationManager', slide_index: int, old_lyrics: str, new_lyrics: str):
-        super().__init__(manager)
-        self.slide_index = slide_index
-        self.old_lyrics = old_lyrics
-        self.new_lyrics = new_lyrics
-
-    def execute(self):
-        # Directly modify, PresentationManager's update_slide_content is more for external calls
-        self.manager.slides[self.slide_index].lyrics = self.new_lyrics
-
-    def undo(self):
-        self.manager.slides[self.slide_index].lyrics = self.old_lyrics
-
-
-class AddSlideCommand(Command):
-    def __init__(self, manager: 'PresentationManager', slide_data: SlideData, index: Optional[int] = None):
-        super().__init__(manager)
-        self.slide_data = slide_data
-        # If index is None, it will be appended. Store the index where it's actually added.
-        self.added_at_index = index if index is not None else len(manager.slides)
-
-    def execute(self):
-        # The manager's add_slide method will handle appending or inserting
-        self.manager.add_slide(self.slide_data, at_index=self.added_at_index, _execute_command=False)
-        # Ensure the index is correctly captured if it was appended
-        if self.added_at_index >= len(self.manager.slides): # It was appended
-             self.added_at_index = len(self.manager.slides) -1
-
-    def undo(self):
-        self.manager.remove_slide(self.added_at_index, _execute_command=False)
-
-
-class DeleteSlideCommand(Command):
-    def __init__(self, manager: 'PresentationManager', slide_index: int):
-        super().__init__(manager)
-        self.slide_index = slide_index
-        self.deleted_slide_data: Optional[SlideData] = None
-
-    def execute(self):
-        # Store the data before deleting
-        self.deleted_slide_data = self.manager.slides[self.slide_index]
-        self.manager.remove_slide(self.slide_index, _execute_command=False)
-
-    def undo(self):
-        if self.deleted_slide_data:
-            self.manager.add_slide(self.deleted_slide_data, at_index=self.slide_index, _execute_command=False)
-
-
-class ApplyTemplateCommand(Command):
-    def __init__(self, manager: 'PresentationManager', slide_index: int,
-                 old_template_settings: Dict[str, Any], new_template_settings: Dict[str, Any]):
-        super().__init__(manager)
-        self.slide_index = slide_index
-        self.old_template_settings = old_template_settings
-        self.new_template_settings = new_template_settings
-
-    def execute(self):
-        self.manager.set_slide_template_settings(self.slide_index, self.new_template_settings, _execute_command=False)
-
-    def undo(self):
-        self.manager.set_slide_template_settings(self.slide_index, self.old_template_settings, _execute_command=False)
-
-# Example for a more complex operation like AddSong (conceptual)
-# class AddSongCommand(Command):
-#     def __init__(self, manager: 'PresentationManager', slides_data: List[SlideData]):
-#         super().__init__(manager)
-#         self.slides_data = slides_data
-#         self.added_indices: List[int] = []
-
-#     def execute(self):
-#         # This would need careful handling of indices if add_slides appends
-#         start_index = len(self.manager.slides)
-#         self.manager.add_slides(self.slides_data, _execute_command=False)
-#         self.added_indices = list(range(start_index, start_index + len(self.slides_data)))
-
-#     def undo(self):
-#         # Remove slides in reverse order of addition
-#         for index in sorted(self.added_indices, reverse=True):
-#             self.manager.remove_slide(index, _execute_command=False)
+        self.manager.slides[self.slide_index].overlay_label = self.old_label
+        self.manager.slide_visual_property_changed.emit([self.slide_index]) # Directly emit specific signal

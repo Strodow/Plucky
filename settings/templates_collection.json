@@ -1,7 +1,7 @@
 {
   "styles": {
     "Default Style": {
-      "font_color": "#ffffff",
+      "font_color": "#000000",
       "font_family": "Arial",
       "font_size": 48,
       "force_all_caps": false,
@@ -15,8 +15,23 @@
       "text_outline": false,
       "text_shadow": false
     },
+    "Main Lyrics": {
+      "font_color": "#000000",
+      "font_family": "Futura PT",
+      "font_size": 80,
+      "force_all_caps": true,
+      "outline_color": "#000000",
+      "outline_thickness": 1,
+      "preview_text": "New Style Text",
+      "shadow_blur": 2,
+      "shadow_color": "#b4000000",
+      "shadow_x": 1,
+      "shadow_y": 1,
+      "text_outline": false,
+      "text_shadow": false
+    },
     "Test2": {
-      "font_color": "#ff9595",
+      "font_color": "#000000",
       "font_family": "Sylfaen",
       "font_size": 30,
       "force_all_caps": false,
@@ -31,9 +46,9 @@
       "text_shadow": false
     },
     "test": {
-      "font_color": "#ffffff",
+      "font_color": "#000000",
       "font_family": "Futura PT",
-      "font_size": 48,
+      "font_size": 80,
       "force_all_caps": true,
       "outline_color": "#000000",
       "outline_thickness": 1,
@@ -48,7 +63,6 @@
   },
   "layouts": {
     "Default Layout": {
-      "background_color": "#000000",
       "text_boxes": [
         {
           "h_align": "center",
@@ -62,13 +76,26 @@
         }
       ]
     },
+    "Projector Lyrics": {
+      "text_boxes": [
+        {
+          "h_align": "center",
+          "height_pc": 70.0,
+          "id": "main_text",
+          "style_name": "Main Lyrics",
+          "v_align": "center",
+          "width_pc": 80.0,
+          "x_pc": 10.0,
+          "y_pc": 12.0
+        }
+      ]
+    },
     "Title Slide": {
-      "background_color": "#1A1A1A",
       "text_boxes": [
         {
           "h_align": "left",
           "height_pc": 15.0,
-          "id": "textbox_2",
+          "id": "Performer",
           "style_name": "Test2",
           "v_align": "center",
           "width_pc": 45.0,
@@ -77,13 +104,13 @@
         },
         {
           "h_align": "center",
-          "height_pc": 64.62,
+          "height_pc": 60.0,
           "id": "Title",
           "style_name": "test",
           "v_align": "top",
-          "width_pc": 84.89,
-          "x_pc": 7.48,
-          "y_pc": 15.38
+          "width_pc": 85.0,
+          "x_pc": 7.0,
+          "y_pc": 20.0
         },
         {
           "h_align": "right",

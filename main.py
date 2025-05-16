@@ -9,11 +9,15 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QIcon # Import QIcon
+from PySide6.QtWidgets import QApplication # QMessageBox no longer needed here
+from PySide6.QtGui import QIcon, QImage, QColor # Import QIcon, QImage, QColor for example
 
 # Import the main window class
 from windows.main_window import MainWindow
+
+# Import our new DeckLink handler
+import decklink_handler 
+
 
 if __name__ == "__main__":
     app_start_time = time.perf_counter()
@@ -40,6 +44,21 @@ if __name__ == "__main__":
     # but can sometimes help ensure the taskbar icon is updated.
     if app_icon_object:
         main_window.setWindowIcon(app_icon_object)
+
+    # --- Load and initialize DeckLink DLL using the handler ---
+    if decklink_handler.initialize_output():
+        # Register shutdown_decklink_output to be called on Qt application exit
+        app.aboutToQuit.connect(decklink_handler.shutdown_output)
+        print("DeckLink output initialized via handler. Shutdown scheduled on app quit.")
+    else:
+        # decklink_handler.initialize_output() will print its own error messages
+        # Display the message on MainWindow's status bar
+        main_window.set_status_message(
+            "DeckLink Error: Could not initialize. No card detected or driver issue.",
+            0 # Persistent message
+        )
+        print("Proceeding without DeckLink output (status bar updated).")
+    # --- End DeckLink Load and Init ---
 
     mw_show_start_time = time.perf_counter()
     main_window.show()

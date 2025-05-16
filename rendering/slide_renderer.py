@@ -73,7 +73,6 @@ class SlideRenderer:
             pixmap = QPixmap(1, 1) 
             pixmap.fill(Qt.GlobalColor.transparent)
             benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
-            # Return True for font_error_occurred to signal a problem
             return pixmap, True, benchmark_data
 
         is_on_base = False
@@ -146,12 +145,15 @@ class SlideRenderer:
             # Use the slide's main lyrics for this fallback box
             slide_text_content_map = {"legacy_lyrics_box": slide_data.lyrics}
 
-        if not defined_text_boxes: # No text boxes to render, even after fallback
+        # --- CRITICAL CHECK: If no text boxes are defined, do not proceed to font/text rendering ---
+        if not defined_text_boxes: 
             painter.end()
             benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
             benchmark_data["images"] = time_spent_on_images
-            benchmark_data["fonts"] = time_spent_on_fonts
-            return pixmap, font_error_occurred, benchmark_data
+            # Ensure font_error_occurred is False if we exit here, as no font processing was attempted for text boxes.
+            # Any font errors related to, say, a missing system font for painter.font() before this point
+            # are a different category of issue. For slide content, this should be False.
+            return pixmap, False, benchmark_data # Explicitly return False for font_error_occurred
 
         for tb_props in defined_text_boxes:
             tb_id = tb_props.get("id", "unknown_box")

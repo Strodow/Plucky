@@ -1,5 +1,4 @@
 import sys
-print(f"DEBUG: scaled_slide_button_infobar.py TOP LEVEL, __name__ is {__name__}") # DIAGNOSTIC
 import os
 from PySide6.QtWidgets import QWidget, QSizePolicy
 from PySide6.QtGui import QPixmap, QPainter, QColor, QFont, QFontMetrics
@@ -105,14 +104,19 @@ class InfoBannerWidget(QWidget):
 
         # Display section_label if available, otherwise slide_label (which is currently empty)
         label_to_display = self._section_label if self._section_label else self._slide_label
-
+        
         if label_to_display:            
             label_area_left = number_draw_rect.right() + text_padding_horizontal
             label_area_right = (banner_rect.right() - text_padding_horizontal - total_icon_area_width_banner) - text_padding_horizontal
             if not visible_icons_banner: 
                 label_area_right = banner_rect.right() - text_padding_horizontal
             slide_label_rect = QRectF(label_area_left, banner_rect.top(), max(0, label_area_right - label_area_left), banner_rect.height())
+            
+            elided_label_for_debug = "N/A"
             if slide_label_rect.width() > 0:
                 elided_label = font_metrics_banner.elidedText(label_to_display, Qt.TextElideMode.ElideRight, slide_label_rect.width())
+                # Original drawing call for the label
                 painter.drawText(slide_label_rect, Qt.AlignCenter | Qt.AlignVCenter, elided_label)
+                elided_label_for_debug = elided_label
+        
         painter.end()

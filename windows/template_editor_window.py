@@ -23,7 +23,7 @@ NEW_LAYOUT_DEFAULT_PROPS = {
     "text_boxes": [
         {"id": "main_text", "x_pc": 10, "y_pc": 10, "width_pc": 80, "height_pc": 30, "h_align": "center", "v_align": "center", "style_name": None}
     ], # Default text boxes for a new layout
-    "background_color": "#1A1A1A" # A dark gray for layout background
+    "background_color": "" # A dark gray for layout background
 }
 RESIZE_HANDLE_SIZE = 8 # Size in pixels for the interactive resize area around edges/corners
 
@@ -641,6 +641,10 @@ class TemplateEditorWindow(QDialog):
         self.selected_textbox_style_combo: QComboBox = self.ui.findChild(QComboBox, "selected_textbox_style_combo")
         self.selected_textbox_halign_combo: QComboBox = self.ui.findChild(QComboBox, "selected_textbox_halign_combo") # New
         self.selected_textbox_valign_combo: QComboBox = self.ui.findChild(QComboBox, "selected_textbox_valign_combo") # New
+        # Layout Background Color Controls
+        self.layout_bg_enable_checkbox: QCheckBox = self.ui.findChild(QCheckBox, "layout_bg_enable_checkbox")
+        self.layout_bg_color_button: QPushButton = self.ui.findChild(QPushButton, "layout_bg_color_button")
+        self.layout_bg_color_swatch_label: QLabel = self.ui.findChild(QLabel, "layout_bg_color_swatch_label")
         self.remove_selected_textbox_button: QPushButton = self.ui.findChild(QPushButton, "remove_selected_textbox_button")
         self.layout_preview_scene = QGraphicsScene(self)
         self.layout_preview_graphics_view.setScene(self.layout_preview_scene)
@@ -660,6 +664,7 @@ class TemplateEditorWindow(QDialog):
         self._current_style_font_color = QColor(Qt.GlobalColor.black) 
         self._current_shadow_color = QColor(0,0,0,180) # Default shadow: semi-transparent black
         self._current_outline_color = QColor(Qt.GlobalColor.black) # Default outline: solid black
+        self._current_layout_bg_color: Optional[QColor] = None # For layout background color
 
         # Set the layout for the QDialog itself if not handled by QUiLoader correctly for top-level
         if self.layout() is None: # Check if a layout is already set
@@ -761,6 +766,9 @@ class TemplateEditorWindow(QDialog):
         self.selected_textbox_style_combo.currentTextChanged.connect(self._handle_selected_textbox_style_changed)
         self.selected_textbox_halign_combo.currentTextChanged.connect(self._handle_selected_textbox_halign_changed) # New
         self.selected_textbox_valign_combo.currentTextChanged.connect(self._handle_selected_textbox_valign_changed) # New
+        # Layout Background Color Connections
+        self.layout_bg_enable_checkbox.toggled.connect(self._on_layout_bg_enable_toggled)
+        self.layout_bg_color_button.clicked.connect(self._choose_layout_bg_color)
         self.layout_preview_scene.selectionChanged.connect(self._update_layout_buttons_state) # Update on selection change
         self.ui.main_tab_widget.currentChanged.connect(self._on_main_tab_changed) # New connection
 
@@ -909,13 +917,33 @@ class TemplateEditorWindow(QDialog):
         layout_props = self.layout_definitions[layout_name]
         
         self.layout_preview_scene.clear()
+
+        # Load and set layout background color from layout_props
+        bg_color_hex = layout_props.get("background_color")
+        self.layout_bg_enable_checkbox.blockSignals(True) # Block signals during programmatic update
+        if bg_color_hex:
+            self._current_layout_bg_color = QColor(bg_color_hex)
+            self.layout_bg_enable_checkbox.setChecked(True)
+            self.layout_bg_color_button.setEnabled(True)
+        else:
+            # If no color is in layout_props, it means transparent.
+            # Set checkbox to false, and internal color to transparent black.
+            self._current_layout_bg_color = QColor(0, 0, 0, 0) # Transparent black
+            self.layout_bg_enable_checkbox.setChecked(False)
+            self.layout_bg_color_button.setEnabled(False)
+        self._update_layout_bg_color_swatch()
+        self.layout_bg_enable_checkbox.blockSignals(False) # Unblock signals
+
         # Define a scene rect, e.g., 16:9 aspect ratio
         scene_width = 1600
         scene_height = 900
         self.layout_preview_scene.setSceneRect(0, 0, scene_width, scene_height)
         
         # Draw background for the scene (representing slide background)
-        bg_color = QColor(layout_props.get("background_color", "#000000"))
+        if self.layout_bg_enable_checkbox.isChecked() and self._current_layout_bg_color:
+            bg_color = self._current_layout_bg_color
+        else: # Transparent if checkbox is off or color is None
+            bg_color = QColor(Qt.GlobalColor.transparent) # Or a default like darkGray if you prefer a visual placeholder
         self.layout_preview_scene.setBackgroundBrush(QBrush(bg_color))
 
         # Draw a border rectangle to clearly indicate the slide bounds
@@ -949,6 +977,54 @@ class TemplateEditorWindow(QDialog):
         self._update_layout_buttons_state()
         self._update_textbox_properties_panel() # Update panel based on new selection (likely none initially)
 
+    @Slot(bool)
+    def _on_layout_bg_enable_toggled(self, checked: bool):
+        self.layout_bg_color_button.setEnabled(checked)
+        self._update_layout_bg_color_swatch()
+
+        if self._currently_editing_layout_name:
+            layout_props = self.layout_definitions[self._currently_editing_layout_name]
+            if checked:
+                # If enabling, and _current_layout_bg_color is transparent (from being disabled),
+                # set it to a default opaque color (e.g., black) before saving.
+                if self._current_layout_bg_color is None or self._current_layout_bg_color.alpha() == 0:
+                    self._current_layout_bg_color = QColor(Qt.GlobalColor.black) # Default to opaque black when enabling
+                layout_props["background_color"] = self._current_layout_bg_color.name(QColor.NameFormat.HexArgb)
+                self.layout_preview_scene.setBackgroundBrush(QBrush(self._current_layout_bg_color))
+            else: # Not checked (disabled)
+                self._current_layout_bg_color = QColor(0,0,0,0) # Store as transparent black
+                layout_props["background_color"] = self._current_layout_bg_color.name(QColor.NameFormat.HexArgb) # Save #00000000
+                self.layout_preview_scene.setBackgroundBrush(QBrush(Qt.GlobalColor.transparent))
+            # self._current_layout_dirty = True
+            # self._update_save_button_state()
+
+    @Slot()
+    def _choose_layout_bg_color(self):
+        initial_color = self._current_layout_bg_color if self._current_layout_bg_color else QColor(Qt.GlobalColor.black)
+        dialog = QColorDialog(initial_color, self)
+        dialog.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True) # Enable Alpha
+        
+        if dialog.exec():
+            new_color = dialog.currentColor()
+            if new_color.isValid() and (not self._current_layout_bg_color or new_color != self._current_layout_bg_color):
+                self._current_layout_bg_color = new_color
+                self._update_layout_bg_color_swatch()
+                if self._currently_editing_layout_name and self.layout_bg_enable_checkbox.isChecked():
+                    # Save with Alpha
+                    self.layout_definitions[self._currently_editing_layout_name]["background_color"] = new_color.name(QColor.NameFormat.HexArgb)
+                    self.layout_preview_scene.setBackgroundBrush(QBrush(new_color))
+                    # Mark layout as dirty
+
+    def _update_layout_bg_color_swatch(self):
+        display_color_name = 'transparent'
+        if self.layout_bg_enable_checkbox.isChecked() and self._current_layout_bg_color:
+            # If enabled, use the stored color, including its alpha for the swatch
+            display_color_name = self._current_layout_bg_color.name(QColor.NameFormat.HexArgb)
+        elif not self.layout_bg_enable_checkbox.isChecked():
+            # If disabled, explicitly show transparent for the swatch
+            display_color_name = QColor(0,0,0,0).name(QColor.NameFormat.HexArgb) # #00000000
+
+        self.layout_bg_color_swatch_label.setStyleSheet(f"background-color: {display_color_name}; border: 1px solid grey;")
         # Reset view transform after loading a new layout
         self.layout_preview_graphics_view.resetTransform()
         self.layout_preview_graphics_view.fitInView(self.layout_preview_scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)

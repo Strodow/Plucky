@@ -32,7 +32,16 @@ class SlideData:
     song_title: Optional[str] = None # New field for the song's title
     overlay_label: str = "" # New field for the overlay label set via context menu
     background_color: str = "#000000" # Default black background if no image
+    is_background_slide: bool = False # New field to mark background slides
     template_settings: Dict[str, Any] = field(default_factory=lambda: DEFAULT_TEMPLATE.copy())
+    banner_color: Optional[str] = None # Add banner_color as a dataclass field
+
+    def __post_init__(self):
+        # If this is a background slide, ensure its template_settings
+        # reflect that it has no text boxes to render.
+        if self.is_background_slide:
+            self.template_settings = {"text_boxes": [], "text_content": {}}
+            print(f"DEBUG SLIDEDATA ({self.id}): __post_init__ for BACKGROUND slide. template_settings is now: {self.template_settings}")
 
     # Optional info bar details (could be derived or stored separately too)
     slide_number: Optional[int] = None
@@ -40,7 +49,9 @@ class SlideData:
 
     def to_dict(self) -> Dict[str, Any]:
         """Converts the SlideData instance to a dictionary for serialization."""
-        return asdict(self)
+        # asdict() automatically includes all dataclass fields, including the new banner_color
+        return asdict(self) 
+
 
     @classmethod
     def from_dict(cls, data_dict: Dict[str, Any]) -> 'SlideData':

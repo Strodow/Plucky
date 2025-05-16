@@ -53,6 +53,10 @@ class SongHeaderWidget(QFrame): # Inherit from QFrame
 
     def setTitle(self, title: str):
         self.title_label.setText(title)
+    
+    def get_song_title(self) -> str:
+        """Returns the current song title displayed by the header."""
+        return self.title_label.text() # Or however you store/access the title string
 
     def set_reference_button_width(self, width: int):
         self._current_button_width = width
@@ -65,7 +69,7 @@ class SongHeaderWidget(QFrame): # Inherit from QFrame
         """Shows a context menu on right-click."""
         menu = QMenu(self)
         
-        edit_song_action = menu.addAction(f"Edit Song: \"{self.title_label.text()}\"")
+        edit_song_action = menu.addAction(f"Edit Song Title: \"{self.title_label.text()}\"")
         # Add more song-level actions here in the future if needed
         # menu.addSeparator()
         # delete_song_action = menu.addAction("Delete Entire Song")
