@@ -153,6 +153,7 @@ class MainWindow(QMainWindow):
         self.go_live_button = QPushButton("") # Text removed, will be a circle
         self.go_live_button.setFixedSize(24, 24) # Make it smaller
         self.go_live_button.setCheckable(True) # To manage its state
+        self._decklink_keyer_state = "off" # "off", "on", "error"
         self._update_go_live_button_appearance() # Initial appearance
 
         # Top controls: Undo/Redo (File ops moved to menu)
@@ -162,6 +163,11 @@ class MainWindow(QMainWindow):
         # DeckLink Test Button
         self.test_decklink_button = QPushButton("DL Test Frame")
         self.test_decklink_button.setToolTip("Send a test frame to DeckLink output.")
+
+        # DeckLink Keyer Button
+        self.decklink_keyer_button = QPushButton("") # Text removed, will be a circle
+        self.decklink_keyer_button.setFixedSize(24, 24)
+        self._update_decklink_keyer_button_appearance() # Initial appearance
 
         # Edit Template button
         self.edit_template_button = QPushButton("Edit Templates")
@@ -218,6 +224,15 @@ class MainWindow(QMainWindow):
 
         file_ops_layout.addStretch(1) # Add stretch to push Output control to the far right
 
+        # DeckLink Keyer control button with label
+        decklink_keyer_control_layout = QVBoxLayout()
+        decklink_keyer_label = QLabel("DL Keyer")
+        decklink_keyer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        decklink_keyer_control_layout.addWidget(decklink_keyer_label)
+        decklink_keyer_control_layout.addWidget(self.decklink_keyer_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        file_ops_layout.addLayout(decklink_keyer_control_layout)
+        file_ops_layout.addSpacing(5) # Small space between DL Keyer and Output
+
         # Output (Go Live) button with label
         output_control_layout = QVBoxLayout()
         output_label = QLabel("Output")
@@ -244,6 +259,7 @@ class MainWindow(QMainWindow):
         self.redo_button.clicked.connect(self.handle_redo) # New
         self.test_decklink_button.clicked.connect(self._send_decklink_test_frame) # Connect DL test button
         self.preview_size_spinbox.valueChanged.connect(self.handle_preview_size_change) # Connect spinbox signal
+        self.decklink_keyer_button.clicked.connect(self._toggle_decklink_keyer)
 
         self.go_live_button.clicked.connect(self.toggle_live)
 
@@ -304,6 +320,59 @@ class MainWindow(QMainWindow):
         else: # Not live
             self.go_live_button.setToolTip("Go Live")
             self.go_live_button.setStyleSheet("QPushButton { background-color: palette(button); border-radius: 12px; border: 2px solid gray; } QPushButton:hover { border: 2px solid darkgray; }")
+
+    def _update_decklink_keyer_button_appearance(self):
+        if self._decklink_keyer_state == "on": # Keyer is active and fill
+            self.decklink_keyer_button.setToolTip("DeckLink Keyer is ON (Fill). Click to turn OFF.")
+            self.decklink_keyer_button.setStyleSheet("QPushButton { background-color: red; border-radius: 12px; border: 1px solid darkred; } QPushButton:hover { background-color: #FF4C4C; }")
+        elif self._decklink_keyer_state == "error": # Error state
+            self.decklink_keyer_button.setToolTip("DeckLink Keyer Error. Click to attempt reset to OFF.")
+            self.decklink_keyer_button.setStyleSheet("QPushButton { background-color: yellow; border-radius: 12px; border: 1px solid #B8860B; } QPushButton:hover { background-color: #FFFFE0; }")
+        else: # Off or uninitialized
+            self.decklink_keyer_button.setToolTip("DeckLink Keyer is OFF. Click to turn ON (Fill).")
+            self.decklink_keyer_button.setStyleSheet("QPushButton { background-color: palette(button); border-radius: 12px; border: 2px solid gray; } QPushButton:hover { border: 2px solid darkgray; }")
+
+    def _toggle_decklink_keyer(self):
+        if not decklink_handler.decklink_initialized_successfully:
+            QMessageBox.warning(self, "DeckLink Error", "DeckLink output is not initialized. Please check settings and ensure a device is active.")
+            self._decklink_keyer_state = "error"
+            self._update_decklink_keyer_button_appearance()
+            return
+
+        if self._decklink_keyer_state == "off" or self._decklink_keyer_state == "error":
+            # Try to turn ON
+            print("Attempting to enable DeckLink keyer (fill)...")
+            if decklink_handler.enable_keyer(is_external=True): # Assuming external keying for "fill"
+                if decklink_handler.set_keyer_level(255): # Full opacity
+                    self._decklink_keyer_state = "on"
+                    print("DeckLink keyer enabled (fill) successfully.")
+                else:
+                    self._decklink_keyer_state = "error"
+                    QMessageBox.warning(self, "DeckLink Keyer Error", "Failed to set DeckLink keyer level to 255.")
+                    decklink_handler.disable_keyer() # Attempt to clean up
+            else:
+                self._decklink_keyer_state = "error"
+                QMessageBox.warning(self, "DeckLink Keyer Error", "Failed to enable DeckLink keyer.")
+        
+        elif self._decklink_keyer_state == "on":
+            # Try to turn OFF
+            print("Attempting to disable DeckLink keyer...")
+            if decklink_handler.disable_keyer():
+                self._decklink_keyer_state = "off"
+                print("DeckLink keyer disabled successfully.")
+            else:
+                self._decklink_keyer_state = "error"
+                QMessageBox.warning(self, "DeckLink Keyer Error", "Failed to disable DeckLink keyer.")
+        
+        self._update_decklink_keyer_button_appearance()
+
+        # Optional: Update status bar
+        if self._decklink_keyer_state == "on":
+            self.set_status_message("DeckLink Keyer: ON (Fill)", 3000)
+        elif self._decklink_keyer_state == "off":
+            self.set_status_message("DeckLink Keyer: OFF", 3000)
+        elif self._decklink_keyer_state == "error":
+            self.set_status_message("DeckLink Keyer: Error", 3000)
 
     def _send_decklink_test_frame(self):
         """Sends a test frame to the DeckLink output."""
