@@ -41,6 +41,45 @@
          </widget>
         </item>
         <item>
+         <widget class="QGroupBox" name="decklinkOutputGroupBox">
+          <property name="title">
+           <string>DeckLink Output</string>
+          </property>
+          <layout class="QGridLayout" name="gridLayout_decklink">
+           <item row="0" column="0">
+            <widget class="QLabel" name="label_decklink_device">
+             <property name="text">
+              <string>Device:</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QComboBox" name="decklinkDeviceComboBox"/>
+           </item>
+           <item row="0" column="2">
+            <widget class="QPushButton" name="refreshDecklinkDevicesButton">
+             <property name="text">
+              <string>Refresh</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLabel" name="label_decklink_video_mode">
+             <property name="text">
+              <string>Video Mode:</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QComboBox" name="decklinkVideoModeComboBox">
+             <property name="enabled">
+              <bool>false</bool> <!-- Initially disabled until a device is selected and modes are loaded -->
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>        <item>
          <spacer name="verticalSpacer_general">
           <property name="orientation">
            <enum>Qt::Vertical</enum>

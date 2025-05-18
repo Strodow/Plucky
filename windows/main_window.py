@@ -88,6 +88,10 @@ class MainWindow(QMainWindow):
         self.mw_init_end_time = 0.0 # Will be set at the end of __init__
 
         self.setWindowTitle("Plucky Presentation")
+        # DeckLink related instance variables
+        self.current_decklink_idx = -1 # Default to no device selected or load from config
+        self.current_decklink_name = ""
+        self.current_decklink_video_mode_details = None # To store selected mode details
         self.setGeometry(100, 100, 900, 700) # Adjusted size for more controls
 
         # MainWindow can have focus, but scroll_area is more important for this.
@@ -1852,12 +1856,15 @@ class MainWindow(QMainWindow):
     def handle_open_settings(self):
         """Opens the settings dialog."""
         current_target_screen = self.config_manager.get_target_output_screen()
+        # Pass current DeckLink selection to the settings window
         settings_dialog = SettingsWindow(
             benchmark_data=self.benchmark_data_store,
             current_output_screen=current_target_screen,
+            current_decklink_device_index=self.current_decklink_idx,
             parent=self
         )
         settings_dialog.output_monitor_changed.connect(self._handle_settings_monitor_changed)
+        settings_dialog.decklink_device_selected.connect(self._handle_decklink_device_changed_from_settings)
         settings_dialog.exec() # Use exec() for modal dialog
         # Disconnect after use to prevent issues if dialog is reopened or multiple instances exist
         settings_dialog.output_monitor_changed.disconnect(self._handle_settings_monitor_changed)
@@ -1885,6 +1892,39 @@ class MainWindow(QMainWindow):
         print(f"MainWindow: Target output monitor setting updated to {selected_screen.name()} via settings dialog.")
         # If already live, you might want to move the output window, or just apply on next "Go Live"
         
+    @Slot(int, str)
+    def _handle_decklink_device_changed_from_settings(self, device_index: int, device_name: str):
+        """Handles the decklink_device_selected signal from the SettingsWindow."""
+        print(f"MainWindow: DeckLink device setting updated to Index {device_index} - {device_name} via settings dialog.")
+        self.current_decklink_idx = device_index
+        self.current_decklink_name = device_name
+        # Save the selected DeckLink device index and name
+        self.config_manager.set_app_setting("decklink_device_index", device_index)
+        self.config_manager.set_app_setting("decklink_device_name", device_name) # Saving name for convenience
+
+        # Potentially re-initialize DeckLink output if settings change
+        # self.reinitialize_decklink_output()
+
+    # def reinitialize_decklink_output(self):
+    #     """Shuts down and re-initializes DeckLink output with current settings."""
+    #     print("MainWindow: Re-initializing DeckLink output...")
+    #     decklink_handler.shutdown_output() # Ensure existing is off
+
+    #     if self.current_decklink_idx == -1 or self.current_decklink_video_mode_details is None:
+    #         print("MainWindow: Cannot re-initialize DeckLink, device or video mode not selected.")
+    #         return
+
+    #     # Modify decklink_handler.initialize_output to accept these parameters
+    #     # or create a new function like initialize_output_with_settings
+    #     success = decklink_handler.initialize_output(
+    #         device_index=self.current_decklink_idx,
+    #         width=self.current_decklink_video_mode_details['width'],
+    #         height=self.current_decklink_video_mode_details['height'],
+    #         frame_rate_num=self.current_decklink_video_mode_details['fr_num'],
+    #         frame_rate_denom=self.current_decklink_video_mode_details['fr_den']
+    #     )
+    #     # Update UI or status based on success
+
     def get_setting(self, key: str, default_value=None):
         """
         Provides a way for other components (like SlideRenderer) to get settings

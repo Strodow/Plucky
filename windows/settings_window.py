@@ -6,12 +6,30 @@ from PySide6.QtCore import QDir, QFileInfo, Slot, Signal
 from PySide6.QtGui import QScreen
 from PySide6.QtUiTools import QUiLoader
 import os # Needed for os.path.basename
+import ctypes # For HRESULT S_OK
+
+# Attempt to import from decklink_handler.
+try:
+    # This assumes decklink_handler.py is in the parent directory of 'windows'
+    # Adjust if your project structure is different (e.g. Plucky.decklink_handler)
+    from .. import decklink_handler
+except ImportError:
+    # Fallback for different execution contexts or structures
+    import decklink_handler
 
 class SettingsWindow(QDialog):
     # Signal to indicate the selected output monitor has changed
     output_monitor_changed = Signal(QScreen) # Emits the selected QScreen object
-    def __init__(self, benchmark_data: dict, current_output_screen: QScreen = None, parent=None):
+    decklink_device_selected = Signal(int, str) # Emits (device_index, device_name)
+    def __init__(self, benchmark_data: dict,
+                 current_output_screen: QScreen = None,
+                 current_decklink_device_index: int = -1, # Pass current selection
+                 parent=None):
         super().__init__(parent)
+        self._current_output_screen = current_output_screen
+        self._current_decklink_device_index = current_decklink_device_index
+        self._decklink_api_initialized_by_settings = False # Track if we initialized it
+
 
         # Load the UI file
         # Assuming the .ui file is in the same directory as this .py file
@@ -50,11 +68,14 @@ class SettingsWindow(QDialog):
         # Access Output Monitor controls from the loaded UI (General Tab)
         self.monitor_selection_combo: QComboBox = self.ui.findChild(QComboBox, "monitorSelectionComboBox")
         self.refresh_monitors_button: QPushButton = self.ui.findChild(QPushButton, "refreshMonitorsButton")
-        self._current_output_screen = current_output_screen # Store the initially passed screen
+        # DeckLink Output UI (General Tab) - Find these from the UI file
+        self.decklink_device_combo: QComboBox = self.ui.findChild(QComboBox, "decklinkDeviceComboBox")
+        self.refresh_decklink_devices_button: QPushButton = self.ui.findChild(QPushButton, "refreshDecklinkDevicesButton")
+        self.decklink_video_mode_combo: QComboBox = self.ui.findChild(QComboBox, "decklinkVideoModeComboBox")
 
         # Set window properties
         self.setWindowTitle("Settings")
-        self.resize(400, 300) # Set a default size
+        self.resize(500, 450) # Adjusted size for new groupbox
 
         # Connect standard buttons if they exist
         if self.button_box:
@@ -76,6 +97,14 @@ class SettingsWindow(QDialog):
             self.benchmarking_group_box.toggled.connect(self._on_benchmarking_group_toggled)
             # Set initial visibility of contents based on the checked state from UI
             self._on_benchmarking_group_toggled(self.benchmarking_group_box.isChecked())
+
+        # DeckLink controls
+        if self.refresh_decklink_devices_button:
+            self.refresh_decklink_devices_button.clicked.connect(self.populate_decklink_devices_combo)
+        if self.decklink_device_combo:
+            self.decklink_device_combo.currentIndexChanged.connect(self._handle_decklink_device_selection_changed)
+        
+        self.populate_decklink_devices_combo() # Initial population
 
     def update_benchmarking_display(self, data: dict):
         """Updates the labels in the benchmarking section with provided data."""
@@ -168,3 +197,147 @@ class SettingsWindow(QDialog):
                 widget_item = layout.itemAt(i).widget()
                 if widget_item: # Check if it's a widget (not a spacer)
                     widget_item.setVisible(checked)
+    @Slot()
+    def populate_decklink_devices_combo(self):
+        if not self.decklink_device_combo:
+            return
+
+        self.decklink_device_combo.blockSignals(True)
+        self.decklink_device_combo.clear()
+        if self.decklink_video_mode_combo:
+            self.decklink_video_mode_combo.clear() # Clear video modes when devices are refreshed
+            self.decklink_video_mode_combo.setEnabled(False)
+
+        if not decklink_handler.decklink_dll:
+            if not decklink_handler.load_dll():
+                self.decklink_device_combo.addItem("DeckLink DLL not loaded")
+                self.decklink_device_combo.setEnabled(False)
+                self.decklink_device_combo.blockSignals(False)
+                QMessageBox.warning(self, "DeckLink Error", "Failed to load DeckLinkWraper.dll.")
+                return
+        
+        hr_init = decklink_handler.S_OK
+        # Check if the API level is initialized. decklink_handler.decklink_initialized_successfully
+        # refers to a device being initialized, not just the API.
+        # We need a way to know if InitializeDLL() itself was successful.
+        # For now, we'll assume it's safe to call InitializeDLL() if not sure.
+        # The C++ InitializeDLL is idempotent.
+        # A better approach would be for decklink_handler to expose an API status.
+        if not decklink_handler.decklink_dll.InitializeDLL: # Basic check if function exists
+             QMessageBox.critical(self, "DeckLink Error", "InitializeDLL function missing in DLL.")
+             return
+
+        # Attempt to initialize API if not already done by main app.
+        # This is tricky. Ideally, main app manages this.
+        # We'll call InitializeDLL. If it was already called, it should return S_OK.
+        hr_init = decklink_handler.decklink_dll.InitializeDLL()
+        if hr_init == decklink_handler.S_OK:
+            if not self._decklink_api_initialized_by_settings: # If it wasn't us who init'd it before
+                 # Check if this call actually did the initialization vs it was already up
+                 # This requires more state from decklink_handler or C++ DLL.
+                 # For now, assume if S_OK, it's usable.
+                 # We'll mark it as "initialized by settings" if the main app hasn't done it.
+                 # This is imperfect.
+                 if not decklink_handler.decklink_initialized_successfully: # If main app hasn't fully init'd a device
+                    self._decklink_api_initialized_by_settings = True
+                    print("SettingsWindow: DeckLink API Initialized by settings window.")
+        else:
+            self.decklink_device_combo.addItem("Failed to init DeckLink API")
+            self.decklink_device_combo.setEnabled(False)
+            self.decklink_device_combo.blockSignals(False)
+            QMessageBox.warning(self, "DeckLink Error", f"Failed to initialize DeckLink API (HRESULT: {hr_init:#010x}).")
+            return
+
+        device_count = ctypes.c_int(0)
+        hr = decklink_handler.decklink_dll.GetDeviceCount(ctypes.byref(device_count))
+
+        if hr != decklink_handler.S_OK or device_count.value == 0:
+            msg = "No DeckLink devices found." if device_count.value == 0 else f"Error getting device count (HRESULT: {hr:#010x})."
+            self.decklink_device_combo.addItem(msg)
+            self.decklink_device_combo.setEnabled(False)
+            if self._decklink_api_initialized_by_settings and device_count.value == 0:
+                decklink_handler.decklink_dll.ShutdownDLL()
+                self._decklink_api_initialized_by_settings = False
+        else:
+            self.decklink_device_combo.setEnabled(True)
+            selected_idx_to_set = -1
+            for i in range(device_count.value):
+                name_buffer = ctypes.create_string_buffer(256)
+                hr_name = decklink_handler.decklink_dll.GetDeviceName(i, name_buffer, ctypes.sizeof(name_buffer))
+                if hr_name == decklink_handler.S_OK:
+                    device_name = name_buffer.value.decode('utf-8', errors='replace')
+                    self.decklink_device_combo.addItem(f"{device_name} (Index {i})", i) # Store index as data
+                    if i == self._current_decklink_device_index:
+                        selected_idx_to_set = self.decklink_device_combo.count() - 1
+                else:
+                    self.decklink_device_combo.addItem(f"Unknown Device (Index {i})", i)
+                    if i == self._current_decklink_device_index:
+                        selected_idx_to_set = self.decklink_device_combo.count() - 1
+            
+            if selected_idx_to_set != -1:
+                self.decklink_device_combo.setCurrentIndex(selected_idx_to_set)
+            elif self.decklink_device_combo.count() > 0:
+                self.decklink_device_combo.setCurrentIndex(0)
+
+        self.decklink_device_combo.blockSignals(False)
+        if self.decklink_device_combo.currentIndex() >= 0:
+            self._handle_decklink_device_selection_changed(self.decklink_device_combo.currentIndex())
+
+    @Slot(int)
+    def _handle_decklink_device_selection_changed(self, index: int):
+        if not self.decklink_device_combo or index < 0:
+            if self.decklink_video_mode_combo:
+                self.decklink_video_mode_combo.clear()
+                self.decklink_video_mode_combo.setEnabled(False)
+            return
+
+        selected_device_index = self.decklink_device_combo.itemData(index)
+        selected_device_name_full = self.decklink_device_combo.itemText(index)
+        selected_device_name = selected_device_name_full.split(" (Index")[0]
+
+        if selected_device_index is not None:
+            self._current_decklink_device_index = selected_device_index
+            print(f"SettingsWindow: DeckLink device selection changed to Index {selected_device_index} - {selected_device_name}")
+            self.decklink_device_selected.emit(selected_device_index, selected_device_name)
+            self.populate_decklink_video_modes_combo(selected_device_index)
+        elif self.decklink_video_mode_combo:
+            self.decklink_video_mode_combo.clear()
+            self.decklink_video_mode_combo.setEnabled(False)
+
+    def populate_decklink_video_modes_combo(self, device_index: int):
+        if not self.decklink_video_mode_combo: return
+        self.decklink_video_mode_combo.blockSignals(True)
+        self.decklink_video_mode_combo.clear()
+
+        if device_index < 0:
+            self.decklink_video_mode_combo.setEnabled(False)
+        else:
+            # Placeholder: This will be replaced when C++ DLL supports mode enumeration
+            self.decklink_video_mode_combo.addItem("1920x1080 @ 59.94 (Default/Placeholder)")
+            self.decklink_video_mode_combo.setEnabled(True) # Enable for placeholder
+        self.decklink_video_mode_combo.blockSignals(False)
+
+    def get_selected_decklink_device(self) -> tuple[int, str] | None:
+        if self.decklink_device_combo and self.decklink_device_combo.currentIndex() >= 0:
+            idx = self.decklink_device_combo.itemData(self.decklink_device_combo.currentIndex())
+            name_full = self.decklink_device_combo.currentText()
+            name = name_full.split(" (Index")[0]
+            return idx, name
+        return None
+
+    def get_selected_video_mode(self) -> dict | None:
+        # This will return actual data once populate_decklink_video_modes_combo is implemented
+        if self.decklink_video_mode_combo and self.decklink_video_mode_combo.currentIndex() >= 0:
+            return self.decklink_video_mode_combo.itemData(self.decklink_video_mode_combo.currentIndex())
+        # Fallback for placeholder
+        if self.decklink_video_mode_combo and self.decklink_video_mode_combo.count() > 0:
+             return {"width": 1920, "height": 1080, "fr_num": 60000, "fr_den": 1001, "name": "1080p5994_placeholder"}
+        return None
+
+    def closeEvent(self, event):
+        if self._decklink_api_initialized_by_settings:
+            if decklink_handler.decklink_dll:
+                print("SettingsWindow: Shutting down DeckLink API that was initialized by settings window.")
+                decklink_handler.decklink_dll.ShutdownDLL()
+                self._decklink_api_initialized_by_settings = False
+        super().closeEvent(event)

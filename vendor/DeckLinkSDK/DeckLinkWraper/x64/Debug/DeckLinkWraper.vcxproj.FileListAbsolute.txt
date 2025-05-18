@@ -1,0 +1,1 @@
+C:\Users\Propresenter\Documents\GitHub\Plucky\vendor\DeckLinkSDK\DeckLinkWraper\x64\Debug\DeckLinkWraper.dll

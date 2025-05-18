@@ -5,6 +5,10 @@ venv/
 temp/
 DLLs/
 .VSCodeCounter/
+vendor/DeckLinkSDK/Win
+vendor/DeckLinkSDK/Linux
+vendor/DeckLinkSDK/Mac
+vendor/DeckLinkSDK/DeckLinkWraper/.vs/
 
 # Ignore Python bytecode files
 __pycache__/
@@ -120,3 +124,13 @@ __pyinstaller__/
 # Custom
 *.log
 *.tmp
+*.pdb
+*.idb
+*.obj
+*.tlog
+*.lastbuildstate
+*.tlb
+*.recipe
+*.ilk
+*.exp
+*.user
