@@ -90,12 +90,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Plucky Presentation")
         # DeckLink related instance variables
         self.current_decklink_idx = -1 # Default to no device selected or load from config
-        self.current_decklink_name = ""
-        self.current_decklink_video_mode_details = None # To store selected mode details
-        self.decklink_fill_device_idx = 0 # Default Fill device
-        self.decklink_key_device_idx = 2  # Default Key device (your working combo)
-        self.is_decklink_output_active = False # Track if DeckLink output is live
-        self._decklink_output_button_state = "off" # "off", "on", "error" for the new button
+        # Other DeckLink attributes will be initialized after config_manager
 
         self.setGeometry(100, 100, 900, 700) # Adjusted size for more controls
 
@@ -105,6 +100,19 @@ class MainWindow(QMainWindow):
         # Instantiate the ApplicationConfigManager
         self.config_manager = ApplicationConfigManager(parent=self)
         self.config_manager.recent_files_updated.connect(self._update_recent_files_menu)
+
+        # Load DeckLink device indices from config, then initialize related attributes
+        self.decklink_fill_device_idx = self.config_manager.get_app_setting("decklink_fill_device_index", 0) # Default 0
+        self.decklink_key_device_idx = self.config_manager.get_app_setting("decklink_key_device_index", 2)  # Default 2
+        print(f"MainWindow: Loaded DeckLink settings - Fill: {self.decklink_fill_device_idx}, Key: {self.decklink_key_device_idx}")
+        self.current_decklink_name = "" # This might be deprecated or re-evaluated        
+        self.current_decklink_video_mode_details = self.config_manager.get_app_setting("decklink_video_mode_details", None) # Load saved video mode
+        if self.current_decklink_video_mode_details:
+            print(f"MainWindow: Loaded DeckLink video mode: {self.current_decklink_video_mode_details.get('name', 'Unknown')}")
+
+        self.is_decklink_output_active = False # Track if DeckLink output is live
+        self._decklink_output_button_state = "off" # "off", "on", "error" for the new button
+
         self.setMenuBar(self.create_menu_bar()) # Create menu bar AFTER recent files list is initialized
 
         # Initialize benchmark data store as an instance attribute
@@ -350,10 +358,16 @@ class MainWindow(QMainWindow):
                 self._update_decklink_output_button_appearance()
                 return
             
+            if not self.current_decklink_video_mode_details:
+                QMessageBox.critical(self, "DeckLink Error", "Video mode not configured. Please select a video mode in Settings.")
+                self.decklink_output_toggle_button.setChecked(False)
+                self._decklink_output_button_state = "error" # Or "off" if preferred
+                self._update_decklink_output_button_appearance()
+                return
+            
             decklink_handler.enumerate_devices()
             
-            if not decklink_handler.initialize_selected_devices(self.decklink_fill_device_idx, self.decklink_key_device_idx):
-                QMessageBox.critical(self, "DeckLink Error", f"Failed to initialize DeckLink devices (Fill: {self.decklink_fill_device_idx}, Key: {self.decklink_key_device_idx}). Check logs.")
+            if not decklink_handler.initialize_selected_devices(self.decklink_fill_device_idx, self.decklink_key_device_idx, self.current_decklink_video_mode_details):
                 decklink_handler.shutdown_sdk() # Clean up SDK
                 self.decklink_output_toggle_button.setChecked(False) # Revert button state
                 self._decklink_output_button_state = "error"
@@ -2113,18 +2127,45 @@ class MainWindow(QMainWindow):
             current_output_screen=current_target_screen,
             current_decklink_fill_index=self.decklink_fill_device_idx, # Pass current fill index
             current_decklink_key_index=self.decklink_key_device_idx,   # Pass current key index
+            current_decklink_video_mode=self.current_decklink_video_mode_details, # Pass current video mode
+
             parent=self
         )
         settings_dialog.output_monitor_changed.connect(self._handle_settings_monitor_changed)
         # Connect to the new signal that emits both fill and key indices
-        settings_dialog.decklink_fill_key_devices_selected.connect(self._handle_decklink_devices_changed_from_settings)
-        
-        settings_dialog.exec() # Use exec() for modal dialog
+        # We will get all settings when the dialog is accepted.
+        # settings_dialog.decklink_fill_key_devices_selected.connect(self._handle_decklink_devices_changed_from_settings)
+
+        if settings_dialog.exec() == QDialog.DialogCode.Accepted:
+            print("MainWindow: Settings dialog accepted.")
+            # Retrieve and apply DeckLink device settings
+            fill_idx, key_idx = settings_dialog.get_selected_decklink_devices()
+            if fill_idx is not None and key_idx is not None:
+                self.decklink_fill_device_idx = fill_idx
+                self.decklink_key_device_idx = key_idx
+                self.config_manager.set_app_setting("decklink_fill_device_index", fill_idx)
+                self.config_manager.set_app_setting("decklink_key_device_index", key_idx)
+                print(f"  Applied DeckLink devices - Fill: {fill_idx}, Key: {key_idx}")
+
+            # Retrieve and apply DeckLink video mode
+            video_mode = settings_dialog.get_selected_video_mode()
+            if video_mode:
+                self.current_decklink_video_mode_details = video_mode
+                self.config_manager.set_app_setting("decklink_video_mode_details", video_mode)
+                print(f"  Applied DeckLink video mode: {video_mode.get('name', 'Unknown')}")
+            else: # No video mode selected or available
+                self.current_decklink_video_mode_details = None
+                self.config_manager.set_app_setting("decklink_video_mode_details", None)
+                print("  No DeckLink video mode applied/selected.")
+        else:
+            print("MainWindow: Settings dialog cancelled. No changes applied from dialog.")
+            # Optionally, could reload from config_manager here to ensure state consistency if needed,
+            # but current attributes should still hold their pre-dialog values.
         
         # Disconnect after use to prevent issues if dialog is reopened or multiple instances exist
         try:
             settings_dialog.output_monitor_changed.disconnect(self._handle_settings_monitor_changed)
-            settings_dialog.decklink_fill_key_devices_selected.disconnect(self._handle_decklink_devices_changed_from_settings)
+            # settings_dialog.decklink_fill_key_devices_selected.disconnect(self._handle_decklink_devices_changed_from_settings) # No longer connected
         except RuntimeError: # In case signals were already disconnected or dialog closed unexpectedly
             pass
 
@@ -2151,23 +2192,8 @@ class MainWindow(QMainWindow):
         print(f"MainWindow: Target output monitor setting updated to {selected_screen.name()} via settings dialog.")
         # If already live, you might want to move the output window, or just apply on next "Go Live"
         
-    @Slot(int, int) # Slot now accepts two integers: fill_idx, key_idx
-    def _handle_decklink_devices_changed_from_settings(self, fill_idx: int, key_idx: int):
-        """Handles the decklink_fill_key_devices_selected signal from SettingsWindow."""
-        print(f"MainWindow: DeckLink devices setting updated. Fill Index: {fill_idx}, Key Index: {key_idx} via settings dialog.")
-        
-        # Update MainWindow's internal tracking for fill and key devices
-        self.decklink_fill_device_idx = fill_idx
-        self.decklink_key_device_idx = key_idx
+    # The _handle_decklink_devices_changed_from_settings slot is removed as settings are applied on dialog accept.
 
-        # Save the selected DeckLink device indices using ApplicationConfigManager
-        # Ensure your ApplicationConfigManager is updated to handle these new keys
-        self.config_manager.set_app_setting("decklink_fill_device_index", fill_idx)
-        self.config_manager.set_app_setting("decklink_key_device_index", key_idx)
-        # self.current_decklink_idx and self.current_decklink_name might be deprecated or need re-evaluation
-
-        # Potentially re-initialize DeckLink output if settings change
-        # self.reinitialize_decklink_output()
 
     # def reinitialize_decklink_output(self):
     #     """Shuts down and re-initializes DeckLink output with current settings."""

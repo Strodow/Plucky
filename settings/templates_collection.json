@@ -31,8 +31,8 @@
       "text_shadow": false
     },
     "Test2": {
-      "font_color": "#000000",
-      "font_family": "Sylfaen",
+      "font_color": "#ffffff",
+      "font_family": "Futura",
       "font_size": 30,
       "force_all_caps": false,
       "outline_color": "#000000",
@@ -46,7 +46,7 @@
       "text_shadow": false
     },
     "test": {
-      "font_color": "#000000",
+      "font_color": "#ffffff",
       "font_family": "Futura PT",
       "font_size": 80,
       "force_all_caps": true,
@@ -104,13 +104,13 @@
         },
         {
           "h_align": "center",
-          "height_pc": 60.0,
+          "height_pc": 10.0,
           "id": "Title",
           "style_name": "test",
           "v_align": "top",
           "width_pc": 85.0,
           "x_pc": 7.0,
-          "y_pc": 20.0
+          "y_pc": 70.0
         },
         {
           "h_align": "right",

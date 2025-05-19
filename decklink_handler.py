@@ -184,7 +184,7 @@ def enumerate_devices():
         print("Error: GetDeviceCount or GetDeviceName not found in DLL. Cannot enumerate devices.", file=sys.stderr)
         return []
 
-    device_count = ctypes.c_int(0)
+    device_count = ctypes.c_int(0) # Ensure this is reset or local
     hr = decklink_dll.GetDeviceCount(ctypes.byref(device_count))
     if hr != S_OK:
         print(f"GetDeviceCount failed with HRESULT: {format_hresult(hr)}", file=sys.stderr)
@@ -212,7 +212,7 @@ def enumerate_devices():
         print(f"  Device {i}: {name}")
     return g_device_names
 
-def initialize_selected_devices(fill_device_idx, key_device_idx):
+def initialize_selected_devices(fill_device_idx: int, key_device_idx: int, video_mode_details: dict) -> bool:
     global decklink_initialized_successfully
     if not sdk_initialized_successfully:
         print("SDK not initialized. Cannot initialize devices.", file=sys.stderr)
@@ -223,10 +223,15 @@ def initialize_selected_devices(fill_device_idx, key_device_idx):
         # decklink_dll.ShutdownDLL() # Avoid shutting down entire SDK on this specific failure
 
         return False
+        
+    if not video_mode_details:
+        print("Error: Video mode details not provided for device initialization.", file=sys.stderr)
+        return False
 
-    # Let's try to use device 0 for Fill and device 1 for Key.
-    # In a real app, you'd let the user select or have a more robust discovery.
-
+    width = video_mode_details.get("width")
+    height = video_mode_details.get("height")
+    fr_num = video_mode_details.get("fr_num")
+    fr_den = video_mode_details.get("fr_den")
 
     # Ensure selected indices are valid (though device_count.value < 2 check helps)
     if not (0 <= fill_device_idx < len(g_device_names) and \
@@ -239,13 +244,13 @@ def initialize_selected_devices(fill_device_idx, key_device_idx):
     print(f"Attempting to initialize Fill on device {fill_device_idx}: {g_device_names[fill_device_idx]}")
     print(f"Attempting to initialize Key on device {key_device_idx}: {g_device_names[key_device_idx]}")
 
-    if not hasattr(decklink_dll, "InitializeDevice"):
+    if not hasattr(decklink_dll, "InitializeDevice") or not decklink_dll.InitializeDevice:
         print("Error: InitializeDevice function not found in DLL. Cannot initialize devices.", file=sys.stderr)
         decklink_dll.ShutdownDLL()
         decklink_initialized_successfully = False
         return False
 
-    hr = decklink_dll.InitializeDevice(fill_device_idx, key_device_idx, DLL_WIDTH, DLL_HEIGHT, TARGET_FRAME_RATE_NUM, TARGET_FRAME_RATE_DEN)
+    hr = decklink_dll.InitializeDevice(fill_device_idx, key_device_idx, width, height, fr_num, fr_den)
     
     if hr == S_OK:
         print(f"Successfully initialized Fill (Device {fill_device_idx}) and Key (Device {key_device_idx}) outputs.")
@@ -694,8 +699,16 @@ class DeckLinkGUI(QWidget):
         if fill_idx == key_idx:
             print("Fill and Key devices cannot be the same.")
             return
-
-        if initialize_selected_devices(fill_idx, key_idx):
+        
+        # Create a default video_mode_details for the test GUI
+        test_video_mode_details = {
+            "name": f"{DLL_WIDTH}x{DLL_HEIGHT} @ {TARGET_FRAME_RATE_NUM/TARGET_FRAME_RATE_DEN:.2f} (Test GUI Default)",
+            "width": DLL_WIDTH,
+            "height": DLL_HEIGHT,
+            "fr_num": TARGET_FRAME_RATE_NUM,
+            "fr_den": TARGET_FRAME_RATE_DEN
+        }
+        if initialize_selected_devices(fill_idx, key_idx, test_video_mode_details):
             print("Devices initialized successfully.")
         self._update_ui_state()
 

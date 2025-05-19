@@ -27,11 +27,13 @@ class SettingsWindow(QDialog):
                  current_output_screen: QScreen = None,
                  current_decklink_fill_index: int = -1, # Pass current fill selection
                  current_decklink_key_index: int = -1,   # Pass current key selection
+                 current_decklink_video_mode: dict = None, # Pass current video mode
                  parent=None):
         super().__init__(parent)
         self._current_output_screen = current_output_screen
         self._current_decklink_fill_index = current_decklink_fill_index
         self._current_decklink_key_index = current_decklink_key_index
+        self._current_decklink_video_mode = current_decklink_video_mode # Store current video mode
         self._decklink_api_initialized_by_settings = False # Track if we initialized it
 
 
@@ -206,7 +208,10 @@ class SettingsWindow(QDialog):
                     widget_item.setVisible(checked)
     @Slot()
     def populate_decklink_devices_combo(self):
+        print("SettingsWindow: populate_decklink_devices_combo called.") # DEBUG
         if not self.decklink_fill_device_combo or not self.decklink_key_device_combo:
+            print("SettingsWindow: DEBUG - Combo box(es) not found, returning.") # DEBUG
+
             return
 
         # Block signals for both combos
@@ -365,9 +370,32 @@ class SettingsWindow(QDialog):
         if device_index < 0:
             self.decklink_video_mode_combo.setEnabled(False)
         else:
-            # Placeholder: This will be replaced when C++ DLL supports mode enumeration
-            self.decklink_video_mode_combo.addItem("1920x1080 @ 59.94 (Default/Placeholder)")
+            # Placeholder modes with details as item data
+            # These should eventually be populated by querying the DeckLink device via the C++ DLL
+            modes = [
+                {"name": "1920x1080 @ 59.94", "width": 1920, "height": 1080, "fr_num": 60000, "fr_den": 1001},
+                {"name": "1920x1080 @ 30", "width": 1920, "height": 1080, "fr_num": 30000, "fr_den": 1000}, # Added 1080p30
+                # Add other common placeholder modes here if needed (e.g., 720p60, 1080i60)
+            ]
+
+            # Determine default mode based on passed-in current_decklink_video_mode
+            default_mode_name_to_select = "1920x1080 @ 30" # Fallback default
+            if self._current_decklink_video_mode and isinstance(self._current_decklink_video_mode.get("name"), str):
+                # Check if the current mode's name is in our placeholder list
+                for mode_option in modes:
+                    if mode_option["name"] == self._current_decklink_video_mode["name"]:
+                        default_mode_name_to_select = self._current_decklink_video_mode["name"]
+                        break
+            default_index_to_set = -1
+            for i, mode in enumerate(modes):
+                self.decklink_video_mode_combo.addItem(mode["name"], mode) # Store dict as data
+                if mode["name"] == default_mode_name_to_select:
+                    default_index_to_set = i
             self.decklink_video_mode_combo.setEnabled(True) # Enable for placeholder
+            # Set the default selection
+            if default_index_to_set != -1:
+                self.decklink_video_mode_combo.setCurrentIndex(default_index_to_set)
+
         self.decklink_video_mode_combo.blockSignals(False)
 
     def get_selected_decklink_devices(self) -> tuple[int | None, int | None]:
@@ -378,14 +406,9 @@ class SettingsWindow(QDialog):
             if self.decklink_key_device_combo and self.decklink_key_device_combo.currentIndex() >= 0 else None
         return fill_idx, key_idx
 
-    def get_selected_video_mode(self) -> dict | None:
-        # This will return actual data once populate_decklink_video_modes_combo is implemented
-        if self.decklink_video_mode_combo and self.decklink_video_mode_combo.currentIndex() >= 0:
-            return self.decklink_video_mode_combo.itemData(self.decklink_video_mode_combo.currentIndex())
-        # Fallback for placeholder
-        if self.decklink_video_mode_combo and self.decklink_video_mode_combo.count() > 0:
-             return {"width": 1920, "height": 1080, "fr_num": 60000, "fr_den": 1001, "name": "1080p5994_placeholder"}
-        return None
+    # No need to emit signal here, the device selection handler already emits the fill/key signal
+        # which implies the video mode might have changed and should be re-read by MainWindow.
+
 
     def closeEvent(self, event):
         if self._decklink_api_initialized_by_settings:
@@ -394,3 +417,9 @@ class SettingsWindow(QDialog):
                 decklink_handler.decklink_dll.ShutdownDLL()
                 self._decklink_api_initialized_by_settings = False
         super().closeEvent(event)
+        
+    def get_selected_video_mode(self) -> dict | None:
+        """Returns the selected video mode details."""
+        if self.decklink_video_mode_combo and self.decklink_video_mode_combo.currentIndex() >= 0:
+            return self.decklink_video_mode_combo.itemData(self.decklink_video_mode_combo.currentIndex())
+        return None # Return None if no item is selected
