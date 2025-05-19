@@ -19,15 +19,19 @@ except ImportError:
 
 class SettingsWindow(QDialog):
     # Signal to indicate the selected output monitor has changed
-    output_monitor_changed = Signal(QScreen) # Emits the selected QScreen object
-    decklink_device_selected = Signal(int, str) # Emits (device_index, device_name)
+    output_monitor_changed = Signal(QScreen)  # Emits the selected QScreen object
+    # Emits (fill_device_index, key_device_index)
+    decklink_fill_key_devices_selected = Signal(int, int)
+
     def __init__(self, benchmark_data: dict,
                  current_output_screen: QScreen = None,
-                 current_decklink_device_index: int = -1, # Pass current selection
+                 current_decklink_fill_index: int = -1, # Pass current fill selection
+                 current_decklink_key_index: int = -1,   # Pass current key selection
                  parent=None):
         super().__init__(parent)
         self._current_output_screen = current_output_screen
-        self._current_decklink_device_index = current_decklink_device_index
+        self._current_decklink_fill_index = current_decklink_fill_index
+        self._current_decklink_key_index = current_decklink_key_index
         self._decklink_api_initialized_by_settings = False # Track if we initialized it
 
 
@@ -69,7 +73,8 @@ class SettingsWindow(QDialog):
         self.monitor_selection_combo: QComboBox = self.ui.findChild(QComboBox, "monitorSelectionComboBox")
         self.refresh_monitors_button: QPushButton = self.ui.findChild(QPushButton, "refreshMonitorsButton")
         # DeckLink Output UI (General Tab) - Find these from the UI file
-        self.decklink_device_combo: QComboBox = self.ui.findChild(QComboBox, "decklinkDeviceComboBox")
+        self.decklink_fill_device_combo: QComboBox = self.ui.findChild(QComboBox, "decklinkFillDeviceComboBox") # Renamed/Replaced
+        self.decklink_key_device_combo: QComboBox = self.ui.findChild(QComboBox, "decklinkKeyDeviceComboBox")   # New
         self.refresh_decklink_devices_button: QPushButton = self.ui.findChild(QPushButton, "refreshDecklinkDevicesButton")
         self.decklink_video_mode_combo: QComboBox = self.ui.findChild(QComboBox, "decklinkVideoModeComboBox")
 
@@ -101,8 +106,10 @@ class SettingsWindow(QDialog):
         # DeckLink controls
         if self.refresh_decklink_devices_button:
             self.refresh_decklink_devices_button.clicked.connect(self.populate_decklink_devices_combo)
-        if self.decklink_device_combo:
-            self.decklink_device_combo.currentIndexChanged.connect(self._handle_decklink_device_selection_changed)
+        if self.decklink_fill_device_combo:
+            self.decklink_fill_device_combo.currentIndexChanged.connect(self._handle_decklink_fill_device_selection_changed)
+        if self.decklink_key_device_combo:
+            self.decklink_key_device_combo.currentIndexChanged.connect(self._handle_decklink_key_device_selection_changed)
         
         self.populate_decklink_devices_combo() # Initial population
 
@@ -199,20 +206,26 @@ class SettingsWindow(QDialog):
                     widget_item.setVisible(checked)
     @Slot()
     def populate_decklink_devices_combo(self):
-        if not self.decklink_device_combo:
+        if not self.decklink_fill_device_combo or not self.decklink_key_device_combo:
             return
 
-        self.decklink_device_combo.blockSignals(True)
-        self.decklink_device_combo.clear()
+        # Block signals for both combos
+        self.decklink_fill_device_combo.blockSignals(True)
+        self.decklink_key_device_combo.blockSignals(True)
+
+        self.decklink_fill_device_combo.clear()
+        self.decklink_key_device_combo.clear()
+
         if self.decklink_video_mode_combo:
             self.decklink_video_mode_combo.clear() # Clear video modes when devices are refreshed
             self.decklink_video_mode_combo.setEnabled(False)
 
         if not decklink_handler.decklink_dll:
             if not decklink_handler.load_dll():
-                self.decklink_device_combo.addItem("DeckLink DLL not loaded")
-                self.decklink_device_combo.setEnabled(False)
-                self.decklink_device_combo.blockSignals(False)
+                common_error_msg = "DeckLink DLL not loaded"
+                self.decklink_fill_device_combo.addItem(common_error_msg); self.decklink_fill_device_combo.setEnabled(False)
+                self.decklink_key_device_combo.addItem(common_error_msg); self.decklink_key_device_combo.setEnabled(False)
+                self.decklink_fill_device_combo.blockSignals(False); self.decklink_key_device_combo.blockSignals(False)
                 QMessageBox.warning(self, "DeckLink Error", "Failed to load DeckLinkWraper.dll.")
                 return
         
@@ -240,69 +253,109 @@ class SettingsWindow(QDialog):
                  # This is imperfect.
                  if not decklink_handler.decklink_initialized_successfully: # If main app hasn't fully init'd a device
                     self._decklink_api_initialized_by_settings = True
-                    print("SettingsWindow: DeckLink API Initialized by settings window.")
+                    print("SettingsWindow: DeckLink API initialized by settings window.")
         else:
-            self.decklink_device_combo.addItem("Failed to init DeckLink API")
-            self.decklink_device_combo.setEnabled(False)
-            self.decklink_device_combo.blockSignals(False)
+            common_error_msg = "Failed to init DeckLink API"
+            self.decklink_fill_device_combo.addItem(common_error_msg); self.decklink_fill_device_combo.setEnabled(False)
+            self.decklink_key_device_combo.addItem(common_error_msg); self.decklink_key_device_combo.setEnabled(False)
+            self.decklink_fill_device_combo.blockSignals(False); self.decklink_key_device_combo.blockSignals(False)
             QMessageBox.warning(self, "DeckLink Error", f"Failed to initialize DeckLink API (HRESULT: {hr_init:#010x}).")
             return
 
         device_count = ctypes.c_int(0)
         hr = decklink_handler.decklink_dll.GetDeviceCount(ctypes.byref(device_count))
 
+        device_list_for_combos = []
         if hr != decklink_handler.S_OK or device_count.value == 0:
             msg = "No DeckLink devices found." if device_count.value == 0 else f"Error getting device count (HRESULT: {hr:#010x})."
-            self.decklink_device_combo.addItem(msg)
-            self.decklink_device_combo.setEnabled(False)
+            self.decklink_fill_device_combo.addItem(msg); self.decklink_fill_device_combo.setEnabled(False)
+            self.decklink_key_device_combo.addItem(msg); self.decklink_key_device_combo.setEnabled(False)
             if self._decklink_api_initialized_by_settings and device_count.value == 0:
                 decklink_handler.decklink_dll.ShutdownDLL()
                 self._decklink_api_initialized_by_settings = False
         else:
-            self.decklink_device_combo.setEnabled(True)
-            selected_idx_to_set = -1
+            self.decklink_fill_device_combo.setEnabled(True)
+            self.decklink_key_device_combo.setEnabled(True)
+
             for i in range(device_count.value):
                 name_buffer = ctypes.create_string_buffer(256)
                 hr_name = decklink_handler.decklink_dll.GetDeviceName(i, name_buffer, ctypes.sizeof(name_buffer))
                 if hr_name == decklink_handler.S_OK:
                     device_name = name_buffer.value.decode('utf-8', errors='replace')
-                    self.decklink_device_combo.addItem(f"{device_name} (Index {i})", i) # Store index as data
-                    if i == self._current_decklink_device_index:
-                        selected_idx_to_set = self.decklink_device_combo.count() - 1
+                    device_list_for_combos.append({"text": f"{device_name} (Index {i})", "data": i})
                 else:
-                    self.decklink_device_combo.addItem(f"Unknown Device (Index {i})", i)
-                    if i == self._current_decklink_device_index:
-                        selected_idx_to_set = self.decklink_device_combo.count() - 1
-            
-            if selected_idx_to_set != -1:
-                self.decklink_device_combo.setCurrentIndex(selected_idx_to_set)
-            elif self.decklink_device_combo.count() > 0:
-                self.decklink_device_combo.setCurrentIndex(0)
+                    device_list_for_combos.append({"text": f"Unknown Device (Index {i})", "data": i})
 
-        self.decklink_device_combo.blockSignals(False)
-        if self.decklink_device_combo.currentIndex() >= 0:
-            self._handle_decklink_device_selection_changed(self.decklink_device_combo.currentIndex())
+            # Populate Fill Device Combo
+            current_fill_combo_idx_to_set = -1
+            for item in device_list_for_combos:
+                self.decklink_fill_device_combo.addItem(item["text"], item["data"])
+                if item["data"] == self._current_decklink_fill_index:
+                    current_fill_combo_idx_to_set = self.decklink_fill_device_combo.count() - 1
+            
+            if current_fill_combo_idx_to_set != -1:
+                self.decklink_fill_device_combo.setCurrentIndex(current_fill_combo_idx_to_set)
+            elif self.decklink_fill_device_combo.count() > 0:
+                self.decklink_fill_device_combo.setCurrentIndex(0) # Default to first
+                self._current_decklink_fill_index = self.decklink_fill_device_combo.itemData(0)
+
+            # Populate Key Device Combo
+            current_key_combo_idx_to_set = -1
+            for item in device_list_for_combos:
+                self.decklink_key_device_combo.addItem(item["text"], item["data"])
+                if item["data"] == self._current_decklink_key_index:
+                    current_key_combo_idx_to_set = self.decklink_key_device_combo.count() - 1
+
+            if current_key_combo_idx_to_set != -1:
+                self.decklink_key_device_combo.setCurrentIndex(current_key_combo_idx_to_set)
+            elif self.decklink_key_device_combo.count() > 0:
+                self.decklink_key_device_combo.setCurrentIndex(0) # Default to first
+                self._current_decklink_key_index = self.decklink_key_device_combo.itemData(0)
+
+        # Unblock signals
+        self.decklink_fill_device_combo.blockSignals(False)
+        self.decklink_key_device_combo.blockSignals(False)
+
+        # Manually trigger handlers if valid selections exist to populate video modes and emit initial state
+        if self.decklink_fill_device_combo.currentIndex() >= 0:
+            self._handle_decklink_fill_device_selection_changed(self.decklink_fill_device_combo.currentIndex())
+        # No need to call key handler here as fill handler will emit combined signal
 
     @Slot(int)
-    def _handle_decklink_device_selection_changed(self, index: int):
-        if not self.decklink_device_combo or index < 0:
+    def _handle_decklink_fill_device_selection_changed(self, index: int):
+        if not self.decklink_fill_device_combo or index < 0:
             if self.decklink_video_mode_combo:
                 self.decklink_video_mode_combo.clear()
                 self.decklink_video_mode_combo.setEnabled(False)
             return
 
-        selected_device_index = self.decklink_device_combo.itemData(index)
-        selected_device_name_full = self.decklink_device_combo.itemText(index)
-        selected_device_name = selected_device_name_full.split(" (Index")[0]
-
-        if selected_device_index is not None:
-            self._current_decklink_device_index = selected_device_index
-            print(f"SettingsWindow: DeckLink device selection changed to Index {selected_device_index} - {selected_device_name}")
-            self.decklink_device_selected.emit(selected_device_index, selected_device_name)
-            self.populate_decklink_video_modes_combo(selected_device_index)
+        selected_fill_idx = self.decklink_fill_device_combo.itemData(index)
+        if selected_fill_idx is not None:
+            self._current_decklink_fill_index = selected_fill_idx
+            print(f"SettingsWindow: DeckLink Fill device selection changed to Index {selected_fill_idx}")
+            self.populate_decklink_video_modes_combo(selected_fill_idx) # Video modes often tied to fill
+            self._emit_fill_key_selection()
         elif self.decklink_video_mode_combo:
             self.decklink_video_mode_combo.clear()
             self.decklink_video_mode_combo.setEnabled(False)
+
+    @Slot(int)
+    def _handle_decklink_key_device_selection_changed(self, index: int):
+        if not self.decklink_key_device_combo or index < 0:
+            return
+        selected_key_idx = self.decklink_key_device_combo.itemData(index)
+        if selected_key_idx is not None:
+            self._current_decklink_key_index = selected_key_idx
+            print(f"SettingsWindow: DeckLink Key device selection changed to Index {selected_key_idx}")
+            self._emit_fill_key_selection()
+
+    def _emit_fill_key_selection(self):
+        """Emits the currently selected fill and key device indices."""
+        if self._current_decklink_fill_index is not None and self._current_decklink_key_index is not None:
+            self.decklink_fill_key_devices_selected.emit(
+                self._current_decklink_fill_index,
+                self._current_decklink_key_index
+            )
 
     def populate_decklink_video_modes_combo(self, device_index: int):
         if not self.decklink_video_mode_combo: return
@@ -317,13 +370,13 @@ class SettingsWindow(QDialog):
             self.decklink_video_mode_combo.setEnabled(True) # Enable for placeholder
         self.decklink_video_mode_combo.blockSignals(False)
 
-    def get_selected_decklink_device(self) -> tuple[int, str] | None:
-        if self.decklink_device_combo and self.decklink_device_combo.currentIndex() >= 0:
-            idx = self.decklink_device_combo.itemData(self.decklink_device_combo.currentIndex())
-            name_full = self.decklink_device_combo.currentText()
-            name = name_full.split(" (Index")[0]
-            return idx, name
-        return None
+    def get_selected_decklink_devices(self) -> tuple[int | None, int | None]:
+        """Returns the selected fill and key device indices."""
+        fill_idx = self.decklink_fill_device_combo.itemData(self.decklink_fill_device_combo.currentIndex()) \
+            if self.decklink_fill_device_combo and self.decklink_fill_device_combo.currentIndex() >= 0 else None
+        key_idx = self.decklink_key_device_combo.itemData(self.decklink_key_device_combo.currentIndex()) \
+            if self.decklink_key_device_combo and self.decklink_key_device_combo.currentIndex() >= 0 else None
+        return fill_idx, key_idx
 
     def get_selected_video_mode(self) -> dict | None:
         # This will return actual data once populate_decklink_video_modes_combo is implemented

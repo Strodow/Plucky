@@ -65,7 +65,7 @@ except ImportError:
     )
 
 # Import DeckLink handler for sending frames (ensure this is available in your project)
-import decklink_handler
+import decklink_handler # Assuming decklink_handler.py is at the Plucky project root
 import time
 
 
@@ -92,6 +92,11 @@ class MainWindow(QMainWindow):
         self.current_decklink_idx = -1 # Default to no device selected or load from config
         self.current_decklink_name = ""
         self.current_decklink_video_mode_details = None # To store selected mode details
+        self.decklink_fill_device_idx = 0 # Default Fill device
+        self.decklink_key_device_idx = 2  # Default Key device (your working combo)
+        self.is_decklink_output_active = False # Track if DeckLink output is live
+        self._decklink_output_button_state = "off" # "off", "on", "error" for the new button
+
         self.setGeometry(100, 100, 900, 700) # Adjusted size for more controls
 
         # MainWindow can have focus, but scroll_area is more important for this.
@@ -160,19 +165,20 @@ class MainWindow(QMainWindow):
         self.undo_button = QPushButton("Undo") # New
         self.redo_button = QPushButton("Redo") # New
 
-        # DeckLink Test Button
-        self.test_decklink_button = QPushButton("DL Test Frame")
-        self.test_decklink_button.setToolTip("Send a test frame to DeckLink output.")
+        # DeckLink Test Button (Removing this from the main toolbar)
+        # self.test_decklink_button = QPushButton("DL Test Frame")
+        # self.test_decklink_button.setToolTip("Send a test frame to DeckLink output.")
 
-        # DeckLink Keyer Button
-        self.decklink_keyer_button = QPushButton("") # Text removed, will be a circle
-        self.decklink_keyer_button.setFixedSize(24, 24)
-        self._update_decklink_keyer_button_appearance() # Initial appearance
+        # DeckLink Output On/Off Button (repurposed from keyer button)
+        self.decklink_output_toggle_button = QPushButton("") # Text removed, will be a circle
+        self.decklink_output_toggle_button.setFixedSize(24, 24)
+        self.decklink_output_toggle_button.setCheckable(True) # To manage its state
+        self._update_decklink_output_button_appearance() # Initial appearance
 
-        # Edit Template button
-        self.edit_template_button = QPushButton("Edit Templates")
-        self.edit_template_button.setEnabled(True) # Re-enabled
-        self.edit_template_button.setToolTip("Open the template editor.") # Updated tooltip
+        # Edit Template button (Restoring this button)
+        self.edit_template_button = QPushButton("Edit Templates") 
+        self.edit_template_button.setEnabled(True) 
+        self.edit_template_button.setToolTip("Open the template editor.") 
 
         # Preview Size Spinbox (replaces slider)
         self.preview_size_spinbox = QSpinBox()
@@ -217,19 +223,19 @@ class MainWindow(QMainWindow):
         file_ops_layout.addSpacing(10) # Space after preview size
 
         # Add middle buttons
-        file_ops_layout.addWidget(self.edit_template_button)
+        file_ops_layout.addWidget(self.edit_template_button) # Add Edit Templates button back
         file_ops_layout.addWidget(self.undo_button)
         file_ops_layout.addWidget(self.redo_button)
-        file_ops_layout.addWidget(self.test_decklink_button) # Add DeckLink test button
+        # file_ops_layout.addWidget(self.test_decklink_button) # Remove DeckLink test button from layout
 
         file_ops_layout.addStretch(1) # Add stretch to push Output control to the far right
 
         # DeckLink Keyer control button with label
         decklink_keyer_control_layout = QVBoxLayout()
-        decklink_keyer_label = QLabel("DL Keyer")
+        decklink_keyer_label = QLabel("DL Output") # Renamed label
         decklink_keyer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         decklink_keyer_control_layout.addWidget(decklink_keyer_label)
-        decklink_keyer_control_layout.addWidget(self.decklink_keyer_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        decklink_keyer_control_layout.addWidget(self.decklink_output_toggle_button, 0, Qt.AlignmentFlag.AlignHCenter) # Use new button name
         file_ops_layout.addLayout(decklink_keyer_control_layout)
         file_ops_layout.addSpacing(5) # Small space between DL Keyer and Output
 
@@ -254,12 +260,12 @@ class MainWindow(QMainWindow):
 
         # --- Connections ---
         # Connections for load, save, save_as, add_song are now handled by menu actions
-        self.edit_template_button.clicked.connect(self.handle_edit_template) # Connect signal
+        self.edit_template_button.clicked.connect(self.handle_edit_template) # Connect Edit Templates button
         self.undo_button.clicked.connect(self.handle_undo) # New
         self.redo_button.clicked.connect(self.handle_redo) # New
-        self.test_decklink_button.clicked.connect(self._send_decklink_test_frame) # Connect DL test button
+        # self.test_decklink_button.clicked.connect(self._send_decklink_test_frame) # Disconnect DL test button
         self.preview_size_spinbox.valueChanged.connect(self.handle_preview_size_change) # Connect spinbox signal
-        self.decklink_keyer_button.clicked.connect(self._toggle_decklink_keyer)
+        self.decklink_output_toggle_button.clicked.connect(self.toggle_decklink_output_stream) # New connection
 
         self.go_live_button.clicked.connect(self.toggle_live)
 
@@ -321,104 +327,113 @@ class MainWindow(QMainWindow):
             self.go_live_button.setToolTip("Go Live")
             self.go_live_button.setStyleSheet("QPushButton { background-color: palette(button); border-radius: 12px; border: 2px solid gray; } QPushButton:hover { border: 2px solid darkgray; }")
 
-    def _update_decklink_keyer_button_appearance(self):
-        if self._decklink_keyer_state == "on": # Keyer is active and fill
-            self.decklink_keyer_button.setToolTip("DeckLink Keyer is ON (Fill). Click to turn OFF.")
-            self.decklink_keyer_button.setStyleSheet("QPushButton { background-color: red; border-radius: 12px; border: 1px solid darkred; } QPushButton:hover { background-color: #FF4C4C; }")
-        elif self._decklink_keyer_state == "error": # Error state
-            self.decklink_keyer_button.setToolTip("DeckLink Keyer Error. Click to attempt reset to OFF.")
-            self.decklink_keyer_button.setStyleSheet("QPushButton { background-color: yellow; border-radius: 12px; border: 1px solid #B8860B; } QPushButton:hover { background-color: #FFFFE0; }")
+    def _update_decklink_output_button_appearance(self):
+        if self.decklink_output_toggle_button.isChecked(): # DeckLink Output is ON
+            self.decklink_output_toggle_button.setToolTip("DeckLink Output is LIVE. Click to turn OFF.")
+            self.decklink_output_toggle_button.setStyleSheet("QPushButton { background-color: #4CAF50; /* Green */ border-radius: 12px; border: 1px solid darkgreen; } QPushButton:hover { background-color: #66BB6A; }")
+        elif self._decklink_output_button_state == "error": # Error state
+            self.decklink_output_toggle_button.setToolTip("DeckLink Output Error. Click to attempt reset to OFF.")
+            self.decklink_output_toggle_button.setStyleSheet("QPushButton { background-color: yellow; border-radius: 12px; border: 1px solid #B8860B; } QPushButton:hover { background-color: #FFFFE0; }")
         else: # Off or uninitialized
-            self.decklink_keyer_button.setToolTip("DeckLink Keyer is OFF. Click to turn ON (Fill).")
-            self.decklink_keyer_button.setStyleSheet("QPushButton { background-color: palette(button); border-radius: 12px; border: 2px solid gray; } QPushButton:hover { border: 2px solid darkgray; }")
+            self.decklink_output_toggle_button.setToolTip("DeckLink Output is OFF. Click to turn ON.")
+            self.decklink_output_toggle_button.setStyleSheet("QPushButton { background-color: palette(button); border-radius: 12px; border: 2px solid gray; } QPushButton:hover { border: 2px solid darkgray; }")
 
-    def _toggle_decklink_keyer(self):
-        if not decklink_handler.decklink_initialized_successfully:
-            QMessageBox.warning(self, "DeckLink Error", "DeckLink output is not initialized. Please check settings and ensure a device is active.")
-            self._decklink_keyer_state = "error"
-            self._update_decklink_keyer_button_appearance()
-            return
+    def toggle_decklink_output_stream(self):
+        if self.decklink_output_toggle_button.isChecked(): # User wants to turn DeckLink ON
+            print("MainWindow: Initializing DeckLink for output stream...")
+            self._decklink_output_button_state = "pending" # Intermediate state
+            sdk_init_success, _ = decklink_handler.initialize_sdk()
+            if not sdk_init_success:
+                QMessageBox.critical(self, "DeckLink Error", "Failed to initialize DeckLink SDK.")
+                self.decklink_output_toggle_button.setChecked(False) # Revert button state
+                self._decklink_output_button_state = "error"
+                self._update_decklink_output_button_appearance()
+                return
+            
+            decklink_handler.enumerate_devices()
+            
+            if not decklink_handler.initialize_selected_devices(self.decklink_fill_device_idx, self.decklink_key_device_idx):
+                QMessageBox.critical(self, "DeckLink Error", f"Failed to initialize DeckLink devices (Fill: {self.decklink_fill_device_idx}, Key: {self.decklink_key_device_idx}). Check logs.")
+                decklink_handler.shutdown_sdk() # Clean up SDK
+                self.decklink_output_toggle_button.setChecked(False) # Revert button state
+                self._decklink_output_button_state = "error"
+                self._update_decklink_output_button_appearance()
+                return
+            
+            self.is_decklink_output_active = True
+            self._decklink_output_button_state = "on"
+            print("MainWindow: DeckLink output stream started successfully.")
+            # If a slide is currently live on screen, send it to DeckLink
+            if self.output_window.isVisible() and 0 <= self.current_slide_index < len(self.presentation_manager.get_slides()):
+                self._display_slide(self.current_slide_index)
+            else: # Send blank to DeckLink
+                self._show_blank_on_output() # This will also send blank to DL if active
 
-        if self._decklink_keyer_state == "off" or self._decklink_keyer_state == "error":
-            # Try to turn ON
-            print("Attempting to enable DeckLink keyer (fill)...")
-            if decklink_handler.enable_keyer(is_external=True): # Assuming external keying for "fill"
-                if decklink_handler.set_keyer_level(255): # Full opacity
-                    self._decklink_keyer_state = "on"
-                    print("DeckLink keyer enabled (fill) successfully.")
-                else:
-                    self._decklink_keyer_state = "error"
-                    QMessageBox.warning(self, "DeckLink Keyer Error", "Failed to set DeckLink keyer level to 255.")
-                    decklink_handler.disable_keyer() # Attempt to clean up
-            else:
-                self._decklink_keyer_state = "error"
-                QMessageBox.warning(self, "DeckLink Keyer Error", "Failed to enable DeckLink keyer.")
-        
-        elif self._decklink_keyer_state == "on":
-            # Try to turn OFF
-            print("Attempting to disable DeckLink keyer...")
-            if decklink_handler.disable_keyer():
-                self._decklink_keyer_state = "off"
-                print("DeckLink keyer disabled successfully.")
-            else:
-                self._decklink_keyer_state = "error"
-                QMessageBox.warning(self, "DeckLink Keyer Error", "Failed to disable DeckLink keyer.")
-        
-        self._update_decklink_keyer_button_appearance()
+        else: # User wants to turn DeckLink OFF
+            print("MainWindow: Shutting down DeckLink output stream.")
+            if self.is_decklink_output_active: # Check if it was actually active
+                # Send one last blank frame to DeckLink before shutting down
+                black_image = QImage(decklink_handler.DLL_WIDTH, decklink_handler.DLL_HEIGHT, QImage.Format_ARGB32_Premultiplied)
+                black_image.fill(QColor(0,0,0,255))
+                fill_bytes = decklink_handler.get_image_bytes_from_qimage(black_image)
+                if fill_bytes: # Check if conversion was successful
+                    decklink_handler.send_external_keying_frames(fill_bytes, fill_bytes) # Send black to both fill and key
 
-        # Optional: Update status bar
-        if self._decklink_keyer_state == "on":
-            self.set_status_message("DeckLink Keyer: ON (Fill)", 3000)
-        elif self._decklink_keyer_state == "off":
-            self.set_status_message("DeckLink Keyer: OFF", 3000)
-        elif self._decklink_keyer_state == "error":
-            self.set_status_message("DeckLink Keyer: Error", 3000)
+                decklink_handler.shutdown_selected_devices()
+                decklink_handler.shutdown_sdk()
+            self.is_decklink_output_active = False
+            self._decklink_output_button_state = "off"
+            print("MainWindow: DeckLink output stream stopped.")
+
+        self._update_decklink_output_button_appearance()
 
     def _send_decklink_test_frame(self):
         """Sends a test frame to the DeckLink output."""
-        if not decklink_handler.decklink_initialized_successfully:
-            print("DeckLink not initialized. Cannot send test frame.")
-            QMessageBox.warning(self, "DeckLink Error", "DeckLink output is not initialized. Please check settings and restart.")
+        if not self.is_decklink_output_active:
+            print("DeckLink output is not active. Cannot send test frame.")
+            QMessageBox.warning(self, "DeckLink Error", "DeckLink output is not active. Please go live first.")
             return
 
         # Create a QImage for the test frame
         # Using dimensions from the decklink_handler
-        test_image = QImage(decklink_handler.DLL_WIDTH, decklink_handler.DLL_HEIGHT, QImage.Format_ARGB32)
-        test_image.fill(QColor(0, 255, 255, 128))  # Semi-transparent Cyan (RGBA for QColor)
+        test_image = QImage(decklink_handler.DLL_WIDTH, decklink_handler.DLL_HEIGHT, QImage.Format_ARGB32_Premultiplied)
+        test_image.fill(QColor(0, 255, 255, 255))  # Opaque Cyan (RGBA for QColor)
 
-        image_bytes = test_image.constBits().tobytes()
+        # For DeckLink, we need separate fill and key. For a simple test, key can be black.
+        fill_bytes = decklink_handler.get_image_bytes_from_qimage(test_image)
+        
+        black_image = QImage(decklink_handler.DLL_WIDTH, decklink_handler.DLL_HEIGHT, QImage.Format_ARGB32_Premultiplied)
+        black_image.fill(QColor(0,0,0,255)) # Opaque black
+        key_bytes = decklink_handler.get_image_bytes_from_qimage(black_image)
+
         expected_size = decklink_handler.DLL_WIDTH * decklink_handler.DLL_HEIGHT * 4
 
-        if len(image_bytes) == expected_size:
-            print(f"Sending DeckLink test frame (Size: {len(image_bytes)} bytes)")
-            if not decklink_handler.send_frame(image_bytes):
+        if fill_bytes and key_bytes and len(fill_bytes) == expected_size and len(key_bytes) == expected_size:
+            print(f"Sending DeckLink test frame (Fill Size: {len(fill_bytes)} bytes, Key Size: {len(key_bytes)} bytes)")
+            if not decklink_handler.send_external_keying_frames(fill_bytes, key_bytes):
                 print("Failed to send DeckLink test frame.", file=sys.stderr)
                 QMessageBox.critical(self, "DeckLink Error", "Failed to send test frame to DeckLink output.")
             else:
                 print("DeckLink test frame sent successfully.")
                 QMessageBox.information(self, "DeckLink Test", "Test frame sent successfully to DeckLink output.")
         else:
-            print(f"Error: Test image data size mismatch. Expected {expected_size}, got {len(image_bytes)}", file=sys.stderr)
-            QMessageBox.critical(self, "Image Error", f"Test image data size mismatch. Expected {expected_size}, got {len(image_bytes)}.")
+            print(f"Error: Test image data size mismatch or creation failed.", file=sys.stderr)
+            QMessageBox.critical(self, "Image Error", f"Test image data size mismatch or creation failed.")
 
-            # The pass statement below is optional if no other code follows in this else block.
-            pass 
     def toggle_live(self):
-        # The selected screen is now managed by SettingsWindow and communicated via a signal
-        # For now, we'll assume self.output_window.screen() holds the target if set.
-        # A more robust way would be to store the QScreen object selected from settings.
         target_screen = self.config_manager.get_target_output_screen()
-
-        if not target_screen and not self.output_window.isVisible(): # Only warn if trying to go live without selection
-            QMessageBox.warning(self, "No Monitor Selected", "Please select a monitor to go live.")
-            return
 
         if self.output_window.isVisible():
             self.go_live_button.setChecked(False)
             self._show_blank_on_output() # Good practice to blank it before hiding
             self.output_window.hide() # Explicitly hide the window
-        else:
-            if not target_screen: return # Should have been caught above
+            # Note: DeckLink output is now controlled by its own button
+        else: # Going LIVE (Screen Output)
+            if not target_screen:
+                QMessageBox.warning(self, "No Output Selected", "Please select an output monitor or DeckLink device in Settings.")
+                self.go_live_button.setChecked(False) # Ensure button state is correct
+                self._update_go_live_button_appearance()
+                return
             self.go_live_button.setChecked(True)
             output_geometry = target_screen.geometry()
             self.output_resolution = output_geometry.size()
@@ -429,7 +444,6 @@ class MainWindow(QMainWindow):
             else:
                 self._show_blank_on_output()
         self._update_go_live_button_appearance()
-
 
     def handle_add_song(self):
         """
@@ -1380,6 +1394,83 @@ class MainWindow(QMainWindow):
                 self.output_window.set_pixmap(error_pixmap)
             self.show_error_message(f"Error rendering slide {index} (ID: {slide_data.id}): {e}")
         render_output_duration = time.perf_counter() - render_output_start_time
+
+        # --- Send frame to DeckLink if active ---
+        if self.is_decklink_output_active and not output_pixmap.isNull():
+            # Create a QImage from the pixmap, then make a deep copy
+            # to ensure it's independent for DeckLink processing.
+            temp_qimage = output_pixmap.toImage()
+            decklink_fill_qimage = temp_qimage.copy() # Create a deep copy
+
+            # Ensure the image is scaled to DeckLink's expected resolution
+            if (decklink_fill_qimage.width() != decklink_handler.DLL_WIDTH or
+                decklink_fill_qimage.height() != decklink_handler.DLL_HEIGHT):
+                decklink_fill_qimage = decklink_fill_qimage.scaled(
+                    decklink_handler.DLL_WIDTH,
+                    decklink_handler.DLL_HEIGHT,
+                    Qt.AspectRatioMode.IgnoreAspectRatio, # Or KeepAspectRatioByExpanding and crop
+                    Qt.TransformationMode.SmoothTransformation
+                )
+            
+            # Ensure correct format for get_image_bytes_from_qimage
+            if decklink_fill_qimage.format() != QImage.Format_ARGB32_Premultiplied:
+                decklink_fill_qimage = decklink_fill_qimage.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+            
+            # --- More detailed check before calling get_image_bytes_from_qimage ---
+            if decklink_fill_qimage.isNull():
+                print("MainWindow: ERROR - decklink_fill_qimage is NULL before get_image_bytes_from_qimage for slide.")
+                fill_bytes = None
+            elif decklink_fill_qimage.sizeInBytes() == 0:
+                print(f"MainWindow: ERROR - decklink_fill_qimage has zero bytes. Size: {decklink_fill_qimage.width()}x{decklink_fill_qimage.height()}, Format: {decklink_fill_qimage.format()}")
+                fill_bytes = None
+            else:
+                fill_bytes = decklink_handler.get_image_bytes_from_qimage(decklink_fill_qimage)
+            
+            # --- Generate Key Matte (White text on Black background) ---
+            key_bytes = None
+            try:
+                # Assuming self.slide_renderer has a new method render_key_matte
+                # This method should return a QPixmap (white text on black background)
+                # at DeckLink resolution.
+                key_matte_pixmap = self.slide_renderer.render_key_matte(
+                    slide_data, 
+                    decklink_handler.DLL_WIDTH, 
+                    decklink_handler.DLL_HEIGHT
+                )
+                if not key_matte_pixmap.isNull():
+                    key_matte_qimage = key_matte_pixmap.toImage()
+                    if key_matte_qimage.format() != QImage.Format_ARGB32_Premultiplied:
+                        key_matte_qimage = key_matte_qimage.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+                    
+                    if not key_matte_qimage.isNull() and key_matte_qimage.sizeInBytes() > 0:
+                        key_bytes = decklink_handler.get_image_bytes_from_qimage(key_matte_qimage)
+                    else:
+                        print("MainWindow: ERROR - key_matte_qimage is NULL or has zero bytes after conversion/check.")
+                else:
+                    print("MainWindow: ERROR - render_key_matte returned a NULL pixmap.")
+            except AttributeError:
+                print("MainWindow: ERROR - self.slide_renderer.render_key_matte method not found. Sending black key.")
+            except Exception as e:
+                print(f"MainWindow: ERROR during key matte generation: {e}. Sending black key.")
+
+            if key_bytes is None: # Fallback to black key if matte generation failed
+                print("MainWindow: Fallback - Key matte generation failed or not implemented, sending black key.")
+                black_key_fallback_image = QImage(decklink_handler.DLL_WIDTH, decklink_handler.DLL_HEIGHT, QImage.Format_ARGB32_Premultiplied)
+                black_key_fallback_image.fill(QColor(0,0,0,255)) # Opaque black
+                key_bytes = decklink_handler.get_image_bytes_from_qimage(black_key_fallback_image)
+            
+            # This line was duplicated, removing one instance
+            # fill_bytes = decklink_handler.get_image_bytes_from_qimage(decklink_fill_qimage) 
+            
+            if fill_bytes and key_bytes:
+                print(f"MainWindow: Attempting to send slide to DeckLink. Fill size: {len(fill_bytes)}, Key size: {len(key_bytes)}")
+                if decklink_handler.send_external_keying_frames(fill_bytes, key_bytes):
+                    print("MainWindow: decklink_handler.send_external_keying_frames reported SUCCESS for slide.")
+                else:
+                    print("MainWindow: decklink_handler.send_external_keying_frames reported FAILURE for slide.")
+            else:
+                print(f"MainWindow: ERROR after get_image_bytes - fill_bytes or key_bytes is None. Fill is None: {fill_bytes is None}, Key is None: {key_bytes is None}")
+
         print(f"[BENCHMARK] _display_slide() for output took: {render_output_duration:.4f} seconds for slide {index}")
 
     def _show_blank_on_output(self):
@@ -1396,6 +1487,91 @@ class MainWindow(QMainWindow):
             
             if not blank_pixmap.isNull():
                 self.output_window.set_pixmap(blank_pixmap)
+
+            # --- Send blank frame to DeckLink if active ---
+            if self.is_decklink_output_active:
+                # Create a black QImage specifically for DeckLink at its resolution
+                decklink_blank_fill_image = QImage(
+                    decklink_handler.DLL_WIDTH,
+                    decklink_handler.DLL_HEIGHT,
+                    QImage.Format_ARGB32_Premultiplied
+                )
+                decklink_blank_fill_image.fill(QColor(0,0,0,255)) # Opaque black
+
+                if decklink_blank_fill_image.isNull() or decklink_blank_fill_image.sizeInBytes() == 0:
+                    print("MainWindow: ERROR - decklink_blank_fill_image is NULL or has zero bytes for BLANK.")
+                    fill_bytes = None
+                else:
+                    fill_bytes = decklink_handler.get_image_bytes_from_qimage(decklink_blank_fill_image)
+                
+                # Key is also black for a blank output
+                if fill_bytes: 
+                    key_bytes = fill_bytes 
+                else:
+                    key_bytes = None 
+                
+                if fill_bytes and key_bytes:
+                    print(f"MainWindow: Attempting to send BLANK to DeckLink. Fill size: {len(fill_bytes)}, Key size: {len(key_bytes)}")
+                    if decklink_handler.send_external_keying_frames(fill_bytes, key_bytes):
+                        print("MainWindow: decklink_handler.send_external_keying_frames reported SUCCESS for BLANK.")
+                    else:
+                        print("MainWindow: decklink_handler.send_external_keying_frames reported FAILURE for BLANK.")
+                else:
+                    print(f"MainWindow: ERROR after get_image_bytes - fill_bytes or key_bytes is None for BLANK. Fill is None: {fill_bytes is None}, Key is None: {key_bytes is None}")
+
+        # When showing blank, clear the persistent background
+        self.current_live_background_pixmap = None # Clear any persistent background
+        self.current_background_slide_id = None
+               
+    def _show_blank_on_output(self):
+        if self.output_window.isVisible():
+            blank_slide = SlideData(lyrics="", background_color="#000000")
+            # Render blank slide standalone, ignore its font error status and benchmarks
+            render_result = self.slide_renderer.render_slide(
+                blank_slide, self.output_resolution.width(), self.output_resolution.height(), base_pixmap=None, is_final_output=True
+            )
+            if len(render_result) == 3: # New renderer
+                blank_pixmap, _, _ = render_result
+            else: # Old renderer
+                blank_pixmap, _ = render_result
+            
+            if not blank_pixmap.isNull():
+                self.output_window.set_pixmap(blank_pixmap)
+
+            # --- Send blank frame to DeckLink if active ---
+            if self.is_decklink_output_active:
+                # Create a black QImage specifically for DeckLink at its resolution
+                decklink_blank_fill_image = QImage(
+                    decklink_handler.DLL_WIDTH,
+                    decklink_handler.DLL_HEIGHT,
+                    QImage.Format_ARGB32_Premultiplied
+                )
+                decklink_blank_fill_image.fill(QColor(0,0,0,255)) # Opaque black
+
+                if decklink_blank_fill_image.isNull() or decklink_blank_fill_image.sizeInBytes() == 0:
+                    print("MainWindow: ERROR - decklink_blank_fill_image is NULL or has zero bytes for BLANK.")
+                    fill_bytes = None
+                else:
+                    fill_bytes = decklink_handler.get_image_bytes_from_qimage(decklink_blank_fill_image)
+                
+                # Key is also black for a blank output
+                # We can reuse fill_bytes if it's guaranteed to be the black frame data
+                # or create a separate one for clarity if needed later.
+                # For now, if fill_bytes is the black frame, key_bytes can be the same.
+                if fill_bytes: # Only assign if fill_bytes was successfully created
+                    key_bytes = fill_bytes 
+                else:
+                    key_bytes = None # Ensure key_bytes is also None if fill_bytes failed
+                
+                if fill_bytes and key_bytes:
+                    print(f"MainWindow: Attempting to send BLANK to DeckLink. Fill size: {len(fill_bytes)}, Key size: {len(key_bytes)}")
+                    if decklink_handler.send_external_keying_frames(fill_bytes, key_bytes):
+                        print("MainWindow: decklink_handler.send_external_keying_frames reported SUCCESS for BLANK.")
+                    else:
+                        print("MainWindow: decklink_handler.send_external_keying_frames reported FAILURE for BLANK.")
+                else:
+                    print(f"MainWindow: ERROR after get_image_bytes - fill_bytes or key_bytes is None for BLANK. Fill is None: {fill_bytes is None}, Key is None: {key_bytes is None}")
+
         # When showing blank, clear the persistent background
         self.current_live_background_pixmap = None # Clear any persistent background
         self.current_background_slide_id = None
@@ -1417,6 +1593,12 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         
+        # Ensure DeckLink is shut down if it was active
+        if self.is_decklink_output_active:
+            print("MainWindow: Shutting down DeckLink on close.")
+            decklink_handler.shutdown_selected_devices()
+            decklink_handler.shutdown_sdk()
+            self.is_decklink_output_active = False
         self.output_window.close()
         self.config_manager.save_all_configs() # Save settings via config manager
         self._save_benchmark_history() # Save benchmark history on close
@@ -1929,14 +2111,22 @@ class MainWindow(QMainWindow):
         settings_dialog = SettingsWindow(
             benchmark_data=self.benchmark_data_store,
             current_output_screen=current_target_screen,
-            current_decklink_device_index=self.current_decklink_idx,
+            current_decklink_fill_index=self.decklink_fill_device_idx, # Pass current fill index
+            current_decklink_key_index=self.decklink_key_device_idx,   # Pass current key index
             parent=self
         )
         settings_dialog.output_monitor_changed.connect(self._handle_settings_monitor_changed)
-        settings_dialog.decklink_device_selected.connect(self._handle_decklink_device_changed_from_settings)
+        # Connect to the new signal that emits both fill and key indices
+        settings_dialog.decklink_fill_key_devices_selected.connect(self._handle_decklink_devices_changed_from_settings)
+        
         settings_dialog.exec() # Use exec() for modal dialog
+        
         # Disconnect after use to prevent issues if dialog is reopened or multiple instances exist
-        settings_dialog.output_monitor_changed.disconnect(self._handle_settings_monitor_changed)
+        try:
+            settings_dialog.output_monitor_changed.disconnect(self._handle_settings_monitor_changed)
+            settings_dialog.decklink_fill_key_devices_selected.disconnect(self._handle_decklink_devices_changed_from_settings)
+        except RuntimeError: # In case signals were already disconnected or dialog closed unexpectedly
+            pass
 
     @Slot(dict)
     def _load_recent_file_action(self, filepath: str):
@@ -1961,15 +2151,20 @@ class MainWindow(QMainWindow):
         print(f"MainWindow: Target output monitor setting updated to {selected_screen.name()} via settings dialog.")
         # If already live, you might want to move the output window, or just apply on next "Go Live"
         
-    @Slot(int, str)
-    def _handle_decklink_device_changed_from_settings(self, device_index: int, device_name: str):
-        """Handles the decklink_device_selected signal from the SettingsWindow."""
-        print(f"MainWindow: DeckLink device setting updated to Index {device_index} - {device_name} via settings dialog.")
-        self.current_decklink_idx = device_index
-        self.current_decklink_name = device_name
-        # Save the selected DeckLink device index and name
-        self.config_manager.set_app_setting("decklink_device_index", device_index)
-        self.config_manager.set_app_setting("decklink_device_name", device_name) # Saving name for convenience
+    @Slot(int, int) # Slot now accepts two integers: fill_idx, key_idx
+    def _handle_decklink_devices_changed_from_settings(self, fill_idx: int, key_idx: int):
+        """Handles the decklink_fill_key_devices_selected signal from SettingsWindow."""
+        print(f"MainWindow: DeckLink devices setting updated. Fill Index: {fill_idx}, Key Index: {key_idx} via settings dialog.")
+        
+        # Update MainWindow's internal tracking for fill and key devices
+        self.decklink_fill_device_idx = fill_idx
+        self.decklink_key_device_idx = key_idx
+
+        # Save the selected DeckLink device indices using ApplicationConfigManager
+        # Ensure your ApplicationConfigManager is updated to handle these new keys
+        self.config_manager.set_app_setting("decklink_fill_device_index", fill_idx)
+        self.config_manager.set_app_setting("decklink_key_device_index", key_idx)
+        # self.current_decklink_idx and self.current_decklink_name might be deprecated or need re-evaluation
 
         # Potentially re-initialize DeckLink output if settings change
         # self.reinitialize_decklink_output()

@@ -278,6 +278,148 @@ class SlideRenderer:
         benchmark_data["draw"] = time_spent_on_text_draw
 
         return pixmap, font_error_occurred, benchmark_data
+
+    def render_key_matte(self, slide_data: SlideData, width: int, height: int) -> QPixmap:
+        """
+        Renders a key matte for the given slide data.
+        The matte will have a black background, with all text elements
+        (including shadows and outlines if enabled) rendered in solid white.
+
+        Args:
+            slide_data: An instance of SlideData containing the content and style.
+            width: The target width of the output pixmap (e.g., DeckLink width).
+            height: The target height of the output pixmap (e.g., DeckLink height).
+
+        Returns:
+            A QPixmap representing the key matte.
+        """
+        slide_id_for_log = slide_data.id if slide_data else "UNKNOWN_SLIDE_FOR_KEY_MATTE"
+
+        if width <= 0 or height <= 0:
+            logging.warning(f"Invalid dimensions for rendering key matte: {width}x{height}. Returning 1x1 black pixmap.")
+            pixmap = QPixmap(1, 1)
+            pixmap.fill(Qt.GlobalColor.black)
+            return pixmap
+
+        pixmap = QPixmap(width, height)
+        if pixmap.isNull():
+            logging.error(f"Failed to create QPixmap of size {width}x{height} for key matte (slide_data: {slide_id_for_log})")
+            error_pixmap = QPixmap(1, 1)
+            error_pixmap.fill(Qt.GlobalColor.black) # Fallback to black
+            return error_pixmap
+
+        pixmap.fill(Qt.GlobalColor.black) # Key matte background is always black
+
+        painter = QPainter(pixmap)
+        if not painter.isActive():
+            logging.error(f"QPainter could not be activated on pixmap for key matte (slide_data: {slide_id_for_log})")
+            painter.end()
+            return pixmap # Return the black pixmap
+
+        self._setup_painter_hints(painter)
+
+        # --- Render Text Boxes from Layout (similar to render_slide) ---
+        current_template_settings = slide_data.template_settings if slide_data.template_settings else {}
+        defined_text_boxes = current_template_settings.get("text_boxes", [])
+        slide_text_content_map = current_template_settings.get("text_content", {})
+
+        if not defined_text_boxes and slide_data.lyrics:
+            logging.info(f"KeyMatte for Slide {slide_id_for_log}: No text_boxes in template_settings, falling back to rendering slide_data.lyrics with defaults.")
+            defined_text_boxes = [{
+                "id": "legacy_lyrics_box_key",
+                "x_pc": 5.0, "y_pc": 5.0, "width_pc": 90.0, "height_pc": 90.0,
+                "h_align": "center", "v_align": "center",
+                "font_family": "Arial", "font_size": 58, # Base size for 1080p
+                "force_all_caps": False,
+                "outline_enabled": False, "shadow_enabled": False,
+            }]
+            slide_text_content_map = {"legacy_lyrics_box_key": slide_data.lyrics}
+
+        if not defined_text_boxes:
+            painter.end()
+            return pixmap # Return black pixmap if no text boxes
+
+        key_matte_text_color = QColor(Qt.GlobalColor.white)
+
+        for tb_props in defined_text_boxes:
+            tb_id = tb_props.get("id", "unknown_box_key")
+            text_to_draw = slide_text_content_map.get(tb_id, "")
+
+            if not text_to_draw.strip():
+                continue
+
+            font = QFont()
+            font_family = tb_props.get("font_family", "Arial")
+            font.setFamily(font_family)
+            font_info_check = QFontInfo(font)
+            if font_info_check.family().lower() != font_family.lower() and not font_info_check.exactMatch():
+                logging.warning(f"KeyMatte Font: Family '{font_family}' for textbox '{tb_id}' (slide {slide_id_for_log}) not found. Using fallback '{font_info_check.family()}'.")
+
+            base_font_size_pt = tb_props.get("font_size", 58)
+            target_output_height_for_font_scaling = 1080
+            font_scaling_factor = 1.0
+            if target_output_height_for_font_scaling > 0 and height > 0:
+                 font_scaling_factor = height / target_output_height_for_font_scaling
+            actual_font_size_pt = max(8, int(base_font_size_pt * font_scaling_factor))
+            font.setPointSize(actual_font_size_pt)
+            painter.setFont(font)
+
+            if tb_props.get("force_all_caps", False):
+                text_to_draw = text_to_draw.upper()
+
+            tb_x_pc, tb_y_pc = tb_props.get("x_pc", 0.0), tb_props.get("y_pc", 0.0)
+            tb_w_pc, tb_h_pc = tb_props.get("width_pc", 100.0), tb_props.get("height_pc", 100.0)
+            text_box_draw_rect = QRectF((tb_x_pc / 100.0) * width, (tb_y_pc / 100.0) * height,
+                                        (tb_w_pc / 100.0) * width, (tb_h_pc / 100.0) * height)
+
+            tb_text_option = self._get_text_options_from_props(tb_props)
+
+            self._draw_text_element_for_key_matte(painter, text_to_draw, text_box_draw_rect, tb_text_option, tb_props, key_matte_text_color, font_scaling_factor)
+
+        painter.end()
+        return pixmap
+
+    def _get_text_options_from_props(self, tb_props: dict) -> QTextOption:
+        """Helper to create QTextOption from text box properties."""
+        text_option = QTextOption()
+        h_align_str = tb_props.get("h_align", "center")
+        v_align_str = tb_props.get("v_align", "center")
+        qt_h_align = Qt.AlignmentFlag.AlignHCenter
+        if h_align_str == "left": qt_h_align = Qt.AlignmentFlag.AlignLeft
+        elif h_align_str == "right": qt_h_align = Qt.AlignmentFlag.AlignRight
+        qt_v_align = Qt.AlignmentFlag.AlignVCenter
+        if v_align_str == "top": qt_v_align = Qt.AlignmentFlag.AlignTop
+        elif v_align_str == "bottom": qt_v_align = Qt.AlignmentFlag.AlignBottom
+        text_option.setAlignment(qt_h_align | qt_v_align)
+        text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
+        return text_option
+
+    def _draw_text_element_for_key_matte(self, painter: QPainter, text_to_draw: str,
+                                         text_box_draw_rect: QRectF, tb_text_option: QTextOption,
+                                         tb_props: dict, text_color: QColor, font_scaling_factor: float):
+        """Helper to draw text elements (shadow, outline, main) for the key matte, all in the specified text_color."""
+        # Shadow (drawn in text_color, typically white for key matte)
+        if tb_props.get("shadow_enabled", False):
+            shadow_offset_x = tb_props.get("shadow_offset_x", 2) * font_scaling_factor
+            shadow_offset_y = tb_props.get("shadow_offset_y", 2) * font_scaling_factor
+            shadow_rect = text_box_draw_rect.translated(shadow_offset_x, shadow_offset_y)
+            painter.setPen(text_color)
+            painter.drawText(shadow_rect, text_to_draw, tb_text_option)
+
+        # Outline (drawn in text_color, typically white for key matte)
+        if tb_props.get("outline_enabled", False):
+            outline_width_px = max(1, int(tb_props.get("outline_width", 1) * font_scaling_factor))
+            painter.setPen(text_color)
+            for dx_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
+                for dy_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
+                    if dx_o != 0 or dy_o != 0:
+                        offset_rect = text_box_draw_rect.translated(dx_o, dy_o)
+                        painter.drawText(offset_rect, text_to_draw, tb_text_option)
+
+        # Main Text (drawn in text_color, typically white for key matte)
+        painter.setPen(text_color)
+        painter.drawText(text_box_draw_rect, text_to_draw, tb_text_option)
+
     def _init_checkerboard_style(self):
         """Initializes checkerboard style attributes."""
         self.checker_color1 = QColor(220, 220, 220)  # Light gray

@@ -23,24 +23,33 @@
 
 // --- Global DeckLink SDK objects and state ---
 static IDeckLinkIterator* g_deckLinkIterator = nullptr;
+static IDeckLinkAPIInformation* g_deckLinkAPIInformation = nullptr; // For API version
 static std::vector<IDeckLink*>          g_deckLinkDevices; // Stores discovered DeckLink devices (AddRef'd)
 static std::vector<std::string>         g_deckLinkDeviceNames;
 
-static IDeckLink* g_selectedDeckLink = nullptr; // Points to an item in g_deckLinkDevices, not separately AddRef'd here
-static IDeckLinkOutput* g_deckLinkOutput = nullptr;
-static IDeckLinkMutableVideoFrame* g_videoFrame = nullptr;
-static IDeckLinkConfiguration* g_deckLinkConfiguration = nullptr;
-static IDeckLinkKeyer* g_deckLinkKeyer = nullptr;
+// --- Fill Output Globals ---
+static IDeckLink* g_fillDeckLink = nullptr;
+static IDeckLinkOutput* g_fillDeckLinkOutput = nullptr;
+static IDeckLinkMutableVideoFrame* g_fillVideoFrame = nullptr;
+static IDeckLinkConfiguration* g_fillDeckLinkConfiguration = nullptr; // Configuration for the fill device
+static IDeckLinkKeyer* g_fillDeckLinkKeyer = nullptr;     // Keyer interface from the fill device
 
-static long                             g_frameWidth = 0;
-static long                             g_frameHeight = 0;
-static BMDPixelFormat                   g_pixelFormat = bmdFormat8BitBGRA; // Python typically sends BGRA
-static BMDTimeValue                     g_frameDuration = 0; // For selected display mode
-static BMDTimeScale                     g_timeScale = 0;     // For selected display mode
+// --- Key Output Globals (for external keying) ---
+static IDeckLink* g_keyDeckLink = nullptr;
+static IDeckLinkOutput* g_keyDeckLinkOutput = nullptr;
+static IDeckLinkMutableVideoFrame* g_keyVideoFrame = nullptr;
+// Note: Key output typically doesn't need its own IDeckLinkKeyer or IDeckLinkConfiguration for this scenario.
+
+static long                             g_commonFrameWidth = 0;
+static long                             g_commonFrameHeight = 0;
+static BMDPixelFormat                   g_commonPixelFormat = bmdFormat8BitBGRA; // For both fill and key
+static BMDTimeValue                     g_commonFrameDuration = 0;
+static BMDTimeScale                     g_commonTimeScale = 0;
 
 static bool                             g_comInitialized = false;
 static bool                             g_dllInitialized = false; // Tracks if InitializeDLL has been successfully called
-static bool                             g_deviceInitialized = false; // Tracks if a specific device is initialized for output
+static bool                             g_fillDeviceInitialized = false;
+static bool                             g_keyDeviceInitialized = false; // For external key output
 static bool                             g_keyerEnabled = false;
 
 // --- Helper Functions ---
@@ -59,41 +68,60 @@ void LogMessage(const char* message) {
 }
 
 void ReleaseSelectedDeviceResources() {
-    if (g_keyerEnabled && g_deckLinkKeyer) {
-        g_deckLinkKeyer->Disable(); // Best effort to disable
+    // --- Release Fill Device Resources ---
+    if (g_keyerEnabled && g_fillDeckLinkKeyer) {
+        g_fillDeckLinkKeyer->Disable(); // Best effort to disable
         g_keyerEnabled = false;
     }
-    if (g_deckLinkKeyer) {
-        g_deckLinkKeyer->Release();
-        g_deckLinkKeyer = nullptr;
+    if (g_fillDeckLinkKeyer) {
+        g_fillDeckLinkKeyer->Release();
+        g_fillDeckLinkKeyer = nullptr;
     }
-    if (g_deckLinkConfiguration) {
-        g_deckLinkConfiguration->Release();
-        g_deckLinkConfiguration = nullptr;
+    if (g_fillDeckLinkConfiguration) {
+        g_fillDeckLinkConfiguration->Release();
+        g_fillDeckLinkConfiguration = nullptr;
     }
-    if (g_deviceInitialized && g_deckLinkOutput) {
-        g_deckLinkOutput->DisableVideoOutput(); // Best effort
+    if (g_fillDeviceInitialized && g_fillDeckLinkOutput) {
+        g_fillDeckLinkOutput->DisableVideoOutput(); // Best effort
     }
-    if (g_videoFrame) {
-        g_videoFrame->Release();
-        g_videoFrame = nullptr;
+    if (g_fillVideoFrame) {
+        g_fillVideoFrame->Release();
+        g_fillVideoFrame = nullptr;
     }
-    if (g_deckLinkOutput) {
-        g_deckLinkOutput->Release();
-        g_deckLinkOutput = nullptr;
+    if (g_fillDeckLinkOutput) {
+        g_fillDeckLinkOutput->Release();
+        g_fillDeckLinkOutput = nullptr;
     }
+    g_fillDeckLink = nullptr; // Points to an item in g_deckLinkDevices
+    g_fillDeviceInitialized = false;
 
-    // g_selectedDeckLink is not AddRef'd separately beyond its existence in g_deckLinkDevices.
-    // So, no Release() here. It's just a pointer.
-    g_selectedDeckLink = nullptr;
+    // --- Release Key Device Resources (if used for external keying) ---
+    if (g_keyDeviceInitialized && g_keyDeckLinkOutput) {
+        g_keyDeckLinkOutput->DisableVideoOutput(); // Best effort
+    }
+    if (g_keyVideoFrame) {
+        g_keyVideoFrame->Release();
+        g_keyVideoFrame = nullptr;
+    }
+    if (g_keyDeckLinkOutput) {
+        g_keyDeckLinkOutput->Release();
+        g_keyDeckLinkOutput = nullptr;
+    }
+    g_keyDeckLink = nullptr; // Points to an item in g_deckLinkDevices
+    g_keyDeviceInitialized = false;
 
-    g_frameWidth = 0;
-    g_frameHeight = 0;
-    g_deviceInitialized = false;
+    // Reset common properties
+    g_commonFrameWidth = 0;
+    g_commonFrameHeight = 0;
+    // g_commonPixelFormat remains bmdFormat8BitBGRA
+    g_commonFrameDuration = 0;
+    g_commonTimeScale = 0;
+
     LogMessage("Selected device resources released.");
 }
+
 // Forward declaration for ShutdownDevice, as it's called by ShutdownDLL
-DLL_EXPORT HRESULT ShutdownDevice();
+// Removed forward declaration, as definition appears before its call by ShutdownDLL
 
 // --- DLL Exported Functions ---
 
@@ -106,14 +134,14 @@ DLL_EXPORT HRESULT InitializeDLL() {
     if (!g_comInitialized) {
         HRESULT hr_com = CoInitializeEx(NULL, COINIT_MULTITHREADED);
         if (hr_com == RPC_E_CHANGED_MODE) {
-            LogMessage("CoInitializeEx (MTA) failed: RPC_E_CHANGED_MODE. Thread likely already STA. Retrying with COINIT_APARTMENTTHREADED.");
+            // LogMessage("CoInitializeEx (MTA) failed: RPC_E_CHANGED_MODE. Thread likely already STA. Retrying with COINIT_APARTMENTTHREADED.");
             hr_com = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED); // Try STA
             if (SUCCEEDED(hr_com)) {
-                LogMessage("COM Initialized (ApartmentThreaded on this thread) successfully as fallback.");
+                // LogMessage("COM Initialized (ApartmentThreaded on this thread) successfully as fallback.");
                 // Note: DeckLink objects created on this thread will be STA.
                 // This might have implications if they are accessed from other threads.
             } else {
-                LogMessage("CoInitializeEx (STA fallback) also failed.");
+                // LogMessage("CoInitializeEx (STA fallback) also failed.");
                 // Log the specific HRESULT for the STA failure
                 char err_msg[100];
                 sprintf_s(err_msg, sizeof(err_msg), "STA CoInitializeEx failed with HRESULT: 0x%08X", static_cast<unsigned int>(hr_com));
@@ -121,28 +149,66 @@ DLL_EXPORT HRESULT InitializeDLL() {
                 return hr_com; // Return the error from the STA attempt
             }
         } else if (FAILED(hr_com)) {
-            LogMessage("CoInitializeEx (MTA) failed with a different error.");
+            // LogMessage("CoInitializeEx (MTA) failed with a different error.");
             return hr_com;
         }
         g_comInitialized = true;
-        LogMessage("COM Initialized by DLL successfully."); // More general success message
+        // LogMessage("COM Initialized by DLL successfully.");
     }
 
-    // The iterator will now be created on demand by GetDeviceCount.
-    // InitializeDLL just ensures COM is up.
-    // if (g_deckLinkIterator == nullptr) {
-    //     HRESULT hr = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&g_deckLinkIterator);
-    //     if (FAILED(hr) || g_deckLinkIterator == nullptr) {
-    //         LogMessage("Failed to create DeckLink Iterator instance in InitializeDLL.");
-    //         if (g_comInitialized) { 
-    //             CoUninitialize();
-    //             g_comInitialized = false;
-    //         }
-    //         return E_FAIL; 
-    //     }
+    // Get the API Information interface
+    if (g_deckLinkAPIInformation == nullptr) {
+        // CLSID_CDeckLinkAPIInformation is not a standard DeckLink CLSID.
+        // We typically get IDeckLinkAPIInformation from the IDeckLinkIterator.
+        // Let's create the iterator here if not already done, then query for API info.
+        if (g_deckLinkIterator == nullptr) {
+            HRESULT hr_iter = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&g_deckLinkIterator);
+            if (FAILED(hr_iter) || g_deckLinkIterator == nullptr) {
+                LogMessage("Failed to create DeckLink Iterator instance in InitializeDLL (for API info).");
+                // Proceed without API info, but log it. It's not critical for core functionality.
+            }
+        }
+        if (g_deckLinkIterator) {
+            HRESULT hr_api_info = g_deckLinkIterator->QueryInterface(IID_IDeckLinkAPIInformation, (void**)&g_deckLinkAPIInformation);
+            if (SUCCEEDED(hr_api_info) && g_deckLinkAPIInformation != nullptr) {
+                // LogMessage("Successfully queried IDeckLinkAPIInformation interface in InitializeDLL.");
+            } 
+            /* else { // Don't log failure here, GetAPIVersion will handle it if called
+                LogMessage("Failed to query IDeckLinkAPIInformation interface in InitializeDLL.");
+                if (g_deckLinkAPIInformation) { // Should be null if QueryInterface failed to set it or returned error
+                    g_deckLinkAPIInformation->Release(); // Should not be necessary if QI failed, but safe
+                    g_deckLinkAPIInformation = nullptr;
+                }
+            } */ // End of commented-out else block
+        } // Closes: if (g_deckLinkIterator)
+    } // Closes: if (g_deckLinkAPIInformation == nullptr)
 
     g_dllInitialized = true;
-    LogMessage("DeckLink DLL Initialized successfully.");
+    // LogMessage("DeckLink DLL Initialized successfully."); // Python side will confirm
+    return S_OK;
+}
+
+// Define ShutdownDevice before ShutdownDLL because ShutdownDLL calls it.
+DLL_EXPORT HRESULT ShutdownDevice() {
+    if (!g_dllInitialized && !g_comInitialized) {
+        // LogMessage("ShutdownDevice called when DLL/COM not initialized.");
+        return S_OK;
+    }
+    if (!g_dllInitialized && g_comInitialized && !g_fillDeviceInitialized && !g_keyDeviceInitialized) {
+         // LogMessage("ShutdownDevice called when DLL not initialized but COM was; no devices active.");
+         return S_OK;
+    }
+    if (!g_dllInitialized && (g_fillDeviceInitialized || g_keyDeviceInitialized)){
+        LogMessage("Error: Devices appear initialized but DLL is not. This is an inconsistent state.");
+        // Attempt cleanup anyway
+    }
+
+    if (!g_fillDeviceInitialized && !g_keyDeviceInitialized && !g_fillDeckLink && !g_keyDeckLink) {
+        // LogMessage("Device already shut down or not initialized.");
+        return S_OK;
+    }
+    ReleaseSelectedDeviceResources(); // This handles disabling output, keyer, and releasing interfaces
+    // LogMessage("Selected device has been shut down."); // Python side will confirm
     return S_OK;
 }
 
@@ -155,12 +221,18 @@ DLL_EXPORT HRESULT ShutdownDLL() {
         if (g_comInitialized && !g_dllInitialized) { // Edge case: COM init but DLL init failed or was never called
             CoUninitialize();
             g_comInitialized = false;
-            LogMessage("COM Uninitialized (ShutdownDLL called when DLL not fully initialized).");
+            // LogMessage("COM Uninitialized (ShutdownDLL called when DLL not fully initialized).");
         }
         return S_OK;
     }
 
-    ShutdownDevice(); // Ensure any active device is shut down first
+    // Call ShutdownDevice only if it appears a device might still be active.
+    // This avoids the "already shut down" log if the caller (e.g., Python)
+    // has already explicitly called ShutdownDevice().
+    if (g_fillDeviceInitialized || g_keyDeviceInitialized || g_fillDeckLink || g_keyDeckLink) {
+        // LogMessage("ShutdownDLL: An active device was detected; ensuring it is shut down.");
+        ShutdownDevice();
+    }
 
     for (IDeckLink* dev : g_deckLinkDevices) {
         if (dev) dev->Release();
@@ -173,23 +245,28 @@ DLL_EXPORT HRESULT ShutdownDLL() {
         g_deckLinkIterator = nullptr;
     }
 
+    if (g_deckLinkAPIInformation) {
+        g_deckLinkAPIInformation->Release();
+        g_deckLinkAPIInformation = nullptr;
+    }
+
     if (g_comInitialized) {
         CoUninitialize();
         g_comInitialized = false;
-        LogMessage("COM Uninitialized.");
+        // LogMessage("COM Uninitialized.");
     }
 
     g_dllInitialized = false;
-    LogMessage("DeckLink DLL Shutdown complete.");
+    // LogMessage("DeckLink DLL Shutdown complete."); // Python side will confirm
     return S_OK;
 }
 
-DLL_EXPORT HRESULT GetDeviceCount(int* count) {
+DLL_EXPORT HRESULT GetDeviceCount(int* count_out) { // Changed parameter name for clarity
     if (!g_dllInitialized) { // Iterator is now managed within this function
         LogMessage("DLL not initialized. Call InitializeDLL first.");
         return E_FAIL;
     }
-    if (!count) { LogMessage("GetDeviceCount: count pointer is null."); return E_POINTER; }
+    if (!count_out) { LogMessage("GetDeviceCount: count_out pointer is null."); return E_POINTER; }
 
 
     // Clear previous enumeration results
@@ -207,11 +284,11 @@ DLL_EXPORT HRESULT GetDeviceCount(int* count) {
     HRESULT hr = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&g_deckLinkIterator);
     if (FAILED(hr) || g_deckLinkIterator == nullptr) {
         LogMessage("Failed to create DeckLink Iterator instance in GetDeviceCount.");
-        *count = 0;
+        *count_out = 0;
         return hr; // Or E_FAIL
     }
 
-    IDeckLink* tempDeckLink;
+    IDeckLink* tempDeckLink = nullptr; // Initialize to nullptr
 
     int deviceIdx = 0;
     while ((hr = g_deckLinkIterator->Next(&tempDeckLink)) == S_OK) {
@@ -229,8 +306,8 @@ DLL_EXPORT HRESULT GetDeviceCount(int* count) {
     // If hr is S_FALSE, it means no more items, which is normal.
     // If hr is a failure code, something went wrong.
 
-    *count = static_cast<int>(g_deckLinkDevices.size());
-    LogMessage(("Found " + std::to_string(*count) + " DeckLink devices.").c_str());
+    *count_out = static_cast<int>(g_deckLinkDevices.size());
+    // LogMessage(("Found " + std::to_string(*count) + " DeckLink devices.").c_str()); // Python side will log this
     return S_OK;
 }
 
@@ -249,36 +326,68 @@ DLL_EXPORT HRESULT GetDeviceName(int index, char* nameBuffer, int bufferLength) 
     return S_OK;
 }
 
-DLL_EXPORT HRESULT InitializeDevice(int deviceIndex, int width, int height, int frameRateNum, int frameRateDenom) {
+DLL_EXPORT HRESULT GetAPIVersion(long long* version) { // Use long long for the packed version
     if (!g_dllInitialized) {
         LogMessage("DLL not initialized. Call InitializeDLL first.");
         return E_FAIL;
     }
-    if (g_deviceInitialized) {
-        LogMessage("A device is already initialized. Call ShutdownDevice first.");
-        return E_FAIL; // Or S_FALSE to indicate already initialized with potentially different params
+    if (!version) {
+        LogMessage("GetAPIVersion: version pointer is null.");
+        return E_POINTER;
     }
-    if (deviceIndex < 0 || deviceIndex >= static_cast<int>(g_deckLinkDevices.size())) {
-        LogMessage("Invalid device index.");
-        return E_INVALIDARG;
+    if (!g_deckLinkAPIInformation) {
+        LogMessage("IDeckLinkAPIInformation interface not available. Cannot get API version.");
+        *version = 0; // Indicate unavailable
+        return E_NOINTERFACE; // Or S_FALSE if "not available" is a valid non-error state
     }
 
-    ReleaseSelectedDeviceResources(); // Clear any prior (stale) selected device info, though g_deviceInitialized should prevent this path
+    // Get the integer version
+    // BMDDeckLinkAPIVersion is the enum value for the integer version
+    HRESULT hr = g_deckLinkAPIInformation->GetInt(BMDDeckLinkAPIVersion, version); // BMDDeckLinkAPIVersion is the ID for the integer version
+    if (FAILED(hr)) {
+        LogMessage("Failed to get API version (GetInt).");
+        *version = 0; // Reset on failure
+        return hr;
+    }
 
-    g_selectedDeckLink = g_deckLinkDevices[deviceIndex]; // This IDeckLink* was AddRef'd when put into vector
+    // Optional: Log the version from C++ side
+    // char msg[100];
+    // sprintf_s(msg, "API Version (raw int): %lld", *version); LogMessage(msg);
+    return S_OK;
+}
 
-    HRESULT hr = g_selectedDeckLink->QueryInterface(IID_IDeckLinkOutput, (void**)&g_deckLinkOutput);
-    if (FAILED(hr) || g_deckLinkOutput == nullptr) {
-        LogMessage("Failed to get IDeckLinkOutput interface for the selected device.");
-        g_selectedDeckLink = nullptr;
+HRESULT InitializeSingleDeckLinkOutput(IDeckLink* deckLink, int width, int height, int frameRateNum, int frameRateDenom,
+                                       IDeckLinkOutput** deckLinkOutput, IDeckLinkMutableVideoFrame** videoFrame,
+                                       IDeckLinkConfiguration** deckLinkConfig, IDeckLinkKeyer** deckLinkKeyer, /* Optional for key device */
+                                       bool checkKeyingSupport, const std::string& deviceNameForLog) {
+    if (!g_dllInitialized) {
+        LogMessage("DLL not initialized. Call InitializeDLL first.");
+        return E_FAIL;
+    }
+    if (!deckLink || !deckLinkOutput || !videoFrame) {
+        return E_POINTER;
+    }
+
+    // Dereference and nullify output pointers to ensure clean state if function fails midway
+    *deckLinkOutput = nullptr;
+    *videoFrame = nullptr;
+    if (deckLinkConfig) *deckLinkConfig = nullptr;
+    if (deckLinkKeyer) *deckLinkKeyer = nullptr;
+
+    HRESULT hr = deckLink->QueryInterface(IID_IDeckLinkOutput, (void**)deckLinkOutput);
+    if (FAILED(hr) || *deckLinkOutput == nullptr) {
+        LogMessage(("Failed to get IDeckLinkOutput interface for " + deviceNameForLog).c_str());
         return hr;
     }
 
     IDeckLinkDisplayModeIterator* displayModeIterator = nullptr;
-    hr = g_deckLinkOutput->GetDisplayModeIterator(&displayModeIterator);
+    hr = (*deckLinkOutput)->GetDisplayModeIterator(&displayModeIterator);
     if (FAILED(hr) || displayModeIterator == nullptr) {
         LogMessage("Failed to get display mode iterator.");
-        ReleaseSelectedDeviceResources(); // Cleans up g_deckLinkOutput
+        if (*deckLinkOutput) {
+            (*deckLinkOutput)->Release();
+            *deckLinkOutput = nullptr;
+        }
         return hr;
     }
 
@@ -292,26 +401,38 @@ DLL_EXPORT HRESULT InitializeDevice(int deviceIndex, int width, int height, int 
             BMDTimeScale modeTimeScale;
             currentDisplayMode->GetFrameRate(&modeFrameDuration, &modeTimeScale);
 
-            // Note: DeckLink GetFrameRate gives duration (like 1001) and scale (like 60000 for 59.94)
-            // Python provides num (like 60000) and den (like 1001)
+            // Note: DeckLink GetFrameRate gives duration (like 1000 for 30fps) and scale (like 30000 for 30fps)
+            // Python provides num (like 30000) and den (like 1000)
             if (modeFrameDuration == frameRateDenom && modeTimeScale == frameRateNum) {
-                BOOL supportedWithKeying = FALSE;
-                hr = g_deckLinkOutput->DoesSupportVideoMode(
+                BOOL modeIsSupported = FALSE; // General support flag
+                // Always use bmdSupportedVideoModeDefault for the DoesSupportVideoMode check
+                // to ensure we can at least find a basic output mode.
+                BMDSupportedVideoModeFlags flagsForDoesSupportCheck = bmdSupportedVideoModeDefault;
+                
+                // --- DEBUG LOG for supportedFlags ---
+                char flagLog[256]; // Increased size
+                // sprintf_s(flagLog, sizeof(flagLog), "Device: '%s', (Intended keying: %s), using flagsForDoesSupportCheck value: %d for DoesSupportVideoMode", deviceNameForLog.c_str(), checkKeyingSupport ? "true" : "false", static_cast<int>(flagsForDoesSupportCheck));
+                // LogMessage(flagLog); // This was very verbose, remove for now
+
+                hr = (*deckLinkOutput)->DoesSupportVideoMode(
                     bmdVideoConnectionUnspecified, // Check all connections, or specify if known
                     currentDisplayMode->GetDisplayMode(),
-                    g_pixelFormat, // bmdFormat8BitBGRA
+                    g_commonPixelFormat, // bmdFormat8BitBGRA
                     bmdNoVideoOutputConversion,
-                    bmdSupportedVideoModeKeying, // Crucial: check for keying support
-                    nullptr,
-                    &supportedWithKeying
+                    flagsForDoesSupportCheck, nullptr, &modeIsSupported
                 );
 
-                if (hr == S_OK && supportedWithKeying) {
+                if (hr == S_OK && modeIsSupported) {
                     selectedDisplayModeObj = currentDisplayMode;
                     selectedDisplayModeObj->AddRef(); // Keep this display mode object
                     targetBMDMode = selectedDisplayModeObj->GetDisplayMode();
-                    g_frameDuration = modeFrameDuration; // Store for reference
-                    g_timeScale = modeTimeScale;         // Store for reference
+                    // Store common mode properties if this is the first successful device init
+                    if (g_commonFrameWidth == 0) { // Assuming this is called for fill first
+                        g_commonFrameDuration = modeFrameDuration;
+                        g_commonTimeScale = modeTimeScale;
+                        g_commonFrameWidth = width;
+                        g_commonFrameHeight = height;
+                    }
                     break;
                 }
             }
@@ -321,143 +442,245 @@ DLL_EXPORT HRESULT InitializeDevice(int deviceIndex, int width, int height, int 
     displayModeIterator->Release();
 
     if (!selectedDisplayModeObj || targetBMDMode == bmdModeUnknown) {
-        LogMessage("Failed to find a supported display mode with specified resolution, frame rate, and keying capability.");
-        ReleaseSelectedDeviceResources();
+        LogMessage(("Failed to find a matching display mode for " + deviceNameForLog +
+                    (checkKeyingSupport ? " with keying." : ".")).c_str());
+        if (*deckLinkOutput) { (*deckLinkOutput)->Release(); *deckLinkOutput = nullptr; }
         return E_FAIL;
     }
 
-    g_frameWidth = width;
-    g_frameHeight = height;
-
-    hr = g_deckLinkOutput->EnableVideoOutput(targetBMDMode, bmdVideoOutputFlagDefault);
+    hr = (*deckLinkOutput)->EnableVideoOutput(targetBMDMode, bmdVideoOutputFlagDefault);
     if (FAILED(hr)) {
-        LogMessage("Failed to enable video output on the device.");
+        LogMessage(("Failed to enable video output on " + deviceNameForLog).c_str());
         selectedDisplayModeObj->Release();
-        ReleaseSelectedDeviceResources();
+        if (*deckLinkOutput) { (*deckLinkOutput)->Release(); *deckLinkOutput = nullptr; }
         return hr;
     }
 
-    long rowBytes = g_frameWidth * 4; // For bmdFormat8BitBGRA (4 bytes per pixel)
-    hr = g_deckLinkOutput->CreateVideoFrame(g_frameWidth, g_frameHeight, rowBytes,
-        g_pixelFormat, bmdFrameFlagDefault, &g_videoFrame);
-    if (FAILED(hr) || g_videoFrame == nullptr) {
-        LogMessage("Failed to create video frame for output.");
-        g_deckLinkOutput->DisableVideoOutput(); // Clean up enabled output
+    long rowBytes = width * 4; // For bmdFormat8BitBGRA (4 bytes per pixel)
+    hr = (*deckLinkOutput)->CreateVideoFrame(width, height, rowBytes,
+        g_commonPixelFormat, bmdFrameFlagDefault, videoFrame);
+    if (FAILED(hr) || *videoFrame == nullptr) {
+        LogMessage(("Failed to create video frame for " + deviceNameForLog).c_str());
+        (*deckLinkOutput)->DisableVideoOutput(); // Clean up enabled output
         selectedDisplayModeObj->Release();
-        ReleaseSelectedDeviceResources();
+        if (*deckLinkOutput) { (*deckLinkOutput)->Release(); *deckLinkOutput = nullptr; }
         return hr;
     }
 
-    // Get Configuration and Keyer interfaces (optional for config, required for keyer if used)
-    g_selectedDeckLink->QueryInterface(IID_IDeckLinkConfiguration, (void**)&g_deckLinkConfiguration); // Optional, so don't fail if NULL
-    if (!g_deckLinkConfiguration) LogMessage("Warning: Could not get IDeckLinkConfiguration. Keyer mode setting might be limited.");
-
-    hr = g_selectedDeckLink->QueryInterface(IID_IDeckLinkKeyer, (void**)&g_deckLinkKeyer);
-    if (FAILED(hr) || g_deckLinkKeyer == nullptr) {
-        LogMessage("Failed to get IDeckLinkKeyer interface. Keying will not be available.");
-        // This is critical if keying is a primary feature.
-        g_videoFrame->Release(); g_videoFrame = nullptr;
-        g_deckLinkOutput->DisableVideoOutput();
-        selectedDisplayModeObj->Release();
-        ReleaseSelectedDeviceResources(); // Full cleanup
-        return E_FAIL;
+    // Get Configuration and Keyer interfaces if requested (typically for fill device)
+    if (deckLinkConfig) {
+        deckLink->QueryInterface(IID_IDeckLinkConfiguration, (void**)deckLinkConfig);
+        if (!*deckLinkConfig) LogMessage(("Warning: Could not get IDeckLinkConfiguration for " + deviceNameForLog).c_str());
     }
-
-    selectedDisplayModeObj->Release(); // We're done with this specific display mode object
-    g_deviceInitialized = true;
-    LogMessage(("Device '" + g_deckLinkDeviceNames[deviceIndex] + "' initialized for output: " +
-        std::to_string(width) + "x" + std::to_string(height) + " @ " +
-        std::to_string(frameRateNum) + "/" + std::to_string(frameRateDenom) + " FPS, PixelFormat: BGRA").c_str());
-    return S_OK;
-}
-
-DLL_EXPORT HRESULT ShutdownDevice() {
-    if (!g_dllInitialized) return E_FAIL; // Should not happen if called correctly
-    if (!g_deviceInitialized && !g_selectedDeckLink && !g_deckLinkOutput) { // Check if already effectively shut down
-        LogMessage("Device already shut down or not initialized.");
-        return S_OK;
-    }
-    ReleaseSelectedDeviceResources(); // This handles disabling output, keyer, and releasing interfaces
-    LogMessage("Selected device has been shut down.");
-    return S_OK;
-}
-
-DLL_EXPORT HRESULT UpdateOutputFrame(const unsigned char* bgraData) {
-    if (!g_deviceInitialized || !g_videoFrame || !g_deckLinkOutput) {
-        LogMessage("Device not initialized or frame not ready for update.");
-        return E_FAIL;
-    }
-    if (!bgraData) return E_POINTER;
-
-    IDeckLinkVideoBuffer* videoBuffer = nullptr;
-
-    void* frameBytes = nullptr;
-    bool bufferAccessed = false;
-
-    // Query for the IDeckLinkVideoBuffer interface
-    HRESULT hr = g_videoFrame->QueryInterface(IID_IDeckLinkVideoBuffer, (void**)&videoBuffer);
-    if (FAILED(hr) || videoBuffer == nullptr) {
-        LogMessage("Failed to query IDeckLinkVideoBuffer interface from video frame.");
-        return E_FAIL;
-    }
-
-    // Lock the buffer for writing
-    hr = videoBuffer->StartAccess(bmdBufferAccessWrite);
-    if (FAILED(hr)) {
-        LogMessage("Failed to start access to video buffer for writing.");
-        videoBuffer->Release();
-        return E_FAIL;
-    }
-    bufferAccessed = true;
-
-    // Get the pointer to the buffer
-    hr = videoBuffer->GetBytes(&frameBytes);
-    if (FAILED(hr) || !frameBytes) {
-        LogMessage("Failed to get frame buffer pointer from IDeckLinkVideoBuffer.");
-        // EndAccess must still be called if StartAccess succeeded
-    }
-    else {
-        memcpy(frameBytes, bgraData, g_frameWidth * g_frameHeight * 4); // 4 bytes for BGRA
-
-        // Display the frame
-        hr = g_deckLinkOutput->DisplayVideoFrameSync(g_videoFrame);
-        if (FAILED(hr)) {
-            LogMessage("DisplayVideoFrameSync failed.");
-            // hr will be returned below
+    if (deckLinkKeyer) {
+        if (checkKeyingSupport) { 
+            hr = deckLink->QueryInterface(IID_IDeckLinkKeyer, (void**)deckLinkKeyer);
+            if (FAILED(hr) || *deckLinkKeyer == nullptr) {
+                LogMessage(("Warning: Failed to get IDeckLinkKeyer interface for " + deviceNameForLog + ". SDK-controlled keying will not be available.").c_str());
+                // Do NOT fail the entire initialization here for the "full compromise".
+                // Allow output to proceed, but SDK keying won't work.
+                if (*deckLinkKeyer) { (*deckLinkKeyer)->Release(); *deckLinkKeyer = nullptr; } // Ensure it's null
+            } else {
+                // LogMessage(("Successfully queried IDeckLinkKeyer for " + deviceNameForLog).c_str());
+            }
         }
     }
 
-    // Unlock the buffer
-    videoBuffer->EndAccess(bmdBufferAccessWrite); // Always call EndAccess if StartAccess was successful
-    videoBuffer->Release(); // Release the IDeckLinkVideoBuffer interface
+    selectedDisplayModeObj->Release(); // Release the mode we AddRef'd earlier
+    // LogMessage((deviceNameForLog + " initialized for output: " + ... ).c_str()); // Python side will confirm
+    return S_OK; // Success
+}
+
+DLL_EXPORT HRESULT InitializeDevice(int fillDeviceIndex, int keyDeviceIndex, int width, int height, int frameRateNum, int frameRateDenom) {
+    if (!g_dllInitialized) {
+        LogMessage("DLL not initialized. Call InitializeDLL first.");
+        return E_FAIL;
+    }
+    if (g_fillDeviceInitialized || g_keyDeviceInitialized) {
+        LogMessage("A device is already initialized. Call ShutdownDevice first.");
+        return E_FAIL;
+    }
+    if (fillDeviceIndex < 0 || fillDeviceIndex >= static_cast<int>(g_deckLinkDevices.size()) ||
+        keyDeviceIndex < 0 || keyDeviceIndex >= static_cast<int>(g_deckLinkDevices.size())) {
+        LogMessage("Invalid device index for fill or key.");
+        return E_INVALIDARG;
+    }
+    if (fillDeviceIndex == keyDeviceIndex) {
+        LogMessage("Fill and Key device indices cannot be the same for external keying.");
+        return E_INVALIDARG;
+    }
+
+    ReleaseSelectedDeviceResources(); // Clear any prior state
+
+    g_fillDeckLink = g_deckLinkDevices[fillDeviceIndex];
+    HRESULT hr = InitializeSingleDeckLinkOutput(g_fillDeckLink, width, height, frameRateNum, frameRateDenom,
+                                              &g_fillDeckLinkOutput, &g_fillVideoFrame,
+                                              &g_fillDeckLinkConfiguration, &g_fillDeckLinkKeyer,
+                                              true, g_deckLinkDeviceNames[fillDeviceIndex] + " (Fill)");
+    if (FAILED(hr)) {
+        LogMessage("Failed to initialize Fill device.");
+        ReleaseSelectedDeviceResources(); // Full cleanup
+        return hr;
+    }
+    g_fillDeviceInitialized = true;
+
+    // Initialize Key Device (no keying support check needed for the key output itself, no IDeckLinkKeyer needed for it)
+    g_keyDeckLink = g_deckLinkDevices[keyDeviceIndex];
+    hr = InitializeSingleDeckLinkOutput(g_keyDeckLink, width, height, frameRateNum, frameRateDenom,
+                                          &g_keyDeckLinkOutput, &g_keyVideoFrame,
+                                          nullptr, nullptr, // No config or keyer interface needed for the key output device
+                                          false, g_deckLinkDeviceNames[keyDeviceIndex] + " (Key)");
+    if (FAILED(hr)) {
+        LogMessage("Failed to initialize Key device.");
+        ReleaseSelectedDeviceResources(); // Full cleanup
+        return hr;
+    }
+    g_keyDeviceInitialized = true;
+
     return S_OK;
 }
 
+DLL_EXPORT HRESULT UpdateExternalKeyingFrames(const unsigned char* fillBgraData, const unsigned char* keyBgraData) {
+    if (!g_fillDeviceInitialized || !g_fillVideoFrame || !g_fillDeckLinkOutput ||
+        !g_keyDeviceInitialized || !g_keyVideoFrame || !g_keyDeckLinkOutput) {
+        LogMessage("Fill or Key device not initialized, or frames not ready for update.");
+        return E_FAIL;
+    }
+    if (!fillBgraData || !keyBgraData) return E_POINTER;
+
+    // --- DIAGNOSTIC LOGGING ---
+    // LogMessage(("UpdateExternalKeyingFrames: Common WxH: " + std::to_string(g_commonFrameWidth) + "x" + std::to_string(g_commonFrameHeight)).c_str());
+    // char tempLog[200]; // Keep this if you want to debug pixel data issues
+    // sprintf_s(tempLog, sizeof(tempLog), "First 4 bytes of fillBgraData: %02X %02X %02X %02X", fillBgraData[0], fillBgraData[1], fillBgraData[2], fillBgraData[3]);
+    // LogMessage(tempLog);
+    // sprintf_s(tempLog, sizeof(tempLog), "First 4 bytes of keyBgraData: %02X %02X %02X %02X", keyBgraData[0], keyBgraData[1], keyBgraData[2], keyBgraData[3]);
+    // LogMessage(tempLog);
+    // --- END DIAGNOSTIC LOGGING ---
+    void* frameBytes = nullptr;
+    HRESULT hr;
+
+    // --- Update Fill Frame ---
+    hr = g_fillVideoFrame->GetBytes(&frameBytes);
+    if (FAILED(hr) || !frameBytes) {
+        LogMessage("Failed to get fill frame buffer pointer.");
+        return hr; // Or E_FAIL
+    }
+    if (frameBytes) {
+        memcpy(frameBytes, fillBgraData, g_commonFrameWidth * g_commonFrameHeight * 4);
+        // --- DIAGNOSTIC: Read back from fill frame buffer ---
+        // unsigned char* pFillBufferBytes = static_cast<unsigned char*>(frameBytes);
+        // sprintf_s(tempLog, sizeof(tempLog), "First 4 bytes FROM g_fillVideoFrame after memcpy: %02X %02X %02X %02X", pFillBufferBytes[0], pFillBufferBytes[1], pFillBufferBytes[2], pFillBufferBytes[3]);
+        // LogMessage(tempLog);
+        // --- END DIAGNOSTIC ---
+    } else {
+        LogMessage("Fill frame buffer pointer was null."); return E_POINTER;
+    }
+
+    // Important: GetBytes for key frame might return the same frameBytes pointer if the SDK optimizes
+    // or if there's an issue. For safety, re-nullify or be aware.
+    frameBytes = nullptr; 
+    // --- Update Key Frame ---
+    // Key frame also uses BGRA format where R=G=B=Alpha for grayscale key
+    hr = g_keyVideoFrame->GetBytes(&frameBytes);
+    if (FAILED(hr) || !frameBytes) {
+        LogMessage("Failed to get key frame buffer pointer.");
+        return hr;
+    }
+    if (frameBytes) {
+        memcpy(frameBytes, keyBgraData, g_commonFrameWidth * g_commonFrameHeight * 4);
+        // --- DIAGNOSTIC: Read back from key frame buffer ---
+        // unsigned char* pKeyBufferBytes = static_cast<unsigned char*>(frameBytes);
+        // sprintf_s(tempLog, sizeof(tempLog), "First 4 bytes FROM g_keyVideoFrame after memcpy: %02X %02X %02X %02X", pKeyBufferBytes[0], pKeyBufferBytes[1], pKeyBufferBytes[2], pKeyBufferBytes[3]);
+        // LogMessage(tempLog);
+        // --- END DIAGNOSTIC ---
+
+    } else {
+        LogMessage("Key frame buffer pointer was null."); return E_POINTER;
+    }
+
+    // --- Schedule Frames ---
+    // For external keying, it's crucial these are scheduled as close together as possible.
+    // DisplayVideoFrameSync might introduce too much variability if called sequentially.
+    // A more robust approach for perfect sync would involve ScheduleVideoFrame.
+    // For simplicity in this example, we'll use DisplayVideoFrameSync sequentially.
+    // This might be "good enough" for many cases but isn't guaranteed genlock-perfect.
+
+    char tempLog[200]; // Moved here for reuse
+    hr = g_fillDeckLinkOutput->DisplayVideoFrameSync(g_fillVideoFrame);
+    if (FAILED(hr)) {
+        sprintf_s(tempLog, sizeof(tempLog), "DisplayVideoFrameSync failed for Fill frame. HRESULT: 0x%08X", static_cast<unsigned int>(hr));
+        LogMessage(tempLog);
+        return hr;
+    }
+    LogMessage("DisplayVideoFrameSync successful for Fill frame.");
+
+    // Re-declare hr for clarity, or just reuse.
+    hr = g_keyDeckLinkOutput->DisplayVideoFrameSync(g_keyVideoFrame);
+    if (FAILED(hr)) {
+        sprintf_s(tempLog, sizeof(tempLog), "DisplayVideoFrameSync failed for Key frame. HRESULT: 0x%08X", static_cast<unsigned int>(hr));
+        LogMessage(tempLog);
+        // Note: Fill frame was already displayed. State is now a bit inconsistent.
+        if (FAILED(hr)) {
+            return hr;
+        }
+    }
+    LogMessage("DisplayVideoFrameSync successful for Key frame.");
+    return S_OK;
+}
+
+
 DLL_EXPORT HRESULT EnableKeyer(bool useExternalMode) {
-    if (!g_deviceInitialized || !g_deckLinkKeyer) {
+    if (!g_fillDeviceInitialized || !g_fillDeckLinkKeyer) { // Keyer is on the fill device
         LogMessage("Cannot enable keyer: Device not initialized or keyer interface not available.");
         return E_FAIL;
     }
 
+    HRESULT hr_conf = S_OK;
+    if (g_fillDeckLinkConfiguration) {
+        // LogMessage("Attempting to configure keying via IDeckLinkConfiguration..."); // Not currently used
+
+        // Try to set the video output connection to one that supports keying.
+        // For SDI, this might be bmdVideoConnectionSDI or a specific one if the card has multiple.
+        // This step might not always be necessary or might not change behavior if the output
+        // is already implicitly set up by EnableVideoOutput.
+        // hr_conf = g_fillDeckLinkConfiguration->SetInt(bmdDeckLinkConfigVideoOutputConnection, bmdVideoConnectionSDI);
+        // if (FAILED(hr_conf)) {
+        //     char confLog[150];
+        //     sprintf_s(confLog, sizeof(confLog), "Failed to set bmdDeckLinkConfigVideoOutputConnection. HRESULT: 0x%08X", static_cast<unsigned int>(hr_conf));
+        //     LogMessage(confLog);
+        // } else {
+        //     LogMessage("Set bmdDeckLinkConfigVideoOutputConnection successfully (or it was already set).");
+        // }
+
+        // More importantly, try to set the keying mode if such an option exists.
+        // BMDDeckLinkOutputKeyingMode is not a standard config ID.
+        // The keyer is typically controlled directly via IDeckLinkKeyer::Enable.
+        // However, some older APIs or specific card configurations might have used this.
+        // For modern external keying, IDeckLinkKeyer::Enable(true) is the primary method.
+        // We'll leave this commented unless specific documentation for Duo 2 suggests it.
+        // hr_conf = g_fillDeckLinkConfiguration->SetInt(bmdDeckLinkConfigurationKeyingMode, useExternalMode ? bmdExternalKeying : bmdInternalKeying); // Fictional example
+    }
+
     // The IDeckLinkKeyer::Enable method directly takes a boolean to specify
     // whether to use external keying (TRUE) or internal keying (FALSE).
-    // This makes the IDeckLinkConfiguration step for setting the mode redundant for this call.
-    HRESULT hr = g_deckLinkKeyer->Enable(useExternalMode); 
+    HRESULT hr = g_fillDeckLinkKeyer->Enable(useExternalMode); 
+    char tempLog[200];
+    // sprintf_s(tempLog, sizeof(tempLog), "IDeckLinkKeyer->Enable(useExternalMode=%s) called. HRESULT: 0x%08X", useExternalMode ? "true" : "false", static_cast<unsigned int>(hr));
+    // LogMessage(tempLog); // Python side will log success/failure of the call
+
     if (FAILED(hr)) {
-        LogMessage(useExternalMode ? "IDeckLinkKeyer->Enable(TRUE) for external keying failed." : "IDeckLinkKeyer->Enable(FALSE) for internal keying failed.");
         g_keyerEnabled = false;
         return hr;
     }
     g_keyerEnabled = true;
-    LogMessage(useExternalMode ? "External keyer enabled." : "Internal keyer enabled.");
     return S_OK;
 }
 
 DLL_EXPORT HRESULT DisableKeyer() {
-    if (!g_deviceInitialized || !g_deckLinkKeyer) {
+    if (!g_fillDeviceInitialized || !g_fillDeckLinkKeyer) {
         // If device isn't init, keyer shouldn't be active. If keyer interface is null, can't disable.
         LogMessage("Cannot disable keyer: Device not initialized or keyer interface not available.");
-        if (!g_deckLinkKeyer && g_keyerEnabled) g_keyerEnabled = false; // Correct state if interface is gone
+        if (!g_fillDeckLinkKeyer && g_keyerEnabled) g_keyerEnabled = false; // Correct state if interface is gone
         return E_FAIL; // Or S_OK if "already disabled" is acceptable.
     }
     if (!g_keyerEnabled) {
@@ -465,19 +688,19 @@ DLL_EXPORT HRESULT DisableKeyer() {
         return S_OK;
     }
 
-    HRESULT hr = g_deckLinkKeyer->Disable();
+    HRESULT hr = g_fillDeckLinkKeyer->Disable();
     if (FAILED(hr)) {
         LogMessage("IDeckLinkKeyer->Disable() failed.");
         // State of g_keyerEnabled might be uncertain here, but typically it would be considered disabled.
         return hr;
     }
     g_keyerEnabled = false;
-    LogMessage("Keyer disabled.");
+    // LogMessage("Keyer disabled."); // Python side will confirm
     return S_OK;
 }
 
 DLL_EXPORT HRESULT SetKeyerLevel(unsigned char level) {
-    if (!g_deviceInitialized || !g_deckLinkKeyer) {
+    if (!g_fillDeviceInitialized || !g_fillDeckLinkKeyer) {
         LogMessage("Cannot set keyer level: Device not initialized or keyer interface not available.");
         return E_FAIL;
     }
@@ -486,18 +709,18 @@ DLL_EXPORT HRESULT SetKeyerLevel(unsigned char level) {
         return E_FAIL;
     }
 
-    HRESULT hr = g_deckLinkKeyer->SetLevel(static_cast<UINT8>(level)); // API expects UINT8
+    HRESULT hr = g_fillDeckLinkKeyer->SetLevel(static_cast<UINT8>(level)); // API expects UINT8
     if (FAILED(hr)) {
         LogMessage("IDeckLinkKeyer->SetLevel() failed.");
         return hr;
     }
-    LogMessage(("Keyer level set to " + std::to_string(level)).c_str());
+    // LogMessage(("Keyer level set to " + std::to_string(level)).c_str()); // Python side will confirm
     return S_OK;
 }
 
 DLL_EXPORT HRESULT IsKeyerActive(bool* isActive) {
     if (!isActive) return E_POINTER;
-    if (!g_deviceInitialized || !g_deckLinkKeyer) {
+    if (!g_fillDeviceInitialized || !g_fillDeckLinkKeyer) {
         *isActive = false; // If device/keyer not ready, it's not active.
         return S_OK; // Or E_FAIL if strict "must be initialized"
     }
@@ -514,20 +737,20 @@ BOOL APIENTRY DllMain(HMODULE hModule,
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
         // Optional: Disable thread library calls for performance if not using TLS or thread-local COM objects
-        // DisableThreadLibraryCalls(hModule);
-        LogMessage("DLL_PROCESS_ATTACH");
+        DisableThreadLibraryCalls(hModule); // Good practice if not using per-thread features
+        // LogMessage("DLL_PROCESS_ATTACH");
         break;
     case DLL_THREAD_ATTACH:
-        LogMessage("DLL_THREAD_ATTACH");
+        // LogMessage("DLL_THREAD_ATTACH"); // Can be very noisy
         break;
     case DLL_THREAD_DETACH:
-        LogMessage("DLL_THREAD_DETACH");
+        // LogMessage("DLL_THREAD_DETACH"); // Can be very noisy
         break;
     case DLL_PROCESS_DETACH:
-        LogMessage("DLL_PROCESS_DETACH");
+        // LogMessage("DLL_PROCESS_DETACH");
         // This is a last resort. Explicit call to ShutdownDLL() is highly preferred.
         if (g_dllInitialized) {
-            LogMessage("Warning: DLL_PROCESS_DETACH called while DLL still initialized. Attempting cleanup.");
+            // LogMessage("Warning: DLL_PROCESS_DETACH called while DLL still initialized. Attempting cleanup.");
             ShutdownDLL();
         }
         else if (g_comInitialized) { // If only COM was initialized (e.g. InitializeDLL failed partway)

@@ -16,7 +16,7 @@ from PySide6.QtGui import QIcon, QImage, QColor # Import QIcon, QImage, QColor f
 from windows.main_window import MainWindow
 
 # Import our new DeckLink handler
-import decklink_handler 
+# import decklink_handler # DeckLink is now handled by MainWindow
 
 
 if __name__ == "__main__":
@@ -46,18 +46,18 @@ if __name__ == "__main__":
         main_window.setWindowIcon(app_icon_object)
 
     # --- Load and initialize DeckLink DLL using the handler ---
-    if decklink_handler.initialize_output():
+    #if decklink_handler.initialize_output():
         # Register shutdown_decklink_output to be called on Qt application exit
-        app.aboutToQuit.connect(decklink_handler.shutdown_output)
-        print("DeckLink output initialized via handler. Shutdown scheduled on app quit.")
-    else:
+        #app.aboutToQuit.connect(decklink_handler.shutdown_output)
+        #print("DeckLink output initialized via handler. Shutdown scheduled on app quit.")
+    #else:
         # decklink_handler.initialize_output() will print its own error messages
         # Display the message on MainWindow's status bar
-        main_window.set_status_message(
-            "DeckLink Error: Could not initialize. No card detected or driver issue.",
-            0 # Persistent message
-        )
-        print("Proceeding without DeckLink output (status bar updated).")
+        #main_window.set_status_message(
+        #    "DeckLink Error: Could not initialize. No card detected or driver issue.",
+        #    0 # Persistent message
+        #)
+        #print("Proceeding without DeckLink output (status bar updated).")
     # --- End DeckLink Load and Init ---
 
     mw_show_start_time = time.perf_counter()
