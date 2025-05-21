@@ -109,3 +109,10 @@
       - [ ] Implement a strong warning/disclaimer about font licensing when users add fonts to the project directory.
   - [ ] (Future) Explore splitting `songs/` into a dedicated "Song Library" repository if monorepo becomes too large.
 
+
+
+
+
+
+
+Modify the DLL so that I can set the profile of the decklink device to be (bmdProfileTwoSubDevicesHalfDuplex) if it is not already that

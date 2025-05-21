@@ -11,6 +11,10 @@ Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
 		Debug|x86 = Debug|x86
+		Release_SDK14_2|x64 = Release_SDK14_2|x64
+		Release_SDK14_2|x86 = Release_SDK14_2|x86
+		Release_SDK14_4|x64 = Release_SDK14_4|x64
+		Release_SDK14_4|x86 = Release_SDK14_4|x86
 		Release|x64 = Release|x64
 		Release|x86 = Release|x86
 	EndGlobalSection
@@ -19,6 +23,14 @@ Global
 		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Debug|x64.Build.0 = Debug|x64
 		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Debug|x86.ActiveCfg = Debug|Win32
 		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Debug|x86.Build.0 = Debug|Win32
+		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release_SDK14_2|x64.ActiveCfg = Release_SDK14_2|x64
+		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release_SDK14_2|x64.Build.0 = Release_SDK14_2|x64
+		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release_SDK14_2|x86.ActiveCfg = Release_SDK14_2|Win32
+		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release_SDK14_2|x86.Build.0 = Release_SDK14_2|Win32
+		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release_SDK14_4|x64.ActiveCfg = Release_SDK14_4|x64
+		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release_SDK14_4|x64.Build.0 = Release_SDK14_4|x64
+		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release_SDK14_4|x86.ActiveCfg = Release_SDK14_4|Win32
+		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release_SDK14_4|x86.Build.0 = Release_SDK14_4|Win32
 		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release|x64.ActiveCfg = Release|x64
 		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release|x64.Build.0 = Release|x64
 		{057B9A1F-9B57-4550-BAA6-F07AFAA885E5}.Release|x86.ActiveCfg = Release|Win32

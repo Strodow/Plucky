@@ -23,9 +23,16 @@
 
 // --- Global DeckLink SDK objects and state ---
 static IDeckLinkIterator* g_deckLinkIterator = nullptr;
+static IDeckLinkProfileManager* g_deckLinkProfileManager = nullptr; // For profile-aware enumeration
+static IDeckLinkProfile*  g_activeCardProfile = nullptr;  // Active profile
+
 static IDeckLinkAPIInformation* g_deckLinkAPIInformation = nullptr; // For API version
 static std::vector<IDeckLink*>          g_deckLinkDevices; // Stores discovered DeckLink devices (AddRef'd)
 static std::vector<std::string>         g_deckLinkDeviceNames;
+
+// --- Profile Information Globals ---
+static std::vector<IDeckLinkProfile*>   g_availableProfiles; // Stores all discoverable profiles (AddRef'd)
+static std::vector<std::string>         g_availableProfileNames;
 
 // --- Fill Output Globals ---
 static IDeckLink* g_fillDeckLink = nullptr;
@@ -67,6 +74,26 @@ void LogMessage(const char* message) {
     std::cout << "[DeckLinkWrapper] " << message << std::endl;
 }
 
+// Helper function to convert BMDProfileID to a human-readable string
+std::string BMDProfileIDToString(BMDProfileID profileID) {
+    switch (profileID) {
+        case bmdProfileOneSubDeviceFullDuplex:
+            return "1 SubDevice Full Duplex";
+        case bmdProfileOneSubDeviceHalfDuplex:
+            return "1 SubDevice Half Duplex";
+        case bmdProfileTwoSubDevicesFullDuplex:
+            return "2 SubDevices Full Duplex";
+        case bmdProfileTwoSubDevicesHalfDuplex:
+            return "2 SubDevices Half Duplex";
+        case bmdProfileFourSubDevicesHalfDuplex:
+            return "4 SubDevices Half Duplex";
+        // Add any other BMDProfileID enum values defined in your DeckLinkAPI_h.h
+        default:
+            char buf[64];
+            sprintf_s(buf, sizeof(buf), "Unknown Profile ID (0x%08X)", static_cast<unsigned int>(profileID));
+            return std::string(buf);
+    }
+}
 void ReleaseSelectedDeviceResources() {
     // --- Release Fill Device Resources ---
     if (g_keyerEnabled && g_fillDeckLinkKeyer) {
@@ -155,33 +182,137 @@ DLL_EXPORT HRESULT InitializeDLL() {
         g_comInitialized = true;
         // LogMessage("COM Initialized by DLL successfully.");
     }
+    
+    // First, ensure we have an iterator to find a physical card
+    if (g_deckLinkIterator == nullptr) {
+        HRESULT hr_iter_create = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&g_deckLinkIterator);
+        if (FAILED(hr_iter_create) || g_deckLinkIterator == nullptr) {
+            LogMessage("Failed to create DeckLink Iterator instance in InitializeDLL.");
+            return hr_iter_create;
+        }
+    }
 
-    // Get the API Information interface
-    if (g_deckLinkAPIInformation == nullptr) {
-        // CLSID_CDeckLinkAPIInformation is not a standard DeckLink CLSID.
-        // We typically get IDeckLinkAPIInformation from the IDeckLinkIterator.
-        // Let's create the iterator here if not already done, then query for API info.
-        if (g_deckLinkIterator == nullptr) {
-            HRESULT hr_iter = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&g_deckLinkIterator);
-            if (FAILED(hr_iter) || g_deckLinkIterator == nullptr) {
-                LogMessage("Failed to create DeckLink Iterator instance in InitializeDLL (for API info).");
-                // Proceed without API info, but log it. It's not critical for core functionality.
+    // Get the first physical DeckLink card
+    IDeckLink* physicalCard = nullptr;
+    HRESULT hr_card = g_deckLinkIterator->Next(&physicalCard);
+    if (FAILED(hr_card) || physicalCard == nullptr) {
+        LogMessage("No DeckLink cards found or failed to get the first card.");
+        // g_deckLinkIterator->Release(); // Release iterator if no card found? Or keep for API info?
+        // g_deckLinkIterator = nullptr; // Let's keep it for API info for now.
+        // No card, so no profile manager from card, and no active profile.
+        // GetDeviceCount will return 0. This isn't a fatal error for InitializeDLL itself.
+    } else {
+        // Log some attributes of the first physical card
+        IDeckLinkProfileAttributes* profileAttributes = nullptr; // Corrected interface
+        HRESULT hr_attr = physicalCard->QueryInterface(IID_IDeckLinkProfileAttributes, (void**)&profileAttributes); // Corrected IID
+        if (SUCCEEDED(hr_attr) && profileAttributes != nullptr) {
+            BSTR tempBSTR = nullptr;
+            if (SUCCEEDED(physicalCard->GetDisplayName(&tempBSTR))) {
+                LogMessage(("First physical card Display Name: " + BSTRToStdString(tempBSTR)).c_str());
+                // BSTRToStdString with _bstr_t(bstr, false) handles SysFreeString, so no explicit SysFreeString(tempBSTR) needed here.
+            }
+
+            long long profileID_ll = 0; 
+            if (SUCCEEDED(profileAttributes->GetInt(BMDDeckLinkProfileID, &profileID_ll))) { // Use profileAttributes
+                char msg[100];
+                sprintf_s(msg, sizeof(msg), "First physical card BMDDeckLinkProfileID: %lld", profileID_ll);
+                LogMessage(msg);
+            }
+
+            BOOL internalKeying = FALSE;
+            if (SUCCEEDED(profileAttributes->GetFlag(BMDDeckLinkSupportsInternalKeying, &internalKeying))) { // Use profileAttributes
+                LogMessage(internalKeying ? "First physical card supports Internal Keying." : "First physical card does NOT support Internal Keying.");
+            }
+            BOOL externalKeying = FALSE;
+            if (SUCCEEDED(profileAttributes->GetFlag(BMDDeckLinkSupportsExternalKeying, &externalKeying))) { // Use profileAttributes
+                LogMessage(externalKeying ? "First physical card supports External Keying." : "First physical card does NOT support External Keying.");
+            }
+
+            profileAttributes->Release(); // Release the correct interface
+        }
+
+        // Now, obtain IDeckLinkProfileManager from the specific physicalCard
+        if (g_deckLinkProfileManager == nullptr) {
+            HRESULT hr_pm = physicalCard->QueryInterface(IID_IDeckLinkProfileManager, (void**)&g_deckLinkProfileManager);
+            if (FAILED(hr_pm) || g_deckLinkProfileManager == nullptr) {
+                LogMessage("Failed to query IDeckLinkProfileManager from the DeckLink card.");
+                // Proceeding without profile manager means GetDeviceCount might not use profile-specific enumeration.
             }
         }
-        if (g_deckLinkIterator) {
+        physicalCard->Release(); // We're done with this specific card instance for now
+    }
+
+    // Populate available profiles and find the active one
+    if (g_deckLinkProfileManager != nullptr) {
+        // Clear previous profile lists
+        for (IDeckLinkProfile* prof : g_availableProfiles) {
+            if (prof) prof->Release();
+        }
+        g_availableProfiles.clear();
+        g_availableProfileNames.clear();
+        if (g_activeCardProfile) { // Release previous active if any
+            g_activeCardProfile->Release();
+            g_activeCardProfile = nullptr;
+        }
+
+        IDeckLinkProfileIterator* profileIterator = nullptr;
+        HRESULT hr_iter = g_deckLinkProfileManager->GetProfiles(&profileIterator);
+        if (SUCCEEDED(hr_iter) && profileIterator != nullptr) {
+            IDeckLinkProfile* currentProfile = nullptr;
+            while (profileIterator->Next(&currentProfile) == S_OK) {
+                g_availableProfiles.push_back(currentProfile); // currentProfile is AddRef'd by Next(), store it
+                
+                std::string profileNameStr = "Profile (Name N/A)"; // Default
+                IDeckLink* associatedDevice = nullptr;
+                if (SUCCEEDED(currentProfile->GetDevice(&associatedDevice)) && associatedDevice != nullptr) {
+                    IDeckLinkProfileAttributes* deviceAttributes = nullptr;
+                    if (SUCCEEDED(associatedDevice->QueryInterface(IID_IDeckLinkProfileAttributes, (void**)&deviceAttributes)) && deviceAttributes != nullptr) {
+                        LONGLONG profileID_ll = 0;
+                        if (SUCCEEDED(deviceAttributes->GetInt(BMDDeckLinkProfileID, &profileID_ll))) {
+                            profileNameStr = BMDProfileIDToString(static_cast<BMDProfileID>(profileID_ll));
+                        } else {
+                            LogMessage("Failed to get BMDDeckLinkProfileID attribute for a profile's device.");
+                        }
+                        deviceAttributes->Release();
+                    } else {
+                        LogMessage("Failed to QI for IDeckLinkProfileAttributes from profile's device.");
+                    }
+                    associatedDevice->Release();
+                } else {
+                    LogMessage("Failed to get device associated with a profile.");
+                }
+                g_availableProfileNames.push_back(profileNameStr);
+
+                BOOL isActive = FALSE;
+                // If g_activeCardProfile is not yet set and this one is active, mark it.
+                if (g_activeCardProfile == nullptr && SUCCEEDED(currentProfile->IsActive(&isActive)) && isActive) {
+                    g_activeCardProfile = currentProfile;
+                    g_activeCardProfile->AddRef(); // AddRef specifically for g_activeCardProfile
+                    // LogMessage("Found active DeckLink profile.");
+                    // Don't break, continue to populate all available profiles
+                }
+                // currentProfile is now stored in g_availableProfiles, its ref count is managed there.
+            }
+            profileIterator->Release();
+        } else {
+            LogMessage("Failed to get profile iterator from DeckLink Profile Manager.");
+        }
+    }
+
+    // Get API Information from the Profile Manager (or fallback to iterator if needed)
+    if (g_deckLinkAPIInformation == nullptr) {
+        if (g_deckLinkProfileManager) {
+            HRESULT hr_api_info = g_deckLinkProfileManager->QueryInterface(IID_IDeckLinkAPIInformation, (void**)&g_deckLinkAPIInformation);
+            if (SUCCEEDED(hr_api_info) && g_deckLinkAPIInformation != nullptr) {
+                // LogMessage("Successfully queried IDeckLinkAPIInformation from Profile Manager.");
+            }
+        } else if (g_deckLinkIterator) { // Fallback to iterator if profile manager wasn't obtained
             HRESULT hr_api_info = g_deckLinkIterator->QueryInterface(IID_IDeckLinkAPIInformation, (void**)&g_deckLinkAPIInformation);
             if (SUCCEEDED(hr_api_info) && g_deckLinkAPIInformation != nullptr) {
-                // LogMessage("Successfully queried IDeckLinkAPIInformation interface in InitializeDLL.");
-            } 
-            /* else { // Don't log failure here, GetAPIVersion will handle it if called
-                LogMessage("Failed to query IDeckLinkAPIInformation interface in InitializeDLL.");
-                if (g_deckLinkAPIInformation) { // Should be null if QueryInterface failed to set it or returned error
-                    g_deckLinkAPIInformation->Release(); // Should not be necessary if QI failed, but safe
-                    g_deckLinkAPIInformation = nullptr;
-                }
-            } */ // End of commented-out else block
-        } // Closes: if (g_deckLinkIterator)
-    } // Closes: if (g_deckLinkAPIInformation == nullptr)
+                // LogMessage("Successfully queried IDeckLinkAPIInformation from Iterator (fallback).");
+            }
+        }
+    }
 
     g_dllInitialized = true;
     // LogMessage("DeckLink DLL Initialized successfully."); // Python side will confirm
@@ -240,6 +371,17 @@ DLL_EXPORT HRESULT ShutdownDLL() {
     g_deckLinkDevices.clear();
     g_deckLinkDeviceNames.clear();
 
+    // Release available profiles
+    for (IDeckLinkProfile* prof : g_availableProfiles) {
+        if (prof) prof->Release();
+    }
+    g_availableProfiles.clear();
+    g_availableProfileNames.clear();
+
+    if (g_activeCardProfile) {
+        g_activeCardProfile->Release();
+        g_activeCardProfile = nullptr;
+    }
     if (g_deckLinkIterator) {
         g_deckLinkIterator->Release();
         g_deckLinkIterator = nullptr;
@@ -248,6 +390,11 @@ DLL_EXPORT HRESULT ShutdownDLL() {
     if (g_deckLinkAPIInformation) {
         g_deckLinkAPIInformation->Release();
         g_deckLinkAPIInformation = nullptr;
+    }
+
+    if (g_deckLinkProfileManager) {
+        g_deckLinkProfileManager->Release();
+        g_deckLinkProfileManager = nullptr;
     }
 
     if (g_comInitialized) {
@@ -263,11 +410,12 @@ DLL_EXPORT HRESULT ShutdownDLL() {
 
 DLL_EXPORT HRESULT GetDeviceCount(int* count_out) { // Changed parameter name for clarity
     if (!g_dllInitialized) { // Iterator is now managed within this function
-        LogMessage("DLL not initialized. Call InitializeDLL first.");
+        LogMessage("GetDeviceCount: DLL not initialized. Call InitializeDLL first.");
         return E_FAIL;
     }
     if (!count_out) { LogMessage("GetDeviceCount: count_out pointer is null."); return E_POINTER; }
 
+    *count_out = 0; // Default to zero
 
     // Clear previous enumeration results
     for (IDeckLink* dev : g_deckLinkDevices) {
@@ -275,36 +423,48 @@ DLL_EXPORT HRESULT GetDeviceCount(int* count_out) { // Changed parameter name fo
     }
     g_deckLinkDevices.clear();
     g_deckLinkDeviceNames.clear();
-    // Release existing iterator and create a new one for a fresh enumeration
-    if (g_deckLinkIterator != nullptr) {
+
+    // Use IDeckLinkIterator to enumerate available devices.
+    // This iterator will list devices active under the current profile.
+    if (g_deckLinkIterator == nullptr) {
+        // This case should ideally not be hit if InitializeDLL was successful,
+        // but as a safeguard, try to create it.
+        HRESULT hr_iter_create = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&g_deckLinkIterator);
+        if (FAILED(hr_iter_create) || g_deckLinkIterator == nullptr) {
+            LogMessage("GetDeviceCount: Failed to create DeckLink Iterator (was null).");
+            return hr_iter_create;
+        }
+    } else {
+        // If iterator exists, we need to "reset" it to enumerate from the beginning.
+        // IDeckLinkIterator doesn't have a Reset(). Release and recreate.
         g_deckLinkIterator->Release();
-        g_deckLinkIterator = nullptr;
-    }
-
-    HRESULT hr = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&g_deckLinkIterator);
-    if (FAILED(hr) || g_deckLinkIterator == nullptr) {
-        LogMessage("Failed to create DeckLink Iterator instance in GetDeviceCount.");
-        *count_out = 0;
-        return hr; // Or E_FAIL
-    }
-
-    IDeckLink* tempDeckLink = nullptr; // Initialize to nullptr
-
-    int deviceIdx = 0;
-    while ((hr = g_deckLinkIterator->Next(&tempDeckLink)) == S_OK) {
-        BSTR deviceNameBSTR = nullptr;
-        if (tempDeckLink->GetModelName(&deviceNameBSTR) == S_OK) {
-            g_deckLinkDevices.push_back(tempDeckLink); // tempDeckLink is AddRef'd by Next(), store it
-            g_deckLinkDeviceNames.push_back(BSTRToStdString(deviceNameBSTR));
-            SysFreeString(deviceNameBSTR); // BSTRToStdString made a copy
-            deviceIdx++;
-        }
-        else {
-            tempDeckLink->Release(); // Release if we can't get name or don't store it
+        g_deckLinkIterator = nullptr; // Nullify before CoCreateInstance
+        HRESULT hr_iter_recreate = CoCreateInstance(CLSID_CDeckLinkIterator, NULL, CLSCTX_ALL, IID_IDeckLinkIterator, (void**)&g_deckLinkIterator);
+        if (FAILED(hr_iter_recreate) || g_deckLinkIterator == nullptr) {
+            LogMessage("GetDeviceCount: Failed to re-create DeckLink Iterator.");
+            return hr_iter_recreate;
         }
     }
-    // If hr is S_FALSE, it means no more items, which is normal.
-    // If hr is a failure code, something went wrong.
+
+    IDeckLink* tempDeckLink = nullptr;
+    HRESULT hr_next;
+    while ((hr_next = g_deckLinkIterator->Next(&tempDeckLink)) == S_OK) {
+        if (tempDeckLink != nullptr) { // Should always be non-null if S_OK
+            BSTR deviceNameBSTR = nullptr;
+            // GetModelName or GetDisplayName can be used. GetDisplayName might be more specific for sub-devices.
+            if (tempDeckLink->GetDisplayName(&deviceNameBSTR) == S_OK) {
+                g_deckLinkDevices.push_back(tempDeckLink); // tempDeckLink is AddRef'd by Next(), store it
+                g_deckLinkDeviceNames.push_back(BSTRToStdString(deviceNameBSTR)); // BSTRToStdString handles freeing deviceNameBSTR
+                // SysFreeString(deviceNameBSTR); // REMOVE: BSTRToStdString handles freeing deviceNameBSTR
+            } else {
+                LogMessage("Failed to get device name during enumeration via IDeckLinkIterator.");
+                tempDeckLink->Release(); // Release if not stored
+            }
+            // tempDeckLink is now stored or released.
+        }
+    }
+    // If hr_next is S_FALSE, it means no more items, which is normal.
+    // If hr_next is a failure HRESULT, it will be returned by the caller of GetDeviceCount.
 
     *count_out = static_cast<int>(g_deckLinkDevices.size());
     // LogMessage(("Found " + std::to_string(*count) + " DeckLink devices.").c_str()); // Python side will log this
@@ -313,7 +473,10 @@ DLL_EXPORT HRESULT GetDeviceCount(int* count_out) { // Changed parameter name fo
 
 DLL_EXPORT HRESULT GetDeviceName(int index, char* nameBuffer, int bufferLength) {
     if (!g_dllInitialized) return E_FAIL;
-    if (!nameBuffer) return E_POINTER;
+    if (!nameBuffer) {
+        LogMessage("GetDeviceName: nameBuffer is null.");
+        return E_POINTER;
+    }
     if (index < 0 || index >= static_cast<int>(g_deckLinkDeviceNames.size())) {
         return E_INVALIDARG;
     }
@@ -324,6 +487,71 @@ DLL_EXPORT HRESULT GetDeviceName(int index, char* nameBuffer, int bufferLength) 
         return STRSAFE_E_INSUFFICIENT_BUFFER; // More specific error
     }
     return S_OK;
+}
+
+DLL_EXPORT HRESULT GetAvailableProfileCount(int* count_out) {
+    if (!g_dllInitialized) {
+        LogMessage("GetAvailableProfileCount: DLL not initialized.");
+        return E_FAIL;
+    }
+    if (!count_out) return E_POINTER;
+
+    *count_out = static_cast<int>(g_availableProfileNames.size());
+    return S_OK;
+}
+
+DLL_EXPORT HRESULT GetAvailableProfileName(int index, char* nameBuffer, int bufferLength) {
+    if (!g_dllInitialized) return E_FAIL;
+    if (!nameBuffer) return E_POINTER;
+
+    if (index < 0 || index >= static_cast<int>(g_availableProfileNames.size())) {
+        return E_INVALIDARG;
+    }
+
+    const std::string& name = g_availableProfileNames[index];
+    if (strncpy_s(nameBuffer, bufferLength, name.c_str(), _TRUNCATE) != 0) {
+        if (bufferLength > 0) nameBuffer[0] = '\0';
+        return STRSAFE_E_INSUFFICIENT_BUFFER;
+    }
+    return S_OK;
+}
+
+DLL_EXPORT HRESULT GetActiveProfileName(char* nameBuffer, int bufferLength) {
+    if (!g_dllInitialized) return E_FAIL;
+    if (!nameBuffer) return E_POINTER;
+
+    if (!g_activeCardProfile) {
+        LogMessage("GetActiveProfileName: No active profile found or identified.");
+        if (bufferLength > 0) nameBuffer[0] = '\0'; // Return empty string
+        return S_FALSE; // Indicate not found but not a hard error
+    }
+
+    std::string activeProfileNameStr = "Active Profile (Name N/A)"; // Default
+    IDeckLink* associatedDevice = nullptr;
+    if (SUCCEEDED(g_activeCardProfile->GetDevice(&associatedDevice)) && associatedDevice != nullptr) {
+        IDeckLinkProfileAttributes* deviceAttributes = nullptr;
+        if (SUCCEEDED(associatedDevice->QueryInterface(IID_IDeckLinkProfileAttributes, (void**)&deviceAttributes)) && deviceAttributes != nullptr) {
+            LONGLONG profileID_ll = 0;
+            if (SUCCEEDED(deviceAttributes->GetInt(BMDDeckLinkProfileID, &profileID_ll))) {
+                activeProfileNameStr = BMDProfileIDToString(static_cast<BMDProfileID>(profileID_ll));
+            } else {
+                LogMessage("GetActiveProfileName: Failed to get BMDDeckLinkProfileID attribute for active profile's device.");
+            }
+            deviceAttributes->Release();
+        } else {
+            LogMessage("GetActiveProfileName: Failed to QI for IDeckLinkProfileAttributes from active profile's device.");
+        }
+        associatedDevice->Release();
+    } else {
+        LogMessage("GetActiveProfileName: Failed to get device associated with active profile.");
+    }
+
+    if (strncpy_s(nameBuffer, bufferLength, activeProfileNameStr.c_str(), _TRUNCATE) == 0) {
+        return S_OK;
+    } else {
+        if (bufferLength > 0) nameBuffer[0] = '\0'; // Ensure null termination
+        return STRSAFE_E_INSUFFICIENT_BUFFER;
+    }
 }
 
 DLL_EXPORT HRESULT GetAPIVersion(long long* version) { // Use long long for the packed version

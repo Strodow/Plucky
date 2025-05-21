@@ -10,6 +10,7 @@ vendor/DeckLinkSDK/Linux
 vendor/DeckLinkSDK/Mac
 vendor/DeckLinkSDK/DeckLinkWraper/.vs/
 vendor/DeckLinkSDK/14.4
+vendor/DeckLinkSDK/14.2
 
 # Ignore Python bytecode files
 __pycache__/

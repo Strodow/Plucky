@@ -1,0 +1,2 @@
+Get the Decklink wrapper to look at the version folders
+Update the 14.0 SKD DLL to 14.2 / 14.2.1 (version ProPresenter likes)
