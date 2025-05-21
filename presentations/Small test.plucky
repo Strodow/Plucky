@@ -1,0 +1,156 @@
+[
+    {
+        "id": "c3a0b497-8ac3-4f96-9393-431043b74153",
+        "lyrics": "",
+        "background_image_path": "C:/Users/Logan/Documents/Plucky/Plucky/resources/250308-lent background.jpg",
+        "song_title": "Test Song",
+        "overlay_label": "250308-lent background.jpg",
+        "background_color": "#00000000",
+        "is_background_slide": true,
+        "template_settings": {
+            "text_boxes": [],
+            "text_content": {}
+        },
+        "banner_color": null,
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "8c9095e4-402a-4ed3-bc8a-9b898d3cb841",
+        "lyrics": "",
+        "background_image_path": "C:/Users/Logan/Documents/Plucky/Plucky/resources/241230-what if background.jpg",
+        "song_title": "Test Song",
+        "overlay_label": "241230-what if background.jpg",
+        "background_color": "#00000000",
+        "is_background_slide": true,
+        "template_settings": {
+            "text_boxes": [],
+            "text_content": {}
+        },
+        "banner_color": null,
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "853e7d0d-08df-420a-a1a0-a7814f931be9",
+        "lyrics": "Performer",
+        "background_image_path": null,
+        "song_title": "Test Song",
+        "overlay_label": "",
+        "background_color": null,
+        "is_background_slide": false,
+        "template_settings": {
+            "layout_name": "Title Slide",
+            "text_boxes": [
+                {
+                    "id": "Performer",
+                    "x_pc": 5.0,
+                    "y_pc": 80.0,
+                    "width_pc": 45.0,
+                    "height_pc": 15.0,
+                    "h_align": "left",
+                    "v_align": "center",
+                    "font_family": "Futura",
+                    "font_size": 30,
+                    "font_color": "#ffffff",
+                    "force_all_caps": false,
+                    "outline_enabled": false,
+                    "outline_color": "#000000",
+                    "outline_width": 1,
+                    "shadow_enabled": false,
+                    "shadow_color": "#b4000000",
+                    "shadow_offset_x": 1,
+                    "shadow_offset_y": 1
+                },
+                {
+                    "id": "Title",
+                    "x_pc": 7.0,
+                    "y_pc": 70.0,
+                    "width_pc": 85.0,
+                    "height_pc": 10.0,
+                    "h_align": "center",
+                    "v_align": "top",
+                    "font_family": "Futura PT",
+                    "font_size": 80,
+                    "font_color": "#ffffff",
+                    "force_all_caps": true,
+                    "outline_enabled": false,
+                    "outline_color": "#000000",
+                    "outline_width": 1,
+                    "shadow_enabled": false,
+                    "shadow_color": "#b4ff21cb",
+                    "shadow_offset_x": 4,
+                    "shadow_offset_y": 2
+                },
+                {
+                    "id": "Attribution",
+                    "x_pc": 50.0,
+                    "y_pc": 80.0,
+                    "width_pc": 45.0,
+                    "height_pc": 15.0,
+                    "h_align": "right",
+                    "v_align": "center",
+                    "font_family": "Futura",
+                    "font_size": 30,
+                    "font_color": "#ffffff",
+                    "force_all_caps": false,
+                    "outline_enabled": false,
+                    "outline_color": "#000000",
+                    "outline_width": 1,
+                    "shadow_enabled": false,
+                    "shadow_color": "#b4000000",
+                    "shadow_offset_x": 1,
+                    "shadow_offset_y": 1
+                }
+            ],
+            "text_content": {
+                "Performer": "Performer",
+                "Title": "Song Title",
+                "Attribution": "Attribution"
+            }
+        },
+        "banner_color": null,
+        "slide_number": null,
+        "section_name": null
+    },
+    {
+        "id": "f986aa77-988d-4261-95d5-5cf9866c0b2a",
+        "lyrics": "This is a song la la la",
+        "background_image_path": null,
+        "song_title": "Test Song",
+        "overlay_label": "",
+        "background_color": null,
+        "is_background_slide": false,
+        "template_settings": {
+            "layout_name": "Projector Lyrics",
+            "text_boxes": [
+                {
+                    "id": "main_text",
+                    "x_pc": 10.0,
+                    "y_pc": 10.0,
+                    "width_pc": 80.0,
+                    "height_pc": 72.0,
+                    "h_align": "center",
+                    "v_align": "center",
+                    "font_family": "Futura PT",
+                    "font_size": 80,
+                    "font_color": "#ff0000",
+                    "force_all_caps": true,
+                    "outline_enabled": false,
+                    "outline_color": "#000000",
+                    "outline_width": 1,
+                    "shadow_enabled": false,
+                    "shadow_color": "#b4000000",
+                    "shadow_offset_x": 1,
+                    "shadow_offset_y": 1
+                }
+            ],
+            "text_content": {
+                "main_text": "This is a song la la la"
+            }
+        },
+        "banner_color": null,
+        "slide_number": null,
+        "section_name": null
+    }
+]

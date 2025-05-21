@@ -35,6 +35,7 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
 
     # New signal for inserting slide from layout
     insert_slide_from_layout_requested = Signal(int, str) # slide_id (to insert after), layout_name
+    insert_new_section_requested = Signal(int) # slide_id (to insert section AFTER this one)
     def __init__(self, slide_id: int, plucky_slide_mime_type: str, parent=None): # Added plucky_slide_mime_type
         super().__init__(parent)
         self._pixmap_to_display = QPixmap() # Stores the pixmap (already scaled by MainWindow)
@@ -346,6 +347,11 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         else: # No layout templates available
             insert_slide_submenu.setEnabled(False)
         
+        menu.addSeparator() # Separator before "Insert New Section"
+        insert_new_section_action = menu.addAction("Insert New Section After This...")
+        insert_new_section_action.triggered.connect(lambda: self.insert_new_section_requested.emit(self._slide_id))
+        menu.addSeparator() # Separator after "Insert New Section"
+
         apply_template_submenu = menu.addMenu("Apply Template")
         if self._available_template_names:
             for template_name in self._available_template_names:

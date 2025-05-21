@@ -286,12 +286,14 @@ class PresentationManager(QObject):
         self.presentation_changed.emit()
         print(f"PM: Redid command {command.__class__.__name__}. Undo stack size: {len(self.undo_stack)}")
     
-    def move_slide(self, source_index: int, target_index: int, _execute_command: bool = True) -> bool:
+    def move_slide(self, source_index: int, target_index: int, new_song_title: Optional[str], _execute_command: bool = True) -> bool:
         """
         Moves a slide from a source index to a target index.
         The target_index is the index *before* the source slide is removed if source_index < target_index,
         or the direct index if source_index > target_index.
         The SlideDragDropHandler should pass the 'actual_target_index' here.
+        The new_song_title will be applied to the moved slide. If None, the slide becomes untitled
+        or retains its current title if the logic in the caller doesn't provide a new one.
         """
         num_slides = len(self.slides)
         if not (0 <= source_index < num_slides):
@@ -306,6 +308,7 @@ class PresentationManager(QObject):
              return False
 
         slide_to_move = self.slides.pop(source_index)
+        slide_to_move.song_title = new_song_title # Update the song title of the moved slide
         self.slides.insert(target_index, slide_to_move)
         
         if _execute_command:

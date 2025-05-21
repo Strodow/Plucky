@@ -1,0 +1,66 @@
+{
+  "id": "song_a1b2c3d4_e5f6_7777_8888_999000abcdef", // UUIDv4 recommended, prefixed with "song_"
+  "title": "Amazing Grace",
+  "artist": "John Newton",                         // Optional: The primary artist
+  "copyright_info": "Public Domain",              // Optional: Copyright details
+  "ccli_number": null,                            // Optional: CCLI SongSelect number
+  "tags": ["hymn", "worship", "grace"],           // Optional: User-defined tags
+
+  "lyrics_sections": [ // Defines all unique lyrical/content blocks for the song
+    {
+      "section_id": "section_a1b2",            // Unique ID for this section within this song, prefixed with "section_"
+      "label": "Verse 1",                         // Human-readable label (e.g., "Verse 1", "Chorus", "Bridge", "Instrumental")
+      "content": "Amazing grace! How sweet the sound\nThat saved a wretch like me!", // Text content, \n for new lines
+      "template_id": "master_template_lyrics_left_01", // ID of the Master Template (from your Template Plan)
+      "notes": "Start gently",                    // Optional: Operator notes for this specific slide
+      "enabled": true                             // Is this section generally available/active for use in arrangements?
+    },
+    {
+      "section_id": "section_c3d4",
+      "label": "Verse 2",
+      "content": "I once was lost, but now am found,\nWas blind, but now I see.",
+      "template_id": "master_template_lyrics_left_01",
+      "notes": null,
+      "enabled": true
+    },
+    {
+      "section_id": "section_e5f6",
+      "label": "Chorus",
+      "content": "'Twas grace that taught my heart to fear,\nAnd grace my fears relieved;\nHow precious did that grace appear\nThe hour I first believed!",
+      "template_id": "master_template_chorus_center_bold_02",
+      "notes": "Build intensity here",
+      "enabled": true
+    },
+    {
+      "section_id": "section_g7h8",
+      "label": "Bridge (Optional)",
+      "content": "Through many dangers, toils and snares\nI have already come...",
+      "template_id": "master_template_lyrics_center_italic_03",
+      "notes": "Optional bridge section",
+      "enabled": false // This section is defined but not active by default in new arrangements
+    }
+  ],
+
+  "arrangements": { // A dictionary where keys are user-defined arrangement names
+    "Standard Version": [ // Name of the arrangement
+      // Each object references a section_id and its enabled status for THIS arrangement
+      { "section_id_ref": "section_a1b2", "enabled": true },
+      { "section_id_ref": "section_e5f6", "enabled": true },
+      { "section_id_ref": "section_c3d4", "enabled": true },
+      { "section_id_ref": "section_e5f6", "enabled": true }
+    ],
+    "Short Version (No V2)": [
+      { "section_id_ref": "section_a1b2", "enabled": true },
+      { "section_id_ref": "section_e5f6", "enabled": true }
+      // Verse 2 is omitted from this arrangement
+    ],
+    "Full With Bridge": [
+      { "section_id_ref": "section_a1b2", "enabled": true },
+      { "section_id_ref": "section_e5f6", "enabled": true },
+      { "section_id_ref": "section_c3d4", "enabled": true },
+      { "section_id_ref": "section_e5f6", "enabled": true },
+      { "section_id_ref": "section_g7h8", "enabled": true }, // The bridge is specifically enabled for this arrangement
+      { "section_id_ref": "section_e5f6", "enabled": true }
+    ]
+  }
+}

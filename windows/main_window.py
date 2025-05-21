@@ -205,6 +205,10 @@ class MainWindow(QMainWindow):
         self.slide_buttons_layout.setSpacing(0) # Let widgets/layouts inside manage their own margins/spacing
         self.scroll_area.setWidget(self.slide_buttons_widget)
 
+        # Enable custom context menu for the slide_buttons_widget (the area containing slides)
+        self.slide_buttons_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.slide_buttons_widget.customContextMenuRequested.connect(self._handle_slide_panel_custom_context_menu)
+
         # Drop Indicator (child of slide_buttons_widget for correct positioning)
         self.drop_indicator = QFrame(self.slide_buttons_widget)
         self.drop_indicator.setFrameShape(QFrame.Shape.VLine) # Change to Vertical Line
@@ -812,6 +816,7 @@ class MainWindow(QMainWindow):
             button.center_overlay_label_changed.connect(self.handle_slide_overlay_label_changed) # New connection
             button.banner_color_change_requested.connect(self.handle_banner_color_change_requested) # New connection
 
+            button.insert_new_section_requested.connect(self._handle_insert_new_section_from_button_context_menu) # New connection
             if has_font_error:
                 button.set_icon_state("error", True)
             
@@ -1681,24 +1686,10 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, watched_object, event):
         # This is where key events will go if a child (like a button) doesn't handle them
-        # and focus is on the QScrollArea.
-        if watched_object == self.scroll_area and event.type() == QEvent.Type.KeyPress:
-            if event.type() == QEvent.Type.ContextMenu:
-                # Ensure the context menu event is for the slide_buttons_widget area
-                # Cast to QContextMenuEvent to access globalPos()
-                context_menu_event = QContextMenuEvent(QContextMenuEvent.Type.ContextMenu, event.pos(), event.globalPos(), event.modifiers())
-                global_mouse_pos = context_menu_event.globalPos()
-                
-                # Check if the click is within the bounds of the slide_buttons_widget
-                pos_in_viewport = self.scroll_area.viewport().mapFromGlobal(global_mouse_pos)
-                if self.scroll_area.viewport().rect().contains(pos_in_viewport):
-                    pos_in_slide_buttons_widget = self.slide_buttons_widget.mapFromGlobal(global_mouse_pos)
-                    if self.slide_buttons_widget.rect().contains(pos_in_slide_buttons_widget):
-                        self._show_insert_slide_context_menu(global_mouse_pos)
-                        return True # Event handled
-            
-            elif event.type() == QEvent.Type.KeyPress:
-                # print(f"EventFilter: KeyPress on {watched_object}. Focus: {QApplication.focusWidget()}, Key: {event.key()}") # Can be noisy
+        # and focus is on the QScrollArea (for keyboard navigation).
+        if watched_object == self.scroll_area:
+            if event.type() == QEvent.Type.KeyPress:
+                # print(f"EventFilter: KeyPress on scroll_area. Focus: {QApplication.focusWidget()}, Key: {event.key()}") # Can be noisy
                 
                 if event.isAutoRepeat():
                     return True # Consume auto-repeat events for our navigation keys, do nothing
@@ -1758,6 +1749,14 @@ class MainWindow(QMainWindow):
 
         return super().eventFilter(watched_object, event) # Pass on unhandled events/objects
     
+    @Slot(QPoint)
+    def _handle_slide_panel_custom_context_menu(self, local_pos: QPoint):
+        """Handles customContextMenuRequested signal from slide_buttons_widget."""
+        # Convert the local position from slide_buttons_widget to global coordinates
+        global_pos = self.slide_buttons_widget.mapToGlobal(local_pos)
+        self._show_insert_slide_context_menu(global_pos)
+
+
     def create_menu_bar(self):
         menu_bar = QMenuBar(self)
         # Set a theme-aware background color for the menu bar to make it more distinct
@@ -2021,35 +2020,51 @@ class MainWindow(QMainWindow):
         # Fallback if specific item not identified through traversal, use default (append)
         return target_insertion_index, target_song_title
 
+    def _prompt_for_song_title_and_insert_blank_slide(self, insertion_index: int):
+        """Prompts for a song title and inserts a new blank slide (using Default Layout)."""
+        song_title, ok = QInputDialog.getText(self, "Start New Song",
+                                              "Enter title for the new song (leave blank for untitled):",
+                                              text="")
+        if ok:
+            final_song_title = song_title.strip() if song_title.strip() else None
+            # Check if "Default Layout" is available
+            if "Default Layout" not in self.template_manager.get_layout_names():
+                QMessageBox.warning(self, "Template Missing",
+                                    "'Default Layout' template not found. Cannot add new song slide.")
+                return
+            # Use the existing _handle_insert_slide_from_layout method
+            self._handle_insert_slide_from_layout("Default Layout", insertion_index, final_song_title)
+
+
     def _show_insert_slide_context_menu(self, global_pos: QPoint):
         insertion_index, song_title_for_new_slide = self._determine_insertion_context(global_pos)
         
         context_menu = QMenu(self)
-        insert_submenu = context_menu.addMenu("Insert Slide from Layout")
+        add_slide_menu = context_menu.addMenu("Add new slide")
 
         layout_template_names = self.template_manager.get_layout_names()
         if not layout_template_names:
-            no_layouts_action = insert_submenu.addAction("No Layout Templates Available")
+            no_layouts_action = add_slide_menu.addAction("No Layout Templates Available")
             no_layouts_action.setEnabled(False)
         else:
             for layout_name in layout_template_names:
-                action = insert_submenu.addAction(layout_name)
+                action = add_slide_menu.addAction(layout_name)
                 action.triggered.connect(
                     lambda checked=False, name=layout_name, index=insertion_index, title=song_title_for_new_slide: 
                     self._handle_insert_slide_from_layout(name, index, title)
                 )
         
         context_menu.addSeparator()
-        insert_blank_action = context_menu.addAction("Insert Blank Slide (Default Layout)")
-        if "Default Layout" in layout_template_names:
-            insert_blank_action.triggered.connect(
-                lambda checked=False, index=insertion_index, title=song_title_for_new_slide:
-                self._handle_insert_slide_from_layout("Default Layout", index, title)
-            )
-        else:
-            insert_blank_action.setEnabled(False)
-            insert_blank_action.setToolTip("Default Layout template not found.")
-
+        # "Add new Section" action
+        # This reuses the existing _prompt_and_insert_new_section method, which prompts for a title
+        # and inserts a new slide (typically using "Default Layout") at the determined insertion_index.
+        add_section_action = context_menu.addAction("Add new Section")
+        # The song_title_for_new_slide from _determine_insertion_context is not used for the new section's title itself,
+        # as that will be prompted. The insertion_index is key.
+        add_section_action.triggered.connect(
+            lambda checked=False, index=insertion_index: self._prompt_and_insert_new_section(index)
+        )
+        
         context_menu.exec(global_pos)
 
     def _handle_insert_slide_from_layout(self, layout_name: str, insertion_index: int, song_title: Optional[str]):
@@ -2106,6 +2121,54 @@ class MainWindow(QMainWindow):
         song_title_for_new_slide = slides[after_slide_id].song_title
         print(f"MainWindow: Inserting slide from button context menu. Layout: '{layout_name}', After Slide ID: {after_slide_id}, Index: {insertion_index}, Song Title: '{song_title_for_new_slide}'")
         self._handle_insert_slide_from_layout(layout_name, insertion_index, song_title_for_new_slide)
+
+    @Slot(int)
+    def _handle_insert_new_section_from_button_context_menu(self, after_slide_id: int):
+        """Handles inserting a new section when requested from a ScaledSlideButton's context menu."""
+        slides = self.presentation_manager.get_slides()
+        if not (0 <= after_slide_id < len(slides)):
+            self.show_error_message(f"Cannot insert new section: Reference slide ID {after_slide_id} is invalid.")
+            return
+
+        insertion_index = after_slide_id + 1
+        print(f"MainWindow: Inserting new section after slide ID {after_slide_id} (at index {insertion_index}).")
+        self._prompt_and_insert_new_section(insertion_index)
+
+    def _prompt_and_insert_new_section(self, insertion_index: int):
+        """Prompts for a new section title and inserts a new slide to mark the section."""
+        new_section_title_str, ok = QInputDialog.getText(
+            self,
+            "Create New Section",
+            "Enter title for the new section (leave blank for an untitled section):",
+            text=""  # Start with empty text
+        )
+
+        if ok:
+            # If user enters empty string, treat as None for song_title
+            final_song_title = new_section_title_str.strip() if new_section_title_str.strip() else None
+
+            resolved_template_settings = self.template_manager.resolve_layout_template("Default Layout")
+            if not resolved_template_settings:
+                QMessageBox.warning(self, "Warning", "'Default Layout' template not found. Using a very basic slide for the new section.")
+                resolved_template_settings = {"layout_name": "Default Layout", "text_boxes": [], "text_content": {}}
+            else:
+                resolved_template_settings = copy.deepcopy(resolved_template_settings) # Ensure we have a mutable copy
+                resolved_template_settings.setdefault("text_content", {})
+                for tb in resolved_template_settings.get("text_boxes", []):
+                    tb_id = tb.get("id")
+                    if tb_id:
+                        resolved_template_settings["text_content"][tb_id] = "" # Ensure blank content
+
+            bg_color_hex_from_template = resolved_template_settings.get("background_color")
+            bg_color_for_slide_data = None
+            if bg_color_hex_from_template and bg_color_hex_from_template.lower() != "#00000000":
+                bg_color_for_slide_data = bg_color_hex_from_template
+
+            new_slide = SlideData(
+                lyrics="", song_title=final_song_title, template_settings=resolved_template_settings, background_color=bg_color_for_slide_data
+            )
+            cmd = AddSlideCommand(self.presentation_manager, new_slide, at_index=insertion_index)
+            self.presentation_manager.do_command(cmd)
 
     @Slot()
     def handle_undo(self):
@@ -2165,6 +2228,7 @@ class MainWindow(QMainWindow):
         # Disconnect after use to prevent issues if dialog is reopened or multiple instances exist
         try:
             settings_dialog.output_monitor_changed.disconnect(self._handle_settings_monitor_changed)
+            
             # settings_dialog.decklink_fill_key_devices_selected.disconnect(self._handle_decklink_devices_changed_from_settings) # No longer connected
         except RuntimeError: # In case signals were already disconnected or dialog closed unexpectedly
             pass
@@ -2176,6 +2240,7 @@ class MainWindow(QMainWindow):
         # Call the handle_load method with the specific filepath
         self.handle_load(filepath=filepath)
     def _handle_editor_save_request(self, templates_collection: dict):
+        
         """
         Handles the templates_save_requested signal from the TemplateEditorWindow.
         This allows saving templates without closing the editor.
@@ -2188,6 +2253,7 @@ class MainWindow(QMainWindow):
     @Slot(QScreen)
     def _handle_settings_monitor_changed(self, selected_screen: QScreen):
         """Handles the output_monitor_changed signal from the SettingsWindow."""
+        
         self.config_manager.set_target_output_screen(selected_screen)
         print(f"MainWindow: Target output monitor setting updated to {selected_screen.name()} via settings dialog.")
         # If already live, you might want to move the output window, or just apply on next "Go Live"
@@ -2273,3 +2339,4 @@ if __name__ == '__main__': # This block is for direct testing of MainWindow
     app_ready_duration_for_mw_test = time.perf_counter() - app_start_time_for_mw_test
     print(f"[BENCHMARK_MW_TEST] Application ready (after show) took: {app_ready_duration_for_mw_test:.4f} seconds")
     sys.exit(app.exec())
+    

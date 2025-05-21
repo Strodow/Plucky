@@ -135,9 +135,15 @@ class SlideDragDropHandler(QObject):
                 
                 if target_drop_index is not None: # Ensure a valid target was calculated
                     if hasattr(self.presentation_manager, 'move_slide'):
-                        success = self.presentation_manager.move_slide(source_slide_index, actual_target_index)
+                        success = self.presentation_manager.move_slide(
+                            source_slide_index,
+                            actual_target_index,
+                            self._current_drop_target_song_title  # Pass the stored song title
+                        )
                         if success:
                             event.acceptProposedAction()
+                            # You can add a more informative print statement here if you like:
+                            # print(f"SlideDragDropHandler: Moved slide from {source_slide_index} to {actual_target_index} in section '{self._current_drop_target_song_title}'.")
                         else:
                             print(f"SlideDragDropHandler: move_slide from {source_slide_index} to {actual_target_index} failed.")
                             event.ignore()
@@ -373,6 +379,7 @@ class SlideDragDropHandler(QObject):
                 self.drop_indicator.raise_()
             else: # Invalid rect for slide reorder
                 self.drop_indicator.hide()
+                
         else: # Not a slide reorder (e.g., image drop)
              self.drop_indicator.hide()
 
