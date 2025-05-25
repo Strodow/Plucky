@@ -110,6 +110,58 @@
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="slideDefaultsTab">
+       <attribute name="title">
+        <string>Slide Defaults</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="slideDefaultsLayout">
+        <item>
+         <widget class="QGroupBox" name="newSlideDefaultGroupBox">
+          <property name="title">
+           <string>New Slide Default Template</string>
+          </property>
+          <layout class="QHBoxLayout" name="newSlideDefaultHLayout">
+           <item>
+            <widget class="QLabel" name="label_defaultTemplate">
+             <property name="text">
+              <string>Default Template:</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QComboBox" name="defaultTemplateComboBox"/>
+           </item>
+           <item>
+            <spacer name="horizontalSpacer_slideDefaults">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <spacer name="verticalSpacer_slideDefaults">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>20</width>
+            <height>40</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
       <widget class="QWidget" name="developerTab">
        <attribute name="title">
         <string>Developer</string>

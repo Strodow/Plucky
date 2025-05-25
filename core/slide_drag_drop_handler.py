@@ -1,13 +1,14 @@
 import os
+import uuid # For new slide_block_ids
 from PySide6.QtCore import QObject, QPoint, Qt, QRect, QByteArray
 from PySide6.QtWidgets import QFrame, QScrollArea, QWidget, QVBoxLayout, QLabel
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent
 from typing import Optional, TYPE_CHECKING
 
-from data_models.slide_data import SlideData
 from widgets.flow_layout import FlowLayout # Assuming FlowLayout is in widgets
 from widgets.song_header_widget import SongHeaderWidget # Assuming SongHeaderWidget is in widgets
 from widgets.scaled_slide_button import ScaledSlideButton
+from commands.slide_commands import AddSlideBlockToSectionCommand, MoveSlideInstanceCommand # Import new command
 
 # Import constants from the new constants file
 from .constants import PLUCKY_SLIDE_MIME_TYPE, BASE_PREVIEW_HEIGHT
@@ -15,12 +16,15 @@ from .constants import PLUCKY_SLIDE_MIME_TYPE, BASE_PREVIEW_HEIGHT
 if TYPE_CHECKING:
     from windows.main_window import MainWindow # For type hinting
     from core.presentation_manager import PresentationManager
+    from core.slide_ui_manager import SlideUIManager # For type hinting
 
 
 class SlideDragDropHandler(QObject):
     def __init__(self, main_window: 'MainWindow', presentation_manager: 'PresentationManager',
                  scroll_area: QScrollArea, slide_buttons_widget: QWidget,
-                 slide_buttons_layout: QVBoxLayout, drop_indicator: QFrame, parent: Optional[QObject] = None):
+                 slide_buttons_layout: QVBoxLayout, drop_indicator: QFrame,
+                 slide_ui_manager: 'SlideUIManager', # Add slide_ui_manager parameter
+                 parent: Optional[QObject] = None):
         super().__init__(parent)
         self.main_window = main_window # For mapToGlobal, etc.
         self.presentation_manager = presentation_manager
@@ -28,17 +32,18 @@ class SlideDragDropHandler(QObject):
         self.slide_buttons_widget = slide_buttons_widget # The content widget of scroll_area
         self.slide_buttons_layout = slide_buttons_layout # The QVBoxLayout within slide_buttons_widget
         self.drop_indicator = drop_indicator
+        self.slide_ui_manager = slide_ui_manager # Store the reference
 
         self._potential_drop_index: int = 0
         self._current_drop_target_song_title: Optional[str] = None
-        self._dragged_slide_source_index: int = -1 # For slide reordering
+        self._dragged_slide_source_instance_id: Optional[str] = None # Store instance_id
 
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         mime_data = event.mimeData()
         if mime_data.hasFormat(PLUCKY_SLIDE_MIME_TYPE):
             try:
-                self._dragged_slide_source_index = int(mime_data.data(PLUCKY_SLIDE_MIME_TYPE).data().decode('utf-8'))
+                self._dragged_slide_source_instance_id = mime_data.data(PLUCKY_SLIDE_MIME_TYPE).data().decode('utf-8')
                 event.acceptProposedAction()
                 # print(f"SlideDragDropHandler: dragEnter accepted for slide reorder, source index: {self._dragged_slide_source_index}") # DEBUG
             except ValueError:
@@ -59,7 +64,7 @@ class SlideDragDropHandler(QObject):
     def dragMoveEvent(self, event: QDragMoveEvent):
         mime_data = event.mimeData()
         if mime_data.hasFormat(PLUCKY_SLIDE_MIME_TYPE):
-            if self._dragged_slide_source_index != -1:
+            if self._dragged_slide_source_instance_id is not None:
                 self._update_drop_indicator_position(event.position().toPoint(), is_slide_reorder=True)
                 event.acceptProposedAction()
             else: # Should have been caught in dragEnter, but as a safeguard
@@ -85,78 +90,93 @@ class SlideDragDropHandler(QObject):
 
     def dragLeaveEvent(self, event: QDragLeaveEvent):
         self.drop_indicator.hide()
-        self._dragged_slide_source_index = -1 # Reset
+        self._dragged_slide_source_instance_id = None # Reset
         event.accept()
 
     def dropEvent(self, event: QDropEvent):
-        new_bg_slides_data = []
+        dropped_image_files = []
         for url in event.mimeData().urls():
             if url.isLocalFile():
                 file_path = url.toLocalFile()
                 if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
-                    bg_slide = SlideData(
-                        lyrics="",
-                        background_image_path=file_path,
-                        background_color="#00000000",
-                        is_background_slide=True,
-                        song_title=self._current_drop_target_song_title,
-                        overlay_label=os.path.basename(file_path),
-                    )
-                    new_bg_slides_data.append(bg_slide)
+                    dropped_image_files.append(file_path)
         
-        if new_bg_slides_data:
-            if hasattr(self.presentation_manager, 'insert_slides'):
-                self.presentation_manager.insert_slides(new_bg_slides_data, self._potential_drop_index)
-            else:
-                print("Warning: PresentationManager does not have 'insert_slides'. Appending background slide(s).")
-                self.presentation_manager.add_slides(new_bg_slides_data) # Fallback
+        if dropped_image_files:
+            # Determine insertion context using SlideUIManager's helper
+            global_drop_pos = self.main_window.mapToGlobal(event.position().toPoint())
+            context = self.slide_ui_manager._determine_insertion_context(global_drop_pos)
+
+            target_section_id = context.get("target_section_id_for_slide_insert")
+            target_arrangement_name = context.get("target_arrangement_name_for_slide_insert")
+            insert_at_index = context.get("index_in_arrangement_for_slide_insert")
+
+            if not target_section_id or target_arrangement_name is None or insert_at_index is None:
+                # This can happen if dropping into an empty presentation or an unidentifiable area.
+                # For now, we'll require a valid section context.
+                # A more advanced implementation could prompt to create a new section here.
+                self.slide_ui_manager.request_show_error_message_signal.emit(
+                    "Cannot add background image: No valid section target found for drop."
+                )
+                event.ignore()
+                self.drop_indicator.hide()
+                return
+
+            for i, image_file_path in enumerate(dropped_image_files):
+                new_slide_block_id = f"slide_{uuid.uuid4().hex[:12]}"
+                # Background slides typically have minimal content and rely on their background_source.
+                # template_id is None, so "System Default Fallback" will be used,
+                # which should ideally have a transparent background itself if we want only the image.
+                # Or, users can create a specific "Background Image" layout template.
+                new_slide_block_data = {
+                    "slide_id": new_slide_block_id,
+                    "label": os.path.basename(image_file_path), # Use filename as label
+                    "content": {}, # Background slides usually don't have text content via this map
+                    "template_id": None, # Will use System Default Fallback
+                    "background_source": image_file_path, # The dropped image
+                    "notes": None
+                }
+                cmd = AddSlideBlockToSectionCommand(
+                    self.presentation_manager,
+                    target_section_id,
+                    new_slide_block_data,
+                    target_arrangement_name,
+                    insert_at_index + i # Increment index for multiple files
+                )
+                self.presentation_manager.do_command(cmd)
             event.acceptProposedAction()
         else:
             # Check for slide reorder
-            if event.mimeData().hasFormat(PLUCKY_SLIDE_MIME_TYPE) and self._dragged_slide_source_index != -1:
-                # Recalculate target_drop_index based on the actual drop position
-                # Map drop event position to the coordinate system of slide_buttons_widget
-                # QDropEvent.position() is QPointF relative to the widget that received the event (MainWindow)
+            if event.mimeData().hasFormat(PLUCKY_SLIDE_MIME_TYPE) and self._dragged_slide_source_instance_id is not None:
                 global_drop_pos = self.main_window.mapToGlobal(event.position().toPoint())
-                pos_in_sbg_widget = self.slide_buttons_widget.mapFromGlobal(global_drop_pos)
-                
-                # Use a method similar to _update_drop_indicator_position's logic to find the index
-                # For simplicity, let's assume _calculate_target_drop_index exists and works.
-                # You might need to adapt parts of _update_drop_indicator_position's logic here
-                target_drop_index = self._calculate_logical_drop_index(pos_in_sbg_widget)
-                source_slide_index = self._dragged_slide_source_index
+                target_context = self.slide_ui_manager._determine_insertion_context(global_drop_pos)
 
-                # print(f"SlideDragDropHandler: dropEvent - Reordering slide. Source: {source_slide_index}, Target: {target_drop_index}") # DEBUG
+                target_section_id = target_context.get("target_section_id_for_slide_insert")
+                target_arrangement_name = target_context.get("target_arrangement_name_for_slide_insert")
+                target_index_in_arrangement = target_context.get("index_in_arrangement_for_slide_insert")
 
-                # Adjust target index if source is before target and is removed first
-                actual_target_index = target_drop_index
-                if source_slide_index < target_drop_index:
-                    actual_target_index -= 1
-                
-                if target_drop_index is not None: # Ensure a valid target was calculated
-                    if hasattr(self.presentation_manager, 'move_slide'):
-                        success = self.presentation_manager.move_slide(
-                            source_slide_index,
-                            actual_target_index,
-                            self._current_drop_target_song_title  # Pass the stored song title
-                        )
-                        if success:
-                            event.acceptProposedAction()
-                            # You can add a more informative print statement here if you like:
-                            # print(f"SlideDragDropHandler: Moved slide from {source_slide_index} to {actual_target_index} in section '{self._current_drop_target_song_title}'.")
-                        else:
-                            print(f"SlideDragDropHandler: move_slide from {source_slide_index} to {actual_target_index} failed.")
-                            event.ignore()
-                    else:
-                        print("SlideDragDropHandler: PresentationManager has no 'move_slide' method.")
-                        event.ignore()
-                else:
-                    print(f"SlideDragDropHandler: Could not calculate target_drop_index at drop event.")
+                source_instance_id = self._dragged_slide_source_instance_id
+
+                if not target_section_id or target_arrangement_name is None or target_index_in_arrangement is None:
+                    print(f"SlideDragDropHandler: Invalid drop target context for slide reorder. Target context: {target_context}")
                     event.ignore()
+                elif not source_instance_id:
+                    print(f"SlideDragDropHandler: Source instance ID is missing for slide reorder.")
+                    event.ignore()
+                else:
+                    cmd = MoveSlideInstanceCommand(
+                        self.presentation_manager,
+                        source_instance_id,
+                        target_section_id,
+                        target_arrangement_name,
+                        target_index_in_arrangement
+                    )
+                    self.presentation_manager.do_command(cmd)
+                    event.acceptProposedAction()
             else:
                 event.ignore()
+                
         self._current_drop_target_song_title = None
-        self._dragged_slide_source_index = -1 # Reset
+        self._dragged_slide_source_instance_id = None # Reset
         self.drop_indicator.hide()
 
     def _get_song_title_for_flow_widget(self, flow_container_widget: QWidget) -> Optional[str]:
@@ -335,10 +355,12 @@ class SlideDragDropHandler(QObject):
                 # (e.g., it's on the next visual line of the FlowLayout).
                 
                 break
-        # --- Visual positioning of the indicator (geometry calculation) ---
-        # This part calculates where the indicator *would* go if shown.
-        default_indicator_height = int(self.main_window.get_setting("BASE_PREVIEW_HEIGHT", BASE_PREVIEW_HEIGHT) * self.main_window.button_scale_factor)
-
+        # --- Visual positioning of the indicator (geometry calculation) --- #
+        # This part calculates where the indicator *would* go if shown.      #
+        # default_indicator_height = int(self.main_window.get_setting("BASE_PREVIEW_HEIGHT", BASE_PREVIEW_HEIGHT) * self.main_window.button_scale_factor)
+        # Corrected to use slide_ui_manager for button_scale_factor
+        base_preview_height_val = self.main_window.get_setting("BASE_PREVIEW_HEIGHT", BASE_PREVIEW_HEIGHT)
+        default_indicator_height = int(base_preview_height_val * self.slide_ui_manager.button_scale_factor)
         if target_flow_layout.count() == 0: # Flow is empty
             indicator_x = target_flow_layout_widget.geometry().left() + target_flow_layout.contentsMargins().left() + 2
             indicator_y = target_flow_layout_widget.geometry().top() + target_flow_layout.contentsMargins().top()
@@ -450,7 +472,9 @@ class SlideDragDropHandler(QObject):
             self.drop_indicator.hide()
             return
 
-        default_indicator_height = int(self.main_window.get_setting("BASE_PREVIEW_HEIGHT", BASE_PREVIEW_HEIGHT) * self.main_window.button_scale_factor)
+        # Corrected to use slide_ui_manager for button_scale_factor
+        base_preview_height_val = self.main_window.get_setting("BASE_PREVIEW_HEIGHT", BASE_PREVIEW_HEIGHT)
+        default_indicator_height = int(base_preview_height_val * self.slide_ui_manager.button_scale_factor)
         indicator_rect = QRect()
 
         if flow_layout.count() > 0:

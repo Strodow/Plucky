@@ -1,0 +1,200 @@
+{
+  "version": "1.0.0",
+  "id": "song_a1b2c3d4_e5f6_7777_8888_999000abcdef", // UUIDv4 recommended, prefixed with "song_"
+  "title": "Amazing Grace",
+  "artist": "John Newton",                         // Optional: The primary artist. Use null if not applicable.
+  "copyright_info": "Public Domain",              // Optional: Copyright details. Use null if not applicable.
+  "ccli_number": null,                            // Optional: CCLI SongSelect number
+  "tags": ["hymn", "worship", "grace"],           // Optional: User-defined tags
+
+  "slide_blocks": [ // Defines all unique lyrical/content blocks for the song
+    {
+      "slide_id": "slide_a1b2",            // Unique ID for this slide within this song, prefixed with "slide_"
+      "label": "Verse 1",                         // Human-readable label (e.g., "Verse 1", "Chorus", "Bridge", "Instrumental")
+      "content": {                                // Content is always an object.
+        "main_text": "Amazing grace! How sweet the sound\nThat saved a wretch like me!",
+        "attribution_text": "(John Newton)"
+      },
+      "template_id": "template_lyrics_left_with_attribution_01", // Template would expect 'main_text' and 'attribution_text'
+      "background_source": "media/backgrounds/amazing_grace_verse1.jpg", // Optional: Source for the slide background (e.g., image/video path, color hex, or background ID)
+      "notes": "Start gently"                    // Optional: Operator notes for this specific slide
+    },
+    {
+      "slide_id": "slide_c3d4",
+      "label": "Verse 2",
+      "content": {
+        "main_text": "I once was lost, but now am found,\nWas blind, but now I see."
+      },
+      "template_id": "template_lyrics_left_01",
+      "background_source": "#003366", // Example: a solid color background
+      "notes": null
+    },
+    {
+      "slide_id": "slide_e5f6",
+      "label": "Chorus",
+      "content": {
+        "main_text": "'Twas grace that taught my heart to fear,\nAnd grace my fears relieved;\nHow precious did that grace appear\nThe hour I first believed!"
+      },
+      "template_id": "template_chorus_center_bold_02",
+      "background_source": null, // Example: explicitly no specific background, could use a default
+      "notes": "Build intensity here"
+    },
+    {
+      "slide_id": "slide_g7h8",
+      "label": "Bridge (Optional)",
+      "content": {
+        "main_text": "Through many dangers, toils and snares\nI have already come..."
+      },
+      "template_id": "template_lyrics_center_italic_03",
+      "background_source": null,
+      "notes": "Optional bridge section"
+    }
+  ],
+
+  "arrangements": { // A dictionary where keys are user-defined arrangement names
+    "Standard Version": [ // Name of the arrangement
+      // Each object references a slide_id and its enabled status for THIS arrangement
+      { "slide_id_ref": "slide_a1b2", "enabled": true },
+      { "slide_id_ref": "slide_e5f6", "enabled": true },
+      { "slide_id_ref": "slide_c3d4", "enabled": true },
+      { "slide_id_ref": "slide_e5f6", "enabled": true }
+    ],
+    "Saturday Night": [
+      { "slide_id_ref": "slide_a1b2", "enabled": true },
+      { "slide_id_ref": "slide_e5f6", "enabled": true }
+      // Verse 2 is omitted from this arrangement
+    ],
+    "Sunday Morning": [
+      { "slide_id_ref": "slide_a1b2", "enabled": true },
+      { "slide_id_ref": "slide_e5f6", "enabled": true },
+      { "slide_id_ref": "slide_c3d4", "enabled": false }, // If slide is not enabled it will still be visible just greyed out so if the user is using arrow keys it gets skipped but the user can click on it manually
+      { "slide_id_ref": "slide_e5f6", "enabled": true },
+      { "slide_id_ref": "slide_g7h8", "enabled": true }, // The bridge is specifically enabled for this arrangement
+      { "slide_id_ref": "slide_e5f6", "enabled": true }
+    ]
+  }
+}
+{
+  "version": "1.0.0",
+  // Example of an empty song - Note: ID should be unique if this is a distinct entity
+  "id": "song_empty_example_001", // UUIDv4 recommended, prefixed with "song_"
+  "title": null, // Using null for not set
+  "artist": null,                         // Optional: The primary artist
+  "copyright_info": null,              // Optional: Copyright details
+  "ccli_number": null,                            // Optional: CCLI SongSelect number
+  "tags": [],           // Optional: User-defined tags
+
+  "slide_blocks": [ // Defines all unique lyrical/content blocks for the song
+    {
+      "slide_id": "slide_a1b2",            // Unique ID for this slide within this song, prefixed with "slide_"
+      "label": null,                         // Human-readable label
+      "content": {                         // Content is an object, can have empty main_text
+        "main_text": ""
+      },
+      "template_id": null, // ID of the Layout Template, null if none
+      "background_source": null, // Optional: Source for the slide background (e.g., image/video path, color hex, or background ID)
+      "notes": null                    // Optional: Operator notes for this specific slide
+    }
+  ],
+
+  "arrangements": { // A dictionary where keys are user-defined arrangement names
+    "Default": [ // Using a more descriptive name for the default arrangement
+      // Each object references a slide_id and its enabled status for THIS arrangement
+      { "slide_id_ref": "slide_a1b2", "enabled": true }
+    ]
+  }
+}
+
+
+{
+  "version": "1.0.0",
+  // Example of a generic section
+  "id": "generic_a1b2c3d4_e5f6_7777_8888_999000abcdef", // UUIDv4 recommended, prefixed with "generic_"
+  "title": "Pastor's Sermon",
+  "tags": ["sermon", "utility"],           // Optional: User-defined tags
+
+  "slide_blocks": [ // Defines all unique slides for the section
+    {
+      "slide_id": "slide_a1b2",            // Unique ID for this slide within this section, prefixed with "slide_"
+      "label": "Sermon Title",                         // Human-readable label (e.g., "Sermon", "Background")
+      "content": {
+        "main_text": "Go with peace"
+      },
+      "template_id": "Title", // ID of the Layout Template 
+      "background_source": null, // Optional: Source for the slide background (e.g., image/video path, color hex, or background ID)
+      "notes": null                    // Optional: Operator notes for this specific slide
+    },
+    {
+      "slide_id": "slide_c3d4",            // Unique ID for this slide within this section, prefixed with "slide_"
+      "label": "Bible Verse",                         // Human-readable label (e.g., "Sermon", "Background")
+      "content": {                                // Content structured for multiple text boxes
+        "verse_text": "\"Test all things.\"",
+        "verse_reference": "1 Thessalonians 5:21"
+      },
+      "template_id": "Title", // ID of the Layout Template 
+      "background_source": null, // Optional: Source for the slide background (e.g., image/video path, color hex, or background ID)
+      "notes": ""                    // Optional: Operator notes for this specific slide
+    }
+  ],
+
+  "arrangements": { // A dictionary where keys are user-defined arrangement names
+    "Default": [ // Using a more descriptive name for the default arrangement
+      // Each object references a slide_id and its enabled status for THIS arrangement
+      { "slide_id_ref": "slide_a1b2", "enabled": true },
+      { "slide_id_ref": "slide_c3d4", "enabled": true }
+    ]
+  }
+}
+
+{
+  "version": "1.0.0",
+  // Example of an empty generic section - Note: ID should be unique if this is a distinct entity
+  "id": "generic_empty_example_001", // UUIDv4 recommended, prefixed with "generic_"
+  "title": null,
+  "tags": [],           // Optional: User-defined tags
+
+  "slide_blocks": [ // Defines all unique slides for the section, there doesn't need to be a slide but when new sections are created they should have one 
+    {
+      "slide_id": "slide_a1b2",            // Unique ID for this slide within this section, prefixed with "slide_"
+      "label": null,                         // Human-readable label
+      "content": {
+        "main_text": ""
+      },
+      "template_id": null, // ID of the Layout Template
+      "background_source": null, // Optional: Source for the slide background (e.g., image/video path, color hex, or background ID)
+      "notes": null                    // Optional: Operator notes for this specific slide
+    }
+  ],
+
+  "arrangements": { // A dictionary where keys are user-defined arrangement names
+    "Default": [ // Using a more descriptive name for the default arrangement
+      // Each object references a slide_id and its enabled status for THIS arrangement
+      { "slide_id_ref": "slide_a1b2", "enabled": true }
+    ]
+  }
+}
+
+
+
+{
+  //Example of a presentation file
+  "version": "1.0.0",
+  "presentation_title": "Sunday Service - Oct 27",
+  "sections": [
+    {
+      "id": "pres_sec_uuid_1",
+      "path": "sections/welcome_slides.plucky_section",
+      "active_arrangement_name": "Default"
+    },
+    {
+      "id": "pres_sec_uuid_2",
+      "path": "sections/amazing_grace.plucky_section",
+      "active_arrangement_name": "Sunday Morning"
+    },
+    {
+      "id": "pres_sec_uuid_3",
+      "path": "sections/sermon_notes_oct27.plucky_section",
+      "active_arrangement_name": "Default"
+    }
+  ]
+}

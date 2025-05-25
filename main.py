@@ -9,19 +9,26 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from PySide6.QtWidgets import QApplication # QMessageBox no longer needed here
-from PySide6.QtGui import QIcon, QImage, QColor # Import QIcon, QImage, QColor for example
+from PySide6.QtWidgets import QApplication, QMenuBar # Added QMenuBar for native setting
+from PySide6.QtGui import QIcon, QImage, QColor, QCursor # Import QIcon, QImage, QColor, QCursor
+from PySide6.QtCore import QObject, QEvent # Added QObject, QEvent for debugger
 
 # Import the main window class
 from windows.main_window import MainWindow
 
-# Import our new DeckLink handler
-# import decklink_handler # DeckLink is now handled by MainWindow
 
 
 if __name__ == "__main__":
+    # --- CRITICAL macOS SETUP ---
+    # This MUST be called BEFORE QApplication is instantiated for native menu bar behavior.
+    if sys.platform == "darwin":
+        QMenuBar.setNativeMenuBar(True)
+    # --- END CRITICAL macOS SETUP ---
+
     app_start_time = time.perf_counter()
     app = QApplication(sys.argv)
+    app.setOrganizationName("YourOrganizationName") # Replace if you have one
+    app.setApplicationName("Plucky")
     app_icon_object = None # To store the QIcon object
 
     # Set the application icon
@@ -34,10 +41,17 @@ if __name__ == "__main__":
     else:
         print(f"Warning: Icon file not found at {icon_path}", file=sys.stderr)
 
+    print("DEBUG (main.py): QApplication instance created and configured.")
+    sys.stdout.flush()
+
+    # MouseHoverDebugger is no longer installed by default here.
+    # MainWindow will manage its installation based on Developer mode and menu toggle.
+
+
     mw_init_start_time = time.perf_counter()
     main_window = MainWindow()
     mw_init_duration = time.perf_counter() - mw_init_start_time
-    print(f"[BENCHMARK] MainWindow.__init__ took: {mw_init_duration:.4f} seconds")
+    # print(f"[BENCHMARK] MainWindow.__init__ took: {mw_init_duration:.4f} seconds") # This is already printed from MainWindow
 
     # If the icon was loaded, also set it explicitly on the main window.
     # This is often redundant if app.setWindowIcon() is used,
@@ -45,26 +59,21 @@ if __name__ == "__main__":
     if app_icon_object:
         main_window.setWindowIcon(app_icon_object)
 
-    # --- Load and initialize DeckLink DLL using the handler ---
-    #if decklink_handler.initialize_output():
-        # Register shutdown_decklink_output to be called on Qt application exit
-        #app.aboutToQuit.connect(decklink_handler.shutdown_output)
-        #print("DeckLink output initialized via handler. Shutdown scheduled on app quit.")
-    #else:
-        # decklink_handler.initialize_output() will print its own error messages
-        # Display the message on MainWindow's status bar
-        #main_window.set_status_message(
-        #    "DeckLink Error: Could not initialize. No card detected or driver issue.",
-        #    0 # Persistent message
-        #)
-        #print("Proceeding without DeckLink output (status bar updated).")
-    # --- End DeckLink Load and Init ---
+    if hasattr(main_window, 'menuBar') and main_window.menuBar():
+        main_window.menuBar().setObjectName("MainMenuBar")
+    if hasattr(main_window, 'setMouseTracking'):
+        main_window.setMouseTracking(True)
 
     mw_show_start_time = time.perf_counter()
     main_window.show()
     mw_show_duration = time.perf_counter() - mw_show_start_time
-    print(f"[BENCHMARK] MainWindow.show() took: {mw_show_duration:.4f} seconds")
+    # print(f"[BENCHMARK] MainWindow.show() took: {mw_show_duration:.4f} seconds") # This is already printed from MainWindow
 
     app_ready_duration = time.perf_counter() - app_start_time
-    print(f"[BENCHMARK] Application ready (after show) took: {app_ready_duration:.4f} seconds")
-    sys.exit(app.exec())
+    # print(f"[BENCHMARK] Application ready (after show) took: {app_ready_duration:.4f} seconds") # This is already printed from MainWindow
+    print("DEBUG (main.py): About to start app.exec()...")
+    sys.stdout.flush()
+    return_code = app.exec()
+    print(f"DEBUG (main.py): app.exec() finished with return code: {return_code}")
+    sys.stdout.flush()
+    sys.exit(return_code)

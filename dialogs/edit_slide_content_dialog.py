@@ -52,19 +52,21 @@ class EditSlideContentDialog(QDialog):
         if not text_boxes_config:
             # Fallback if no text boxes are defined in the template
             # This case should ideally be handled by ensuring templates are valid
-            # or by disabling the edit option for slides with such templates.
-            legacy_lyrics_label = QLabel("Lyrics (Legacy):")
-            legacy_lyrics_edit = QTextEdit()
-            legacy_lyrics_edit.setPlainText(self._slide_data.lyrics) # Use the old lyrics field
-            self._text_edits_map["legacy_lyrics"] = legacy_lyrics_edit # Use a special key
+            # For a "no template" slide, we'll treat it as having one main text box.
+            main_text_label = QLabel("Main Text:")
+            main_text_edit = QTextEdit()
+            # Initialize from slide_data.lyrics OR slide_data.template_settings["text_content"]["main_text"]
+            initial_main_text = current_text_content.get("main_text", self._slide_data.lyrics)
+            main_text_edit.setPlainText(initial_main_text)
+            self._text_edits_map["main_text"] = main_text_edit # Use "main_text" as the key
             
             # Add spell checking for this legacy text edit
-            legacy_lyrics_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            legacy_lyrics_edit.customContextMenuRequested.connect(
-                lambda pos, te=legacy_lyrics_edit: self._show_text_edit_context_menu(pos, te)
+            main_text_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            main_text_edit.customContextMenuRequested.connect(
+                lambda pos, te=main_text_edit: self._show_text_edit_context_menu(pos, te)
             )
-            self._highlighters_map[legacy_lyrics_edit] = SpellCheckHighlighter(legacy_lyrics_edit.document(), self.spell_checker)
-            form_layout.addRow(legacy_lyrics_label, legacy_lyrics_edit)
+            self._highlighters_map[main_text_edit] = SpellCheckHighlighter(main_text_edit.document(), self.spell_checker)
+            form_layout.addRow(main_text_label, main_text_edit)
         else:
             for tb_config in text_boxes_config:
                 tb_id = tb_config.get("id")

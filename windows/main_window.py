@@ -1,5 +1,6 @@
 import sys
 import os
+import uuid # For generating unique IDs
 import json # Needed for saving/loading benchmark history
 import copy # Needed for deepcopy when applying templates
 # import uuid # For generating unique slide IDs for testing - Unused
@@ -7,14 +8,14 @@ import copy # Needed for deepcopy when applying templates
 from PySide6.QtWidgets import ( # type: ignore
     QApplication, QMainWindow, QFileDialog, QSlider, QMenuBar, # Added QMenuBar
     QMessageBox, QVBoxLayout, QWidget, QPushButton, QInputDialog, QSpinBox,
-    QComboBox, QLabel, QHBoxLayout, QSplitter, QScrollArea, QDialog, QMenu
+    QComboBox, QLabel, QHBoxLayout, QSplitter, QScrollArea, QDialog, QMenu,
+    QDockWidget # Added QDockWidget
 )
-from PySide6.QtGui import (
+from PySide6.QtGui import ( # type: ignore
     QScreen, QPixmap, QColor, QContextMenuEvent, QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent, QImage
 ) # Added specific QDrag...Event types and QImage
-from PySide6.QtCore import Qt, QSize, Slot, QEvent, QStandardPaths, QPoint, QRect, QMimeData # Added QRect, QContextMenuEvent, QMimeData
-
-from typing import Optional # Import Optional for type hinting
+from PySide6.QtCore import Qt, QSize, Slot, QEvent, QStandardPaths, QPoint, QRect, QMimeData, QTimer, QObject, QByteArray # Added QByteArray
+from typing import Optional, List, Dict, Any, Set # Import Optional, List, Dict, Any, Set for type hinting
 from PySide6.QtWidgets import QFrame # For the drop indicator
 from windows.settings_window import SettingsWindow # Import the new settings window
 # --- Local Imports ---
@@ -22,8 +23,8 @@ from windows.settings_window import SettingsWindow # Import the new settings win
 try:
     # Assuming running from the YourProject directory
     from windows.output_window import OutputWindow
-    from data_models.slide_data import SlideData # DEFAULT_TEMPLATE is no longer used here
-    from rendering.slide_renderer import SlideRenderer
+    from data_models.slide_data import SlideData 
+    from rendering.slide_renderer import LayeredSlideRenderer # Changed to LayeredSlideRenderer
     from widgets.scaled_slide_button import ScaledSlideButton # This should already be there
     from windows.template_editor_window import TemplateEditorWindow # Import the new editor
     from widgets.song_header_widget import SongHeaderWidget # Import the new header widget
@@ -35,18 +36,24 @@ try:
     from core.slide_drag_drop_handler import SlideDragDropHandler # Import new DND handler
     from core.constants import PLUCKY_SLIDE_MIME_TYPE, BASE_PREVIEW_HEIGHT # Import from new constants file
     from dialogs.edit_slide_content_dialog import EditSlideContentDialog # New Dialog
-    from core.slide_edit_handler import SlideEditHandler # Import the new handler
-    # --- Undo/Redo Command Imports ---
+    from core.section_factory import SectionFactory # Import the new factory
+    from core.slide_ui_manager import SlideUIManager # Import the new Slide UI Manager
+    from core.slide_edit_handler import SlideEditHandler # Import the new handler    
+    from widgets.section_management_panel import SectionManagementPanel # New import
+    from core.image_cache_manager import ImageCacheManager # New import
+    from core.output_target import OutputTarget # New import for Phase 2
+    from PySide6.QtGui import QActionGroup # For mutually exclusive menu items
     from commands.slide_commands import (
-        ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand
+        ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand,
+        AddSlideBlockToSectionCommand
     )
 except ImportError:
     # Fallback if running directly from the windows directory (adjust as needed)
     # import sys, os # Already imported at top level
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from windows.output_window import OutputWindow
-    from data_models.slide_data import SlideData # DEFAULT_TEMPLATE is no longer used here
-    from rendering.slide_renderer import SlideRenderer
+    from data_models.slide_data import SlideData
+    from rendering.slide_renderer import LayeredSlideRenderer # Changed to LayeredSlideRenderer
     from widgets.scaled_slide_button import ScaledSlideButton # This should already be there
     from windows.template_editor_window import TemplateEditorWindow # Import the new editor
     from widgets.song_header_widget import SongHeaderWidget # Import the new header widget
@@ -58,14 +65,21 @@ except ImportError:
     from core.slide_drag_drop_handler import SlideDragDropHandler # Import new DND handler
     from core.constants import PLUCKY_SLIDE_MIME_TYPE, BASE_PREVIEW_HEIGHT # Import from new constants file
     from dialogs.edit_slide_content_dialog import EditSlideContentDialog # New Dialog
-    from core.slide_edit_handler import SlideEditHandler # Import the new handler
-    # --- Undo/Redo Command Imports ---
+    from core.section_factory import SectionFactory # Import the new factory
+    from core.slide_ui_manager import SlideUIManager # Import the new Slide UI Manager
+    from core.slide_edit_handler import SlideEditHandler # Import the new handler    
+    from widgets.section_management_panel import SectionManagementPanel # New import
+    from core.image_cache_manager import ImageCacheManager # New import
+    from core.output_target import OutputTarget # New import for Phase 2
+    from PySide6.QtGui import QActionGroup # For mutually exclusive menu items
     from commands.slide_commands import (
-        ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand
+        ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand,
+        AddSlideBlockToSectionCommand
     )
 
 # Import DeckLink handler for sending frames (ensure this is available in your project)
 import decklink_handler # Assuming decklink_handler.py is at the Plucky project root
+from PySide6.QtGui import QCursor # For MouseHoverDebugger
 import time
 
 
@@ -78,7 +92,28 @@ PROJECT_ROOT_MW = os.path.dirname(SCRIPT_DIR_MW) # /Plucky
 BENCHMARK_TEMP_DIR_MW = os.path.join(PROJECT_ROOT_MW, "temp")
 BENCHMARK_HISTORY_FILE_PATH_MW = os.path.join(BENCHMARK_TEMP_DIR_MW, ".pluckybenches.json")
 
+# --- Mouse Hover Debug Event Filter Class ---
+# TODO: Move this class to a more appropriate utility module (e.g., core/debug_utils.py)
+# so it can be imported by MainWindow if needed, and potentially by main.py for other startup debugging.
+class MouseHoverDebugger(QObject):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        print("DEBUG (MainWindow): MouseHoverDebugger instance CREATED.")
+        sys.stdout.flush()
 
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseMove:
+            global_mouse_pos = QCursor.pos()
+            widget_under_mouse = QApplication.widgetAt(global_mouse_pos)
+            if widget_under_mouse:
+                print(f"Mouse at {global_mouse_pos}: Hovering over {widget_under_mouse.__class__.__name__} (ObjectName: '{widget_under_mouse.objectName()}')")
+                sys.stdout.flush()
+            else:
+                print(f"Mouse at {global_mouse_pos}: Hovering over None (No Qt widget at this global position)")
+                sys.stdout.flush()
+        # CRITICAL: Return False to ensure event propagation for an observing filter
+        return False
+# --- End Mouse Hover Debug Event Filter Class ---
 
 
 class MainWindow(QMainWindow):
@@ -87,15 +122,17 @@ class MainWindow(QMainWindow):
         mw_init_start_time = time.perf_counter()
         self.mw_init_end_time = 0.0 # Will be set at the end of __init__
 
+        # Initialize these attributes early, before any methods that might use them are called
+        self.hover_debugger_instance = None # To store the hover debugger if active
+        self.enable_hover_debug_action = None # To store the menu action
+
         self.setWindowTitle("Plucky Presentation")
         # DeckLink related instance variables
-        self.current_decklink_idx = -1 # Default to no device selected or load from config
+        # self.current_decklink_idx = -1 # This seems unused; fill/key indices are used directly.
         # Other DeckLink attributes will be initialized after config_manager
 
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus) # Ensure MainWindow can receive focus
         self.setGeometry(100, 100, 900, 700) # Adjusted size for more controls
-
-        # MainWindow can have focus, but scroll_area is more important for this.
-        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus) 
 
         # Instantiate the ApplicationConfigManager
         self.config_manager = ApplicationConfigManager(parent=self)
@@ -135,28 +172,31 @@ class MainWindow(QMainWindow):
         # Instantiate the TemplateManager
         self.template_manager = TemplateManager()
         self.template_manager.templates_changed.connect(self.on_template_collection_changed)
-
+        
         # --- Core Components ---
+        self.image_cache_manager = ImageCacheManager() # Create the image cache manager
         self.output_window = OutputWindow()
-        self.slide_renderer = SlideRenderer(app_settings=self) # Pass MainWindow as settings provider
-        self.presentation_manager = PresentationManager() # Assuming this is already here
+        self.slide_renderer = LayeredSlideRenderer(app_settings=self, image_cache_manager=self.image_cache_manager)
+        self.presentation_manager = PresentationManager(template_manager=self.template_manager) # Pass TemplateManager
         self.presentation_manager.presentation_changed.connect(self.update_slide_display_and_selection)
         self.presentation_manager.slide_visual_property_changed.connect(self._handle_slide_visual_property_change) # New connection
+        # self.presentation_manager.presentation_changed.connect(self._refresh_section_management_panel) # SlideUIManager will handle its refresh
         self.presentation_manager.error_occurred.connect(self.show_error_message)
-
         # Instantiate the SlideEditHandler
         self.slide_edit_handler = SlideEditHandler(self.presentation_manager, self)
-        self.button_scale_factor = 1.0 # Default scale
-        self._selected_slide_indices: Set[int] = set() # New: Set to store indices of selected slides
 
         self.current_slide_index = -1 # Tracks the selected slide button's index
         self.output_resolution = QSize(1920, 1080) # Default, updated on monitor select
-        self.slide_buttons_list = [] # List to store ScaledSlideButton instances
-        self.preview_pixmap_cache: Dict[str, QPixmap] = {} # Cache for scaled preview pixmaps (slide_id -> QPixmap)
+        # Old way of managing live background, will be superseded by OutputTarget logic
+        # but kept for now for UI elements that might depend on knowing the "persistent" background.
+
 
         
         self.current_live_background_pixmap: QPixmap | None = None
         self.current_background_slide_id: Optional[str] = None # ID of the active background slide
+        self.main_output_target: Optional[OutputTarget] = None
+        self.decklink_output_target: Optional[OutputTarget] = None
+
 
         # --- UI Elements ---
         self.central_widget = QWidget()
@@ -188,12 +228,13 @@ class MainWindow(QMainWindow):
         self.edit_template_button.setEnabled(True) 
         self.edit_template_button.setToolTip("Open the template editor.") 
 
-        # Preview Size Spinbox (replaces slider)
+        # Preview Size Spinbox
         self.preview_size_spinbox = QSpinBox()
         self.preview_size_spinbox.setMinimum(1)
         self.preview_size_spinbox.setMaximum(4)
         self.preview_size_spinbox.setSuffix("x") # Add 'x' suffix
         self.preview_size_spinbox.setToolTip("Adjust Slide Preview Size (1x-4x)") # Changed to spinbox and updated tooltip
+        
 
         # Slide Button Area
         self.scroll_area = QScrollArea()
@@ -205,9 +246,6 @@ class MainWindow(QMainWindow):
         self.slide_buttons_layout.setSpacing(0) # Let widgets/layouts inside manage their own margins/spacing
         self.scroll_area.setWidget(self.slide_buttons_widget)
 
-        # Enable custom context menu for the slide_buttons_widget (the area containing slides)
-        self.slide_buttons_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.slide_buttons_widget.customContextMenuRequested.connect(self._handle_slide_panel_custom_context_menu)
 
         # Drop Indicator (child of slide_buttons_widget for correct positioning)
         self.drop_indicator = QFrame(self.slide_buttons_widget)
@@ -270,37 +308,55 @@ class MainWindow(QMainWindow):
         splitter.setSizes([350]) # Adjust initial size of left panel
         main_layout.addWidget(splitter)
 
+        # --- Section Management Panel (as a Dock Widget) ---
+        self.section_management_dock = QDockWidget("Section Manager", self)
+        self.section_management_panel = SectionManagementPanel(self.presentation_manager, self)
+        self.section_management_dock.setObjectName("SectionManagementDock") # <--- ADD THIS LINE
+        self.section_management_dock.setWidget(self.section_management_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.section_management_dock) # Or LeftDockWidgetArea
+        self.section_management_dock.hide() # Hidden by default
+
+        # --- Instantiate SlideUIManager ---
+        self.slide_ui_manager = SlideUIManager(
+            presentation_manager=self.presentation_manager,
+            template_manager=self.template_manager,
+            slide_renderer=self.slide_renderer,
+            slide_edit_handler=self.slide_edit_handler,
+            config_manager=self.config_manager,
+            output_window_ref=self.output_window,
+            scroll_area=self.scroll_area,
+            slide_buttons_widget=self.slide_buttons_widget,
+            slide_buttons_layout=self.slide_buttons_layout,
+            drop_indicator=self.drop_indicator,
+            parent_main_window=self,
+            parent=self # QWidget parent
+        )
+        # Load preview size from config and initialize button_scale_factor in SlideUIManager
+        initial_preview_size = self.config_manager.get_app_setting("preview_size", 1) # Default to 1x
+        self.slide_ui_manager.set_preview_scale_factor(float(initial_preview_size))
+        self.preview_size_spinbox.setValue(initial_preview_size) # Set spinbox value
+
         # --- Connections ---
         # Connections for load, save, save_as, add_song are now handled by menu actions
         self.edit_template_button.clicked.connect(self.handle_edit_template) # Connect Edit Templates button
         self.undo_button.clicked.connect(self.handle_undo) # New
         self.redo_button.clicked.connect(self.handle_redo) # New
-        # self.test_decklink_button.clicked.connect(self._send_decklink_test_frame) # Disconnect DL test button
         self.preview_size_spinbox.valueChanged.connect(self.handle_preview_size_change) # Connect spinbox signal
         self.decklink_output_toggle_button.clicked.connect(self.toggle_decklink_output_stream) # New connection
-
         self.go_live_button.clicked.connect(self.toggle_live)
 
-        self.update_slide_display_and_selection() # Initial setup of slide display
-        
-        # Install event filter directly on the QScrollArea.
-        self.scroll_area.installEventFilter(self)
-        # Ensure QScrollArea can receive focus.
-        self.scroll_area.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.slide_ui_manager.active_slide_changed_signal.connect(self._handle_active_slide_changed_from_ui)
+        self.slide_ui_manager.request_show_error_message_signal.connect(self.show_error_message)
+        self.slide_ui_manager.request_set_status_message_signal.connect(self.set_status_message)
+
+        # Connect signals from SectionManagementPanel
+        self._connect_section_management_panel_signals()
 
         # Enable Drag and Drop on the main window (or a specific widget like scroll_area)
         self.setAcceptDrops(True)
 
-        # Instantiate the SlideDragDropHandler
-        self.drag_drop_handler = SlideDragDropHandler(
-            main_window=self,
-            presentation_manager=self.presentation_manager,
-            scroll_area=self.scroll_area,
-            slide_buttons_widget=self.slide_buttons_widget,
-            slide_buttons_layout=self.slide_buttons_layout,
-            drop_indicator=self.drop_indicator,
-            parent=self
-        )
+        # The SlideDragDropHandler is now owned by SlideUIManager.
+        # self.drag_drop_handler in MainWindow is no longer needed.
         # Store initial app benchmark data
         app_start_time = QApplication.instance().property("app_start_time")
         # Store app_start_time (timestamp) temporarily for calculation in showEvent
@@ -323,6 +379,30 @@ class MainWindow(QMainWindow):
         else:
             print(f"[BENCHMARK] MainWindow.__init__ took: {self.benchmark_data_store['mw_init']:.4f} seconds (app_start_time not found)")
 
+        self.slide_ui_manager.refresh_slide_display() # Initial setup of slide display
+
+        # Restore window state (including dock widgets)
+        # Do this after all UI elements, including docks, are created but before showEvent typically.
+        saved_window_state_str = self.config_manager.get_app_setting("main_window_state")
+        if saved_window_state_str:
+            # Ensure dock widgets are created before restoring state
+            if not self.section_management_dock: # Should not happen if init order is correct
+                print("MainWindow: Warning - Section management dock not created before restoreState.")
+
+            try:
+                self.restoreState(QByteArray.fromBase64(saved_window_state_str.encode('utf-8')))
+                print("MainWindow: Restored window state.")
+            except Exception as e:
+                print(f"MainWindow: Error restoring window state: {e}")
+
+
+    def _connect_section_management_panel_signals(self):
+        self.section_management_panel.request_reorder_section.connect(self._handle_request_reorder_section)
+        self.section_management_panel.request_remove_section.connect(self._handle_request_remove_section)
+        self.section_management_panel.request_add_existing_section.connect(self._handle_request_add_existing_section)
+        self.section_management_panel.request_create_new_section.connect(self._handle_request_create_new_section_from_panel)
+        self.presentation_manager.presentation_changed.connect(self._refresh_section_management_panel)
+    #Main Window Controls
     def set_status_message(self, message: str, timeout: int = 0):
         """
         Displays a message on the status bar.
@@ -331,6 +411,7 @@ class MainWindow(QMainWindow):
         """
         self.statusBar().showMessage(message, timeout)
 
+    #Main Window Effects 
     def _update_go_live_button_appearance(self):
         if self.go_live_button.isChecked(): # Live
             self.go_live_button.setToolTip("Output is LIVE")
@@ -350,6 +431,7 @@ class MainWindow(QMainWindow):
             self.decklink_output_toggle_button.setToolTip("DeckLink Output is OFF. Click to turn ON.")
             self.decklink_output_toggle_button.setStyleSheet("QPushButton { background-color: palette(button); border-radius: 12px; border: 2px solid gray; } QPushButton:hover { border: 2px solid darkgray; }")
 
+    #Main window Send - maybe move ()
     def toggle_decklink_output_stream(self):
         if self.decklink_output_toggle_button.isChecked(): # User wants to turn DeckLink ON
             print("MainWindow: Initializing DeckLink for output stream...")
@@ -360,6 +442,10 @@ class MainWindow(QMainWindow):
                 self.decklink_output_toggle_button.setChecked(False) # Revert button state
                 self._decklink_output_button_state = "error"
                 self._update_decklink_output_button_appearance()
+                # Ensure DeckLink target is not active if initialization fails
+                if self.decklink_output_target:
+                    self.decklink_output_target.update_slide(None) # Blank it
+                    # Consider deleting or nullifying self.decklink_output_target here
                 return
             
             if not self.current_decklink_video_mode_details:
@@ -367,6 +453,9 @@ class MainWindow(QMainWindow):
                 self.decklink_output_toggle_button.setChecked(False)
                 self._decklink_output_button_state = "error" # Or "off" if preferred
                 self._update_decklink_output_button_appearance()
+                if self.decklink_output_target:
+                    self.decklink_output_target.update_slide(None)
+                    # Consider deleting or nullifying self.decklink_output_target here
                 return
             
             decklink_handler.enumerate_devices()
@@ -376,13 +465,19 @@ class MainWindow(QMainWindow):
                 self.decklink_output_toggle_button.setChecked(False) # Revert button state
                 self._decklink_output_button_state = "error"
                 self._update_decklink_output_button_appearance()
+                if self.decklink_output_target:
+                    self.decklink_output_target.update_slide(None)
+                    # Consider deleting or nullifying self.decklink_output_target here
                 return
             
             self.is_decklink_output_active = True
             self._decklink_output_button_state = "on"
+            self._init_decklink_output_target() # Initialize or re-initialize DeckLink OutputTarget
             print("MainWindow: DeckLink output stream started successfully.")
             # If a slide is currently live on screen, send it to DeckLink
-            if self.output_window.isVisible() and 0 <= self.current_slide_index < len(self.presentation_manager.get_slides()):
+            # The _display_slide call will now update the decklink_output_target
+            if 0 <= self.current_slide_index < len(self.presentation_manager.get_slides()):
+
                 self._display_slide(self.current_slide_index)
             else: # Send blank to DeckLink
                 self._show_blank_on_output() # This will also send blank to DL if active
@@ -390,21 +485,25 @@ class MainWindow(QMainWindow):
         else: # User wants to turn DeckLink OFF
             print("MainWindow: Shutting down DeckLink output stream.")
             if self.is_decklink_output_active: # Check if it was actually active
-                # Send one last blank frame to DeckLink before shutting down
-                black_image = QImage(decklink_handler.DLL_WIDTH, decklink_handler.DLL_HEIGHT, QImage.Format_ARGB32_Premultiplied)
-                black_image.fill(QColor(0,0,0,255))
-                fill_bytes = decklink_handler.get_image_bytes_from_qimage(black_image)
-                if fill_bytes: # Check if conversion was successful
-                    decklink_handler.send_external_keying_frames(fill_bytes, fill_bytes) # Send black to both fill and key
+                # Blank the DeckLink target first
+                if self.decklink_output_target:
+                    self.decklink_output_target.update_slide(None) 
+                    # The _handle_decklink_target_update will send the blank frame
 
                 decklink_handler.shutdown_selected_devices()
                 decklink_handler.shutdown_sdk()
             self.is_decklink_output_active = False
             self._decklink_output_button_state = "off"
             print("MainWindow: DeckLink output stream stopped.")
+            # Clean up DeckLink target
+            if self.decklink_output_target:
+                self.decklink_output_target.pixmap_updated.disconnect(self._handle_decklink_target_update)
+                self.decklink_output_target.deleteLater() # Schedule for deletion
+                self.decklink_output_target = None
 
         self._update_decklink_output_button_appearance()
 
+    #  Old prob delete
     def _send_decklink_test_frame(self):
         """Sends a test frame to the DeckLink output."""
         if not self.is_decklink_output_active:
@@ -437,14 +536,20 @@ class MainWindow(QMainWindow):
         else:
             print(f"Error: Test image data size mismatch or creation failed.", file=sys.stderr)
             QMessageBox.critical(self, "Image Error", f"Test image data size mismatch or creation failed.")
-
+    
+    #Main window Send - Follow Decklink output ^
     def toggle_live(self):
         target_screen = self.config_manager.get_target_output_screen()
 
-        if self.output_window.isVisible():
+        if self.output_window.isVisible(): # Turning OFF
             self.go_live_button.setChecked(False)
             self._show_blank_on_output() # Good practice to blank it before hiding
             self.output_window.hide() # Explicitly hide the window
+            if self.main_output_target: # Clean up main output target
+                self.main_output_target.pixmap_updated.disconnect(self.output_window.set_pixmap)
+                self.main_output_target.deleteLater()
+                self.main_output_target = None
+
             # Note: DeckLink output is now controlled by its own button
         else: # Going LIVE (Screen Output)
             if not target_screen:
@@ -456,6 +561,8 @@ class MainWindow(QMainWindow):
             output_geometry = target_screen.geometry()
             self.output_resolution = output_geometry.size()
             self.output_window.setGeometry(output_geometry)
+            self._init_main_output_target() # Initialize or re-initialize Main OutputTarget
+
             self.output_window.showFullScreen()
             if 0 <= self.current_slide_index < len(self.presentation_manager.get_slides()):
                 self._display_slide(self.current_slide_index)
@@ -463,71 +570,66 @@ class MainWindow(QMainWindow):
                 self._show_blank_on_output()
         self._update_go_live_button_appearance()
 
-    def handle_add_song(self):
+    #Strip to external probably (core.addSection())
+    def handle_add_new_section(self):
         """
-        Prompts the user for song lyrics and adds them as new slides.
-        Lyrics are split into slides by double newlines.
+        Prompts for a new section title, creates a new section file
+        in the central store, and adds it to the current presentation.
         """
-        song_title_text, ok_title = QInputDialog.getText(
+        section_title_text, ok_title = QInputDialog.getText(
             self,
-            "Add New Song - Title",
-            "Enter the song title:"
+            "Add New Section",
+            "Enter the title for the new section (e.g., song name, sermon part):"
         )
 
         if not ok_title or not song_title_text.strip():
-            # User cancelled or entered an empty title
             if ok_title and not song_title_text.strip(): # User pressed OK but title was empty
-                QMessageBox.warning(self, "Empty Title", "Song title cannot be empty.")
+                QMessageBox.warning(self, "Empty Title", "Section title cannot be empty.")
             return
         
-        cleaned_song_title = song_title_text.strip()
+        cleaned_section_title = section_title_text.strip() # Renamed for clarity
 
-        lyrics_text, ok_lyrics = QInputDialog.getMultiLineText(
-            self,
-            f"Add Lyrics for \"{cleaned_song_title}\"",
-            "Paste or type song lyrics below.\n"
-            "Use a blank line (press Enter twice) to separate slides/stanzas."
+        section_file_id = f"section_{uuid.uuid4().hex}"
+
+        # Use SectionFactory to create the data
+        new_section_data = SectionFactory.create_new_section_data(
+            title=cleaned_section_title,
+            section_file_id=section_file_id,
+            section_type="Generic" # Or prompt for type if this menu item is generic
         )
 
-        if ok_lyrics and lyrics_text:
-            # Split by one or more blank lines (effectively \n\n or more \n's)
-            stanzas = [s.strip() for s in lyrics_text.split('\n\n') if s.strip()]
+        try:
+            from core.plucky_standards import PluckyStandards
+        except ImportError:
+            from plucky_standards import PluckyStandards
 
-            if not stanzas:
-                QMessageBox.information(self, "No Stanzas", "No stanzas found. Ensure you use blank lines to separate them.")
-                return
-            new_slides_data = []
-            
-            for stanza_lyrics in stanzas:
-                # For new songs, apply the "Default Layout" template.
-                # Ensure your TemplateManager has a "Default Layout" or handle its absence.
-                default_layout_settings = {}
-                if hasattr(self.template_manager, 'resolve_layout_template'):
-                    default_layout_settings = self.template_manager.resolve_layout_template("Default Layout")
-                if not default_layout_settings or not default_layout_settings.get("text_boxes"):
-                    print("MainWindow: Warning - Could not resolve 'Default Layout' or it's invalid. New slide will have basic settings.")
-                    default_layout_settings = {"layout_name": "Default Layout", "text_boxes": [], "text_content": {}} # Basic fallback
-                # Map the stanza lyrics to the first text box of the default layout
-                if default_layout_settings.get("text_boxes"):
-                    first_tb_id = default_layout_settings["text_boxes"][0].get("id")
-                    if first_tb_id:
-                        default_layout_settings.setdefault("text_content", {})[first_tb_id] = stanza_lyrics
-                new_slide = SlideData(lyrics=stanza_lyrics, 
-                                      song_title=cleaned_song_title,
-                                      overlay_label="", # Default for new song slides
-                                      template_settings=default_layout_settings)
-                new_slides_data.append(new_slide)
-            
-            # For multiple slides, you might create a "MacroCommand" or execute individual AddSlideCommands
-            # or we create multiple commands. Here, we'll just call the PM method.
-            self.presentation_manager.add_slides(new_slides_data) # This won't be a single undo step
+        central_sections_dir = PluckyStandards.get_sections_dir()
+        
+        full_filepath, section_filename = SectionFactory.save_new_section_file(
+            new_section_data, cleaned_section_title, self.presentation_manager.io_handler, central_sections_dir
+        )
 
+        if full_filepath and section_filename:
+            self.set_status_message(f"New section '{cleaned_section_title}' created.", 3000)
+
+        # 5. Add the section to the current presentation (append to the end)
+        # Determine insertion index (append to end of current presentation)
+        num_current_sections = 0
+        if self.presentation_manager.presentation_manifest_data and "sections" in self.presentation_manager.presentation_manifest_data:
+            num_current_sections = len(self.presentation_manager.presentation_manifest_data["sections"])
+        
+        # Pass the simple filename to PresentationManager
+        self.presentation_manager.add_section_to_presentation(section_filename, num_current_sections, desired_arrangement_name="Default")
+        # PresentationManager will emit presentation_changed, updating the UI.
+    
+    #Main Window Controls
+    #double check if it should just check if it's dirty reguardless (check where this goes and make it load all slides with updated templates)
     def handle_load(self, filepath: Optional[str] = None):
         """
         Loads a presentation from a file. Prompts to save unsaved changes.
         If filepath is provided, loads that file directly; otherwise, opens a file dialog.
         """
-        if self.presentation_manager.is_dirty and filepath is None: # Only prompt if loading via dialog
+        if self.presentation_manager.is_overall_dirty() and filepath is None: # Only prompt if loading via dialog
             reply = QMessageBox.question(self, 'Unsaved Changes',
                                          "You have unsaved changes. Save before loading new file?",
                                          QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
@@ -538,7 +640,12 @@ class MainWindow(QMainWindow):
                 return
         
         if filepath is None: # If no filepath was provided, open the dialog
-            filepath, _ = QFileDialog.getOpenFileName(self, "Load Presentation", "", "Plucky Files (*.plucky *.json);;All Files (*)")
+            default_load_path = self.config_manager.get_default_presentations_path()
+            filepath, _ = QFileDialog.getOpenFileName(
+                self, 
+                "Load Presentation", 
+                default_load_path, 
+                "Plucky Presentation Files (*.plucky_pres);;All Files (*)")
 
         if filepath: # Proceed if we have a filepath (either provided or from dialog)
             # Reset presentation-specific benchmarks before loading
@@ -552,53 +659,84 @@ class MainWindow(QMainWindow):
             self.benchmark_data_store["last_presentation_render_draw"] = 0.0
 
             load_pm_start_time = time.perf_counter()
-            self.preview_pixmap_cache.clear() # Clear preview cache when loading a new presentation
-            self.presentation_manager.load_presentation(filepath)
-            load_pm_duration = time.perf_counter() - load_pm_start_time
-            self.benchmark_data_store["last_presentation_pm_load"] = load_pm_duration
-            print(f"[BENCHMARK] PresentationManager.load_presentation() took: {load_pm_duration:.4f} seconds for {filepath}")
-            # After UI update (triggered by presentation_changed), explicitly mark as not dirty
-            # The actual UI update (update_slide_display_and_selection) will be benchmarked separately.
-            self.presentation_manager.is_dirty = False
-            self.config_manager.add_recent_file(filepath) # Add to recents list on successful load
+            if self.slide_ui_manager: # Access cache through SlideUIManager
+                self.slide_ui_manager.preview_pixmap_cache.clear()
+            if self.presentation_manager.load_presentation(filepath): # This will trigger presentation_changed
+                load_pm_duration = time.perf_counter() - load_pm_start_time
+                self.benchmark_data_store["last_presentation_pm_load"] = load_pm_duration
+                print(f"[BENCHMARK] PresentationManager.load_presentation() took: {load_pm_duration:.4f} seconds for {filepath}")
+                
+                # Update window title
+                presentation_title = self.presentation_manager.get_presentation_title()
+                if presentation_title:
+                    self.setWindowTitle(f"Plucky Presentation - {presentation_title}")
+                else:
+                    self.setWindowTitle(f"Plucky Presentation - {os.path.basename(filepath)}")
+                
+                self.config_manager.add_recent_file(filepath) # Add to recents list on successful load
+            # Error messages are handled by PresentationManager's error_occurred signal
 
-
+    #Main Window Controls
     def handle_save(self) -> bool:
-        if not self.presentation_manager.current_filepath:
+        if not self.presentation_manager.current_manifest_filepath:
             return self.handle_save_as()
         else:
-            filepath = self.presentation_manager.current_filepath
-            if self.presentation_manager.save_presentation(filepath):
-                # Optionally add status bar message: "Presentation saved."
-                self.config_manager.add_recent_file(filepath) # Add to recents list on successful save
+            # current_manifest_filepath is already set, so save_presentation will use it.
+            if self.presentation_manager.save_presentation():
+                self.set_status_message(f"Presentation saved to {os.path.basename(self.presentation_manager.current_manifest_filepath)}", 3000)
+                
+                # Update window title based on the saved presentation's title
+                presentation_title = self.presentation_manager.get_presentation_title()
+                if presentation_title:
+                    self.setWindowTitle(f"Plucky Presentation - {presentation_title}")
+                elif self.presentation_manager.current_manifest_filepath: # Fallback to filename if title is missing
+                    self.setWindowTitle(f"Plucky Presentation - {os.path.basename(self.presentation_manager.current_manifest_filepath)}")
+                
+                if self.presentation_manager.current_manifest_filepath: # Ensure path exists before adding
+                    self.config_manager.add_recent_file(self.presentation_manager.current_manifest_filepath)
                 return True
             # Error message handled by show_error_message via signal
-            # If save failed, don't add to recents
-            print(f"Error saving presentation to {filepath}")
+            self.set_status_message(f"Error saving presentation to {self.presentation_manager.current_manifest_filepath}", 5000)
             return False
 
+    #Main Window Controls
     def handle_save_as(self) -> bool:
-        filepath, _ = QFileDialog.getSaveFileName(self, "Save Presentation As...", self.presentation_manager.current_filepath or os.getcwd(), "Plucky Files (*.plucky *.json);;All Files (*)")
-        if filepath:
-            if self.presentation_manager.save_presentation(filepath):
-                # Optionally add status bar message: "Presentation saved to {filepath}."
-                self.config_manager.add_recent_file(filepath) # Add to recents list on successful save as
+        default_save_path = self.config_manager.get_default_presentations_path()
+        current_filename = os.path.basename(self.presentation_manager.current_manifest_filepath) if self.presentation_manager.current_manifest_filepath else "Untitled.plucky_pres"
+        new_manifest_filepath, _ = QFileDialog.getSaveFileName(
+            self, 
+            "Save Presentation As...", 
+            os.path.join(default_save_path, current_filename), 
+            "Plucky Presentation Files (*.plucky_pres);;All Files (*)"
+        )
+        if new_manifest_filepath:
+            if self.presentation_manager.save_presentation_as(new_manifest_filepath):
+                self.set_status_message(f"Presentation saved as {os.path.basename(new_manifest_filepath)}", 3000)
+                
+                # Update window title based on the saved presentation's title
+                # save_presentation_as updates the title in manifest_data, get_presentation_title will reflect it.
+                presentation_title = self.presentation_manager.get_presentation_title()
+                if presentation_title:
+                    self.setWindowTitle(f"Plucky Presentation - {presentation_title}")
+                else: # Fallback to filename if title is somehow missing after save_as
+                    self.setWindowTitle(f"Plucky Presentation - {os.path.basename(new_manifest_filepath)}")
+                
+                self.config_manager.add_recent_file(new_manifest_filepath)
                 return True
-            # Error message handled by show_error_message via signal
+            self.set_status_message(f"Error saving presentation as {os.path.basename(new_manifest_filepath)}", 5000)
             return False
-        # User cancelled dialog, don't add to recents
         return False # User cancelled dialog
 
+    #Main Window Controls
     @Slot() # No longer receives an int directly from the signal
     def handle_preview_size_change(self, value: int):
-        """Handles the valueChanged signal from the preview size spinbox."""
-        self.button_scale_factor = float(value)  # Use the integer value directly as the scale factor (1x, 2x, etc.)
-        self.preview_pixmap_cache.clear() # Preview sizes changed, invalidate cache
-        # This will trigger a full rebuild of the slide buttons with the new scale
-        self.update_slide_display_and_selection()
+        """Delegates preview size change to SlideUIManager."""
+        if self.slide_ui_manager:
+            self.slide_ui_manager.set_preview_scale_factor(float(value))
 
+    #Sub window opener
     def handle_edit_template(self):
-        # TemplateManager ensures "Default" always exists, so no need for the "No Templates" check here.
+        # TemplateManager ensures "Default Layout" always exists, so no need for the "No Templates" check here.
 
         # Pass all current named templates to the editor
         current_templates_snapshot = self.template_manager.get_all_templates()
@@ -624,356 +762,37 @@ class MainWindow(QMainWindow):
             # If the editor was complex and had its own dirty tracking, you might reload here.
             print("Template editor was cancelled.")
 
+    #Main Window Controls
     @Slot()
     def update_slide_display_and_selection(self):
         """
-        Clears and repopulates slide buttons. Manages selection.
-        Called when presentation_manager.presentation_changed is emitted.
+        This slot is connected to presentation_manager.presentation_changed.
+        The actual UI update is now handled by SlideUIManager.refresh_slide_display(),
+        which is also connected to presentation_manager.presentation_changed.
+        This method can be kept for any MainWindow specific updates needed on presentation change,
+        or removed if SlideUIManager handles everything. For now, it's a pass-through.
         """
-        print("MainWindow: update_slide_display_and_selection called")
-        ui_update_start_time = time.perf_counter()
-        
-        # Preserve the ID of the currently singly selected slide if possible
-        # Multi-selection state is reset on UI rebuild for simplicity
-        old_single_selected_slide_id_str: Optional[str] = None # Store slide_data.id (string)
-        if self.current_slide_index != -1 and len(self._selected_slide_indices) == 1:
-            # Get the ID of the currently selected slide *before* clearing slides or buttons
-            # This requires getting slides from PM *before* it might change due to other operations
-            # For simplicity, let's assume PM.get_slides() is stable here or get it from current_slide_index
-            slides_before_rebuild = self.presentation_manager.get_slides()
-            if 0 <= self.current_slide_index < len(slides_before_rebuild):
-                old_single_selected_slide_id_str = slides_before_rebuild[self.current_slide_index].id
-
-        # Clear existing buttons and selection state
-        self._selected_slide_indices.clear() # Clear selection on UI rebuild
-        self.current_slide_index = -1 # Reset single selection index
-        
-        # Initialize accumulators for detailed render timings
-        total_aggregated_render_time = 0.0
-        total_aggregated_image_time = 0.0
-        total_aggregated_font_time = 0.0
-        total_aggregated_layout_time = 0.0
-        total_aggregated_draw_time = 0.0
-        # old_selected_slide_index = self.current_slide_index # No longer needed, using old_single_selected_slide_id_str
-        # Clear existing buttons first
-        while self.slide_buttons_layout.count():
-            item = self.slide_buttons_layout.takeAt(0) # Item from the main QVBoxLayout
-            widget_in_vbox = item.widget()
-            if widget_in_vbox:
-                # If it's a container QWidget holding a FlowLayout for slides
-                if isinstance(widget_in_vbox.layout(), FlowLayout):
-                    flow_layout_inside = widget_in_vbox.layout()
-                    while flow_layout_inside.count():
-                        flow_item = flow_layout_inside.takeAt(0)
-                        slide_button_widget = flow_item.widget()
-                        if slide_button_widget:
-                            # No need to remove from QButtonGroup as we are not using it for these
-                            # Disconnect signals if they were connected
-                            try:
-                                slide_button_widget.slide_selected.disconnect(self._handle_manual_slide_selection)
-                            except (TypeError, RuntimeError): pass # If not connected or already gone
-                            try:
-                                slide_button_widget.toggle_selection_requested.disconnect(self._handle_toggle_selection)
-                            except (TypeError, RuntimeError): pass
-                            # Child widgets of widget_in_vbox will be deleted when widget_in_vbox is deleted
-                            # No need to call deleteLater on slide_button_widget explicitly here
-                            # as long as it's properly parented to widget_in_vbox or its layout.
-                
-                # For SongHeaderWidget, QLabel, or the container QWidget itself
-                widget_in_vbox.setParent(None)
-                widget_in_vbox.deleteLater()
-        self.slide_buttons_list.clear() # Clear our manual list
-
-        slides = self.presentation_manager.get_slides()
-
-        if not slides:
-            no_slides_label = QLabel("No slides. Use 'Load' or 'Add Song'.")
-            no_slides_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.slide_buttons_layout.addWidget(no_slides_label)
-            self.current_slide_index = -1
-            self._show_blank_on_output()
-            return
-
-        # Use a sentinel that's guaranteed not to match any actual title (including None)
-        last_processed_title: Optional[str] = object() 
-        current_song_flow_layout: Optional[FlowLayout] = None
-
-        print(f"  update_slide_display_and_selection: Found {len(slides)} slides to process.")
-
-        # Calculate dynamic preview dimensions based on scale factor
-        current_dynamic_preview_width = int(BASE_PREVIEW_WIDTH * self.button_scale_factor)
-        current_dynamic_preview_height = int(BASE_PREVIEW_HEIGHT * self.button_scale_factor)
-
-        for index, slide_data in enumerate(slides):
-            current_title = slide_data.song_title # This can be None or a string
-
-            if current_title != last_processed_title:
-                # This is a new song, or a transition to/from an untitled block of slides
-                last_processed_title = current_title
-                
-                if current_title is not None: # It's a titled song
-                    song_header = SongHeaderWidget(current_title, current_button_width=current_dynamic_preview_width)
-                    song_header.edit_song_requested.connect(self.handle_edit_song_title_requested)
-                    self.slide_buttons_layout.addWidget(song_header) # Add header to main VBox
-                # else:
-                    # If current_title is None, we don't add a specific header for "untitled"
-                    # but we still create a new FlowLayout container below.
-
-                # Create a new container QWidget and FlowLayout for this group of slides
-                song_slides_container = QWidget()
-                # Pass the container as the parent to FlowLayout, it will set itself as layout
-                current_song_flow_layout = FlowLayout(song_slides_container, margin=5, hSpacing=5, vSpacing=5)
-                # song_slides_container.setLayout(current_song_flow_layout) # Not needed if parent passed to FlowLayout
-                self.slide_buttons_layout.addWidget(song_slides_container) # Add container to main VBox
-
-            # --- Process and create the ScaledSlideButton ---
-            # print(f"    Processing slide {index}, ID: {slide_data.id}, Lyrics: '{slide_data.lyrics[:30].replace('\n', ' ')}...'") # DEBUG
-            # (Ensure current_song_flow_layout is valid before adding buttons to it)
-            preview_render_width = self.output_resolution.width() if self.output_window.isVisible() else 1920
-            preview_render_height = self.output_resolution.height() if self.output_window.isVisible() else 1080
-            
-            slide_id_str = slide_data.id # Assuming slide_data has a unique 'id' attribute
-            has_font_error = False # Default
-
-            if slide_id_str in self.preview_pixmap_cache:
-                cached_pixmap = self.preview_pixmap_cache[slide_id_str]
-                # Check if cached pixmap size matches current required preview size
-                if cached_pixmap.width() == current_dynamic_preview_width and \
-                   cached_pixmap.height() == current_dynamic_preview_height:
-                    preview_pixmap = cached_pixmap
-                    # We don't have font error info from cache, might need to store it too or accept this limitation
-                    # For now, assume no error if from cache, or re-evaluate if this is critical
-                    print(f"      Using cached preview for slide {index} (ID {slide_id_str})") # DEBUG
-                else:
-                    # Cached pixmap is stale due to size change, remove it and re-render
-                    del self.preview_pixmap_cache[slide_id_str]
-                    preview_pixmap = None # Signal to re-render
-            else:
-                preview_pixmap = None # Not in cache, needs rendering
-
-            if preview_pixmap is None: # Needs rendering
-                try:
-                    full_res_pixmap, has_font_error, slide_benchmarks = self.slide_renderer.render_slide(
-                        slide_data, preview_render_width, preview_render_height, is_final_output=False
-                    )
-                    total_aggregated_render_time += slide_benchmarks.get("total_render", 0.0)
-                    total_aggregated_image_time += slide_benchmarks.get("images", 0.0)
-                    total_aggregated_font_time += slide_benchmarks.get("fonts", 0.0)
-                    total_aggregated_layout_time += slide_benchmarks.get("layout", 0.0)
-                    total_aggregated_draw_time += slide_benchmarks.get("draw", 0.0)
-                    
-                    preview_pixmap = full_res_pixmap.scaled(current_dynamic_preview_width, current_dynamic_preview_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    self.preview_pixmap_cache[slide_id_str] = preview_pixmap # Add to cache
-                    print(f"      Rendered and cached preview for slide {index} (ID {slide_id_str})") # DEBUG
-                except Exception as e: # Catch general rendering exceptions
-                    print(f"      ERROR rendering preview for slide {index} (ID {slide_data.id}): {e}")
-                    has_font_error = True 
-                    preview_pixmap = QPixmap(current_dynamic_preview_width, current_dynamic_preview_height)
-                    preview_pixmap.fill(Qt.darkGray)
-
-            button = ScaledSlideButton(slide_id=index, plucky_slide_mime_type=PLUCKY_SLIDE_MIME_TYPE) # Pass MIME type
-            button.set_pixmap(preview_pixmap)
-            # Explicitly reset icon state for each button before checking for errors
-            button.set_icon_state("error", False)
-            button.set_icon_state("warning", False) # Also reset warning if you have one
-            # Set the slide number and label for the banner
-            button.set_is_background_slide(slide_data.is_background_slide) # Tell the button its type first
-
-            # All slides now get a sequential number.
-            # Background slides will also have "BG" as their label.
-            # Content slides will have an empty label (just showing the number).
-            current_label_for_banner = "BG" if slide_data.is_background_slide else ""
-            button.set_slide_info(number=index + 1, label=current_label_for_banner)
-
-            button.setToolTip(f"Slide {index + 1}: {slide_data.lyrics.splitlines()[0] if slide_data.lyrics else 'Empty'}")
-            button.toggle_selection_requested.connect(self._handle_toggle_selection) # Connect new signal
-            button.slide_selected.connect(self._handle_manual_slide_selection) # Connect to our new manual handler
-            button.edit_requested.connect(self.slide_edit_handler.handle_edit_slide_requested) # Connect to the handler
-            button.delete_requested.connect(self.handle_delete_slide_requested)
-
-            # For background slides, the "Edit Lyrics" might be less relevant,
-            # and "Apply Template" might also behave differently or be disabled.
-            # For now, we'll leave them, but this is an area for future refinement.
-
-            # Set the banner color from SlideData
-            if hasattr(slide_data, 'banner_color') and slide_data.banner_color:
-                button.set_banner_color(QColor(slide_data.banner_color))
-            else:
-                button.set_banner_color(None) # Reset to default if not set or None
-            # Get layout template names for the context menu
-            layout_template_names_list = []
-            if hasattr(self.template_manager, 'get_layout_names'): # Use existing method
-                layout_template_names_list = self.template_manager.get_layout_names()
-            else:
-                print("MainWindow: WARNING - TemplateManager does not have 'get_layout_template_names'. Context menu for templates will be empty.")
-
-            button.set_available_templates(layout_template_names_list)
-            button.apply_template_to_slide_requested.connect(self.handle_apply_template_to_slide)
-            # print(f"DEBUG MainWindow: Connected apply_template_to_slide_requested for button {index} to handle_apply_template_to_slide.") # Keep print if desired, remove connection object capture
-            # button.next_slide_requested_from_menu.connect(self.handle_next_slide_from_menu) # Removed as per UI change
-            button.insert_slide_from_layout_requested.connect(self._handle_insert_slide_from_button_context_menu) # New connection
-            # button.previous_slide_requested_from_menu.connect(self.handle_previous_slide_from_menu) # Removed as per UI change
-            button.center_overlay_label_changed.connect(self.handle_slide_overlay_label_changed) # New connection
-            button.banner_color_change_requested.connect(self.handle_banner_color_change_requested) # New connection
-
-            button.insert_new_section_requested.connect(self._handle_insert_new_section_from_button_context_menu) # New connection
-            if has_font_error:
-                button.set_icon_state("error", True)
-            
-            if current_song_flow_layout: # Add button to the current song's FlowLayout
-                current_song_flow_layout.addWidget(button)
-            # self.slide_button_group.addButton(button, index) # DO NOT ADD TO QButtonGroup
-            self.slide_buttons_list.append(button) # Add to our manual list
-        # Prune cache: Remove entries for slide IDs that no longer exist
-        current_slide_ids = {s.id for s in slides}
-        cached_ids_to_remove = [cached_id for cached_id in self.preview_pixmap_cache if cached_id not in current_slide_ids]
-        for stale_id in cached_ids_to_remove:
-            del self.preview_pixmap_cache[stale_id]
-            print(f"      Pruned stale ID {stale_id} from preview cache.") # DEBUG
-        
-        # Add a stretch at the end of the main QVBoxLayout to push everything up
-        self.slide_buttons_layout.addStretch(1)
-        # Add a stretch at the end of the main QVBoxLayout to push everything up
-        self.slide_buttons_layout.addStretch(1)
-
-        # After creating all buttons, set their overlay labels from SlideData
-        self._update_all_button_overlay_labels()
-        
-        # --- 2. Manage Selection ---
-        # Re-establish selection based on the preserved single selection ID
-
-        num_slides = len(slides)
-        # Find the index corresponding to the old_single_selected_id
-        new_single_selected_index = -1
-        if old_single_selected_slide_id_str is not None:
-            # Iterate through current slides to find the one with the matching ID
-            for index, slide_data in enumerate(slides):
-                if slide_data.id == old_single_selected_slide_id_str:
-                    new_single_selected_index = index
-                    break # Found the slide, stop searching
-
-        # If the old single selection ID was found at a valid new index, select it
-        if new_single_selected_index != -1:
-            # Find the button in our list
-            button_to_select = next((btn for btn in self.slide_buttons_list if btn._slide_id == new_single_selected_index), None)
-            if button_to_select: # If found
-                # Trigger our manual selection handler. It will check the button and uncheck others.
-                # We don't call the handler directly here because it clears selection.
-                # Instead, manually set the state after rebuild.
-                self._selected_slide_indices.add(new_single_selected_index)
-                self.current_slide_index = new_single_selected_index
-                button_to_select.setChecked(True) # Set the button's checked state
-                # Update output for the re-selected slide
-                if self.output_window.isVisible():
-                    self._display_slide(new_single_selected_index)
-                # Ensure it's visible
-                self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50) # Ensure visibility
-            else: # Button for the target index not found (should not happen if list is consistent)
-                self.current_slide_index = -1
-                self._show_blank_on_output()
-        elif num_slides > 0: # No previous selection, but slides exist, select the first one
-            self._handle_manual_slide_selection(0) # Select the first slide (ID 0)
-            if self.slide_buttons_list:
-                 self.scroll_area.ensureWidgetVisible(self.slide_buttons_list[0], 50, 50)
-                 # _handle_manual_slide_selection already sets checked state and updates output
-        else: # No slides, no selection
-            self.current_slide_index = -1
-            self._show_blank_on_output()
-        
-        ui_update_duration = time.perf_counter() - ui_update_start_time
-        # Store the UI update and aggregated render times in the global benchmark data
-        self.benchmark_data_store["last_presentation_ui_update"] = ui_update_duration
-        self.benchmark_data_store["last_presentation_render_total"] = total_aggregated_render_time
-        self.benchmark_data_store["last_presentation_render_images"] = total_aggregated_image_time
-        self.benchmark_data_store["last_presentation_render_fonts"] = total_aggregated_font_time
-        self.benchmark_data_store["last_presentation_render_layout"] = total_aggregated_layout_time
-        self.benchmark_data_store["last_presentation_render_draw"] = total_aggregated_draw_time
-
-        print(f"[BENCHMARK] update_slide_display_and_selection() took: {ui_update_duration:.4f} seconds for {len(slides)} slides.")
-        if slides: # Only print aggregated if there were slides to render
-            print(f"  [BENCHMARK_AGGREGATE] Total time spent in SlideRenderer (all previews):")
-            print(f"    Overall Render: {total_aggregated_render_time:.4f}s")
-            print(f"    Image Processing: {total_aggregated_image_time:.4f}s")
-            print(f"    Font Setup:     {total_aggregated_font_time:.4f}s")
-            print(f"    Text Layout:    {total_aggregated_layout_time:.4f}s")
-            print(f"    Text Drawing:   {total_aggregated_draw_time:.4f}s")
-            
+        # print("MainWindow: presentation_changed signal received. SlideUIManager will handle UI refresh.")
+        pass # SlideUIManager.refresh_slide_display is already connected and will handle it.
+    
+    #Main window controls
     def get_selected_slide_indices(self) -> list[int]:
         """Returns a list of the indices of currently selected slides."""
-        return list(self._selected_slide_indices)
-
-    def _update_button_checked_states(self):
-        """Updates the visual checked state of all buttons based on _selected_slide_indices."""
-        for button_widget in self.slide_buttons_list:
-            button_widget.setChecked(button_widget._slide_id in self._selected_slide_indices)
+        if self.slide_ui_manager:
+            return self.slide_ui_manager.get_selected_slide_indices()
+        return []
 
     @Slot(int)
-    def _handle_toggle_selection(self, slide_index: int):
-        """
-        Handles Ctrl+Click on a slide button to toggle its selection state.
-        Does NOT deselect other buttons.
-        """
-        print(f"MainWindow: _handle_toggle_selection for slide_index {slide_index}")
-        
-        if slide_index in self._selected_slide_indices:
-            self._selected_slide_indices.remove(slide_index)
-            print(f"  Deselected slide {slide_index}. Current selection: {self._selected_slide_indices}")
-            # If the slide we just deselected was the *only* one selected,
-            # the output should probably go blank or show the previously singly selected slide.
-            # For simplicity, let's keep the output on the last *singly* selected slide,
-            # or blank if nothing is selected. The output doesn't change on multi-select toggle.
-        else:
-            self._selected_slide_indices.add(slide_index)
-            print(f"  Selected slide {slide_index}. Current selection: {self._selected_slide_indices}")
-            # Output window does NOT update on multi-select toggle.
-
-        # Update the visual state of all buttons
-        self._update_button_checked_states()
-
-    @Slot(int)
-    def _handle_manual_slide_selection(self, selected_slide_index: int):
-        """
-        Handles a single click on a slide button. Clears multi-selection
-        and selects only the clicked slide. Updates output.
-        """
-        print(f"MainWindow: _handle_manual_slide_selection for slide_index {selected_slide_index}")
-        
-        # Clear any existing multi-selection
-        self._selected_slide_indices.clear() # Clear any multi-selection
-        self._selected_slide_indices.add(selected_slide_index) # Add the clicked slide
-        # Determine if actual changes were made
-        # This is a bit more complex now. We need to compare dictionaries.
-        # A simple way: check if the new dictionary is different from the old one.
-        # Or, if the dialog used the "legacy_lyrics" key, compare that.
-        
-        content_changed = False
-        new_legacy_lyrics_from_dialog: Optional[str] = None
-        self.current_slide_index = selected_slide_index # Update our tracking variable
-
-        # Update the visual state of all buttons
-        self._update_button_checked_states()
-
-        # Update output window
+    def _handle_active_slide_changed_from_ui(self, new_active_slide_index: int):
+        """Handles the signal from SlideUIManager when the active slide changes."""
+        self.current_slide_index = new_active_slide_index
         if self.output_window.isVisible():
-            self._display_slide(selected_slide_index)
-        
-        # Ensure the scroll area has focus for keyboard navigation
-        self.scroll_area.setFocus()
-        print(f"MainWindow: UI updated for slide {selected_slide_index}. Focus on scroll_area.")
+            if new_active_slide_index != -1:
+                self._display_slide(new_active_slide_index)
+            else:
+                self._show_blank_on_output()
 
-
-    def _update_all_button_overlay_labels(self):
-        """Sets the overlay label on each button based on its corresponding SlideData."""
-        slides = self.presentation_manager.get_slides()
-        for index, slide_data in enumerate(slides):
-            # Find button in our list
-            button = next((btn for btn in self.slide_buttons_list if btn._slide_id == index), None)
-            if button and isinstance(button, ScaledSlideButton):
-                # Pass the overlay_label from SlideData to the button
-                button.set_center_overlay_label(slide_data.overlay_label, emit_signal_on_change=False)
-
-    # The handle_edit_slide_requested method has been moved to SlideEditHandler
-
+    #Main Window Utility
     @Slot(int)
     def handle_delete_slide_requested(self, slide_index: int):
         # This slot is called when the context menu action is triggered on a specific button.
@@ -982,7 +801,7 @@ class MainWindow(QMainWindow):
             self.show_error_message(f"Cannot delete slide: Index {slide_index} is invalid.")
             return
 
-        selected_indices_to_delete = list(self._selected_slide_indices) # Get a copy of current selection
+        selected_indices_to_delete = self.get_selected_slide_indices() # Get current selection
 
         # If the right-clicked slide is part of a multi-selection, delete all selected
         if slide_index in selected_indices_to_delete and len(selected_indices_to_delete) > 1:
@@ -992,24 +811,44 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.Yes:
                 # Delete in reverse order to avoid index shifts affecting subsequent deletions
                 for idx in sorted(selected_indices_to_delete, reverse=True):
-                    cmd = DeleteSlideCommand(self.presentation_manager, idx)
+                    # --- Illustrative: Accessing new identifiers ---
+                    slide_data_to_delete = slides[idx]
+                    instance_id_to_delete = slide_data_to_delete.id # Get the unique instance ID
+                    print(f"MainWindow: Preparing to delete slide at global index {idx}, "
+                          f"instance_id '{instance_id_to_delete}'.")
+                    # --- End Illustrative ---
+                    cmd = DeleteSlideCommand(self.presentation_manager, instance_id_to_delete)
                     self.presentation_manager.do_command(cmd) # Each deletion is a separate undo step for now
-                self._selected_slide_indices.clear() # Clear selection after deletion
+                # Selection will be updated by SlideUIManager on presentation_changed
+                # self.slide_ui_manager._selected_slide_indices.clear() # This would be internal to SlideUIManager
         else: # Single delete (either only one selected, or right-clicked an unselected slide)
             # Ensure slide_data is fetched for the specific slide_index for the confirmation message
             slide_data = slides[slide_index] # This was missing in the multi-delete path
+
+            # --- Illustrative: Accessing new identifiers ---
+            section_id = slide_data.section_id_in_manifest # ID of the section instance in the manifest
+            block_id = slide_data.slide_block_id # ID of the slide_block within the section file
+            arrangement_name = slide_data.active_arrangement_name_for_section # The arrangement this instance is from
+            print(f"MainWindow: Preparing to delete single slide at global index {slide_index}, "
+                  f"which is slide_block '{block_id}' in section_manifest_id '{section_id}'.")
+            # --- End Illustrative ---
+
+            # TODO (Refinement): If deleting the last reference to a slide_block,
+            # should we prompt to delete the block itself from the section file? (Phase 5?)
             reply = QMessageBox.question(self, 'Delete Slide',
                                          f"Are you sure you want to delete this slide?\n\nLyrics: \"{slide_data.lyrics[:50]}...\"",
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.Yes:
-                cmd = DeleteSlideCommand(self.presentation_manager, slide_index)
+                instance_id_to_delete = slide_data.id # Get the correct instance ID
+                cmd = DeleteSlideCommand(self.presentation_manager, instance_id_to_delete)
                 self.presentation_manager.do_command(cmd)
 
+    # doubble check to make sure that it doesn't search by song title (if 2 are the same it should just edit the one?)
     @Slot(str)
     def handle_edit_song_title_requested(self, original_song_title_to_edit: str):
         """Handles request to edit a song's title."""
-        if not hasattr(self, '_selected_slide_indices'): # Safety check
-            self._selected_slide_indices = set()
+        # This method might need to be re-evaluated if song titles are part of section data
+        # rather than individual slide data. For now, keeping original logic.
 
         # Fetch current lyrics for the song
         current_slides_for_song = [
@@ -1038,8 +877,53 @@ class MainWindow(QMainWindow):
         # but PresentationManager itself will handle the change.
         # If new_title is empty, update_entire_song will treat it as an untitled song.
         self.presentation_manager.update_entire_song(original_song_title_to_edit, new_title, current_slides_for_song)
+    
+    # --- OutputTarget Initialization ---
+    def _init_main_output_target(self):
+        if self.main_output_target: # Disconnect and delete if exists
+            try: self.main_output_target.pixmap_updated.disconnect(self.output_window.set_pixmap)
+            except RuntimeError: pass # Already disconnected
+            self.main_output_target.deleteLater()
+            self.main_output_target = None
+
+        target_screen = self.config_manager.get_target_output_screen()
+        # The decision to initialize should be based on configuration and intent to go live,
+        # not the current visibility of output_window, as this method is called *before* showFullScreen.
+        if target_screen: 
+            output_res = target_screen.geometry().size()
+            if output_res.width() > 0 and output_res.height() > 0:
+                self.main_output_target = OutputTarget("MainScreen", output_res, self.slide_renderer, self)
+                self.main_output_target.pixmap_updated.connect(self.output_window.set_pixmap)
+                print(f"MainWindow: Main output target initialized for screen: {target_screen.name()} at {output_res.width()}x{output_res.height()}")
+            else:
+                print(f"MainWindow: Invalid resolution for main output target: {output_res}")
+        else:
+            # This message will now only appear if no target_screen is configured.
+            # The "output window not visible" part is removed from the condition.
+            print("MainWindow: No target screen configured for main output target.")
+
+    def _init_decklink_output_target(self):
+        if self.decklink_output_target: # Disconnect and delete if exists
+            try: self.decklink_output_target.pixmap_updated.disconnect(self._handle_decklink_target_update)
+            except RuntimeError: pass
+            self.decklink_output_target.deleteLater()
+            self.decklink_output_target = None
+
+        if self.is_decklink_output_active and self.current_decklink_video_mode_details:
+            dl_width = self.current_decklink_video_mode_details.get('width')
+            dl_height = self.current_decklink_video_mode_details.get('height')
+            if dl_width and dl_height and dl_width > 0 and dl_height > 0:
+                decklink_res = QSize(dl_width, dl_height)
+                self.decklink_output_target = OutputTarget("DeckLink", decklink_res, self.slide_renderer, self)
+                self.decklink_output_target.pixmap_updated.connect(self._handle_decklink_target_update)
+                print(f"MainWindow: DeckLink output target initialized at {dl_width}x{dl_height}")
+            else:
+                print(f"MainWindow: Invalid DeckLink dimensions for output target: W={dl_width}, H={dl_height}")
+        else:
+            print("MainWindow: DeckLink not active or video mode not set for DeckLink output target.")
 
 
+    # The checkup might need to be updated because it's happening everytime?
     @Slot(int, str)
     def handle_apply_template_to_slide(self, slide_index: int, template_name: str):
         """
@@ -1066,10 +950,15 @@ class MainWindow(QMainWindow):
         if not (0 <= slide_index < len(slides)):
             self.show_error_message(f"Cannot apply template: Slide index {slide_index} is invalid.")
             return
+        
+        # Get the instance_id for the primary slide being affected (for single or first of multi)
+        # This will be used by the command.
+        target_slide_data_for_command = slides[slide_index]
+        instance_id_for_command = target_slide_data_for_command.id
 
         # Determine which slides to apply the template to
-        selected_indices_to_apply = list(self._selected_slide_indices)
-        if slide_index not in selected_indices_to_apply or len(selected_indices_to_apply) <= 1:
+        selected_indices_to_apply = self.get_selected_slide_indices()
+        if not selected_indices_to_apply or slide_index not in selected_indices_to_apply:
             selected_indices_to_apply = [slide_index] # Apply to the clicked one if not part of multi-selection
 
         # Get new_tb_ids from the resolved layout structure
@@ -1138,11 +1027,13 @@ class MainWindow(QMainWindow):
             # using user_mapping_from_dialog (if dialog was shown) or auto-mapping rules.
             for idx_to_apply in selected_indices_to_apply:
                 if not (0 <= idx_to_apply < len(slides)):
-                    print(f"Warning: Skipping slide index {idx_to_apply} in multi-apply as it's out of bounds.")
+                    print(f"MW Warning: Skipping slide index {idx_to_apply} in multi-apply as it's out of bounds.")
                     continue
                 
                 slide_data_to_apply = slides[idx_to_apply]
-                old_settings_for_cmd = slide_data_to_apply.template_settings # This slide's old settings
+                current_instance_id = slide_data_to_apply.id
+                old_template_id_for_cmd = slide_data_to_apply.template_settings.get('layout_name')
+                old_content_for_cmd = slide_data_to_apply.template_settings.get('text_content', {})
                 
                 # Get *this specific slide's* old text content
                 current_slide_actual_old_text_content = {}
@@ -1152,8 +1043,8 @@ class MainWindow(QMainWindow):
                 elif slide_data_to_apply.lyrics: # Fallback for this specific slide
                     current_slide_actual_old_text_content = {"legacy_lyrics": slide_data_to_apply.lyrics}
 
-                new_settings_for_cmd = copy.deepcopy(new_layout_structure)
-                new_settings_for_cmd.setdefault("text_content", {})
+                # new_template_id is template_name
+                final_new_content_for_block = {}
 
                 if user_mapping_from_dialog is not None: # Dialog was shown and mapping obtained
                     for new_id, old_id_source in user_mapping_from_dialog.items():
@@ -1164,35 +1055,46 @@ class MainWindow(QMainWindow):
                     if len(old_text_content_for_dialog_multi) == 1 and len(new_tb_ids) == 1:
                         first_old_key = next(iter(old_text_content_for_dialog_multi.keys())) # Key from the representative slide
                         old_content_value_current_slide = current_slide_actual_old_text_content.get(first_old_key, "")
-                        new_settings_for_cmd["text_content"][new_tb_ids[0]] = old_content_value_current_slide
+                        final_new_content_for_block[new_tb_ids[0]] = old_content_value_current_slide
                     else: # Try to map by matching ID using current slide's content
                         for new_id_auto in new_tb_ids:
                             if new_id_auto in current_slide_actual_old_text_content:
-                                new_settings_for_cmd["text_content"][new_id_auto] = current_slide_actual_old_text_content[new_id_auto]
+                                final_new_content_for_block[new_id_auto] = current_slide_actual_old_text_content[new_id_auto]
                     # Fallback for legacy_lyrics if no content was mapped by ID for *this* slide
-                    if not new_settings_for_cmd["text_content"] and \
+                    if not final_new_content_for_block and \
                        "legacy_lyrics" in current_slide_actual_old_text_content and new_tb_ids:
-                        new_settings_for_cmd["text_content"][new_tb_ids[0]] = current_slide_actual_old_text_content["legacy_lyrics"]
+                        final_new_content_for_block[new_tb_ids[0]] = current_slide_actual_old_text_content["legacy_lyrics"]
                 # else: No old content (from first slide perspective) to map, or no new text boxes.
-                # new_settings_for_cmd["text_content"] will be empty or partially filled based on above.
 
-                cmd = ApplyTemplateCommand(self.presentation_manager, idx_to_apply, old_settings_for_cmd, new_settings_for_cmd)
+                print(f"DEBUG_MW_APPLY_TEMPLATE (Multi for instance {current_instance_id}): final_new_content_for_block: {final_new_content_for_block}")
+                sys.stdout.flush()
+                cmd = ApplyTemplateCommand(
+                    self.presentation_manager,
+                    current_instance_id,
+                    old_template_id_for_cmd,
+                    template_name, # new_template_id
+                    old_content_for_cmd,
+                    final_new_content_for_block
+                )
                 self.presentation_manager.do_command(cmd)
         
         # --- Single-Slide Application ---
         else:
             current_slide_data = slides[slide_index]
-            old_settings = current_slide_data.template_settings
+            # For the command
+            instance_id_for_single_command = current_slide_data.id
+            old_template_id_for_single_command = current_slide_data.template_settings.get('layout_name')
+            old_content_for_single_command = current_slide_data.template_settings.get('text_content', {})
             
             old_text_content_for_dialog = {}
-            if old_settings and isinstance(old_settings.get("text_content"), dict):
-                old_text_content_for_dialog = old_settings["text_content"]
+            # Use current_slide_data.template_settings here instead of the undefined 'old_settings'
+            if current_slide_data.template_settings and isinstance(current_slide_data.template_settings.get("text_content"), dict):
+                old_text_content_for_dialog = current_slide_data.template_settings["text_content"]
             elif current_slide_data.lyrics: # Fallback to legacy lyrics if no structured content
                 old_text_content_for_dialog = {"legacy_lyrics": current_slide_data.lyrics}
 
             # Prepare final_template_settings (will be populated based on dialog or auto-mapping)
-            final_template_settings = copy.deepcopy(new_layout_structure)
-            final_template_settings.setdefault("text_content", {}) # Ensure it exists
+            final_new_content_dict_single = {}
 
             # Determine if remapping dialog is needed
             old_tb_ids_set = set(old_text_content_for_dialog.keys())
@@ -1210,41 +1112,51 @@ class MainWindow(QMainWindow):
                     user_mapping = remapping_dialog.get_remapping()
                     for new_id, old_id_source in user_mapping.items():
                         if old_id_source and old_id_source in old_text_content_for_dialog:
-                            final_template_settings["text_content"][new_id] = old_text_content_for_dialog[old_id_source]
+                            final_new_content_dict_single[new_id] = old_text_content_for_dialog[old_id_source]
                 else: # User cancelled
                     QMessageBox.information(self, "Template Change Cancelled", "Template application was cancelled.")
                     return # Abort
-            
-            elif old_text_content_for_dialog and new_tb_ids: # Auto-map if no dialog needed but old content and new boxes exist
-                # Simple auto-mapping:
-                if len(old_text_content_for_dialog) == 1 and len(new_tb_ids) == 1:
-                    # If only one old content source and one new box, map it.
-                    old_content_value = next(iter(old_text_content_for_dialog.values()))
-                    final_template_settings["text_content"][new_tb_ids[0]] = old_content_value
-                else:
-                    # Try to map by matching ID.
-                    for new_id in new_tb_ids:
-                        if new_id in old_text_content_for_dialog:
-                            final_template_settings["text_content"][new_id] = old_text_content_for_dialog[new_id]
-                
-                # Fallback for legacy_lyrics if no content was mapped by ID:
-                # If the old slide only had `slide_data.lyrics` (so `old_text_content_for_dialog` was `{"legacy_lyrics": ...}`)
-                # and the new template has text boxes with IDs that don't match "legacy_lyrics",
-                # put the legacy_lyrics into the first text box of the new template.
-                if not final_template_settings["text_content"] and \
-                   "legacy_lyrics" in old_text_content_for_dialog and \
-                   new_tb_ids: # new_tb_ids should always be non-empty here
-                    final_template_settings["text_content"][new_tb_ids[0]] = old_text_content_for_dialog["legacy_lyrics"]
-            # else: No old content to map, or no new text boxes to map to (already checked).
-            # final_template_settings["text_content"] will be empty or partially filled.
+            # If dialog was not shown (e.g., old_tb_ids_set == new_tb_ids_set, or no old_text_content_for_dialog)
+            # We should still try to preserve content if IDs match, or map if it's a simple 1-to-1.
+            elif new_tb_ids: # Ensure there are new text boxes to map to
+                if old_text_content_for_dialog:
+                    # If IDs are the same, just copy the content
+                    if old_tb_ids_set == new_tb_ids_set:
+                        final_new_content_dict_single = old_text_content_for_dialog.copy()
+                    # Simple auto-mapping for 1-to-1 if IDs differ but counts are 1
+                    elif len(old_text_content_for_dialog) == 1 and len(new_tb_ids) == 1:
+                        old_content_value = next(iter(old_text_content_for_dialog.values()))
+                        final_new_content_dict_single[new_tb_ids[0]] = old_content_value
+                    else: # More complex, try to map by matching ID if any exist
+                        for new_id in new_tb_ids:
+                            if new_id in old_text_content_for_dialog:
+                                final_new_content_dict_single[new_id] = old_text_content_for_dialog[new_id]
+                            # else: no direct match for this new_id, it will be empty
 
-            cmd = ApplyTemplateCommand(self.presentation_manager, slide_index, old_settings, final_template_settings)
+                    # Fallback for "legacy_lyrics" if no content was mapped by ID and it exists
+                    if not final_new_content_dict_single and "legacy_lyrics" in old_text_content_for_dialog:
+                        final_new_content_dict_single[new_tb_ids[0]] = old_text_content_for_dialog["legacy_lyrics"]
+                else: # No old_text_content_for_dialog, so new content will be empty for all new_tb_ids
+                    for new_id in new_tb_ids:
+                        final_new_content_dict_single[new_id] = ""
+
+            print(f"DEBUG_MW_APPLY_TEMPLATE (Single): final_new_content_dict_single: {final_new_content_dict_single}")
+            sys.stdout.flush()
+
+            # new_template_id is template_name
+            cmd = ApplyTemplateCommand(
+                self.presentation_manager,
+                instance_id_for_single_command,
+                old_template_id_for_single_command,
+                template_name, # new_template_id
+                old_content_for_single_command,
+                final_new_content_dict_single
+            )
             self.presentation_manager.do_command(cmd)
 
         # The presentation_changed signal from do_command will update the UI.
 
-
-
+    #Main Window Utility
     @Slot(int)
     def handle_slide_overlay_label_changed(self, slide_index: int, new_label: str):
         """Handles the center_overlay_label_changed signal from a ScaledSlideButton."""
@@ -1252,7 +1164,7 @@ class MainWindow(QMainWindow):
         slides = self.presentation_manager.get_slides()
         if 0 <= slide_index < len(slides):
             # Determine which slides to apply the label to
-            selected_indices_to_apply = list(self._selected_slide_indices)
+            selected_indices_to_apply = self.get_selected_slide_indices()
             # If the right-clicked slide is part of a multi-selection, apply to all selected
             if slide_index not in selected_indices_to_apply or len(selected_indices_to_apply) <= 1:
                  selected_indices_to_apply = [slide_index] # Otherwise, just apply to the clicked one
@@ -1262,7 +1174,8 @@ class MainWindow(QMainWindow):
             for idx_to_apply in selected_indices_to_apply:
                  if 0 <= idx_to_apply < len(slides):
                      old_label = slides[idx_to_apply].overlay_label
-                     cmd = ChangeOverlayLabelCommand(self.presentation_manager, idx_to_apply, old_label, new_label)
+                     instance_id = slides[idx_to_apply].id # Get instance_id
+                     cmd = ChangeOverlayLabelCommand(self.presentation_manager, instance_id, old_label, new_label)
                      self.presentation_manager.do_command(cmd)
                      print(f"MainWindow: Overlay label for slide {idx_to_apply} changed to '{new_label}'.")
             # The presentation_changed signal from do_command will update UI.
@@ -1272,13 +1185,14 @@ class MainWindow(QMainWindow):
             # self.presentation_manager.do_command(cmd)
             # print(f"MainWindow: Overlay label for slide {slide_index} changed to '{new_label}'. Presentation marked dirty.")
 
+    #Main Window Utility
     @Slot(int, QColor)
     def handle_banner_color_change_requested(self, slide_index: int, color: Optional[QColor]):
         """Handles the banner_color_change_requested signal from a ScaledSlideButton."""
         # This slot is called when the context menu action is triggered on a specific button.
         slides = self.presentation_manager.get_slides() # Get slides to check bounds
         # Determine which slides to apply the color to
-        selected_indices_to_apply = list(self._selected_slide_indices)
+        selected_indices_to_apply = self.get_selected_slide_indices()
         # If the right-clicked slide is part of a multi-selection, apply to all selected
         if slide_index not in selected_indices_to_apply or len(selected_indices_to_apply) <= 1:
              selected_indices_to_apply = [slide_index] # Otherwise, just apply to the clicked one
@@ -1297,6 +1211,7 @@ class MainWindow(QMainWindow):
         # The PresentationManager already emits slide_visual_property_changed for each slide
         # when _suppress_signal is True. No need for a final generic emit here for banner color.
 
+    #Main Window Utility (might be bad because _from_menu but description is ok but doubble check)
     @Slot(int)
     def handle_next_slide_from_menu(self, current_slide_id: int):
         num_slides = len(self.presentation_manager.get_slides())
@@ -1307,13 +1222,11 @@ class MainWindow(QMainWindow):
         if new_selection_index >= num_slides: # Wrap to first
             new_selection_index = 0
         
-        # Find button in our list
-        button_to_select = next((btn for btn in self.slide_buttons_list if btn._slide_id == new_selection_index), None)
-        if button_to_select:
-            # Trigger the full selection logic
-            self._handle_manual_slide_selection(new_selection_index)
-            self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50) # Ensure visibility
+        if self.slide_ui_manager:
+            # SlideUIManager will handle selection and ensuring visibility
+            self.slide_ui_manager._handle_manual_slide_selection(new_selection_index)
 
+    #Main Window Utility (might be bad because _from_menu but description is ok but doubble check)
     @Slot(int)
     def handle_previous_slide_from_menu(self, current_slide_id: int):
         num_slides = len(self.presentation_manager.get_slides())
@@ -1324,282 +1237,115 @@ class MainWindow(QMainWindow):
         if new_selection_index < 0: # Wrap to last
             new_selection_index = num_slides - 1
         
-        # Find button in our list
-        button_to_select = next((btn for btn in self.slide_buttons_list if btn._slide_id == new_selection_index), None)
-        if button_to_select:
-            # Trigger the full selection logic
-            self._handle_manual_slide_selection(new_selection_index)
-            self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50) # Ensure visibility
+        if self.slide_ui_manager:
+            # SlideUIManager will handle selection and ensuring visibility
+            self.slide_ui_manager._handle_manual_slide_selection(new_selection_index)
 
-
-    def _display_slide(self, index: int): # Original method starts here
+    def _display_slide(self, index: int):
         slides = self.presentation_manager.get_slides()
-        if not (0 <= index < len(slides)):
+        slide_data_to_display: Optional[SlideData] = None
+
+        if 0 <= index < len(slides):
+            slide_data_to_display = slides[index]
+        else: # Invalid index, effectively blanking
             self._show_blank_on_output()
             return
-        if not self.output_window.isVisible():
+        # If output window is not visible, but DeckLink might be, still update DeckLink.
+        # The OutputTarget's update_slide will handle its own logic.
+        # The main_output_target's pixmap_updated is connected to output_window.set_pixmap,
+        # so if output_window is hidden, set_pixmap might do nothing or be optimized by Qt.
+
+        print(f"MainWindow: _display_slide called for index {index}, slide_id: {slide_data_to_display.id if slide_data_to_display else 'None'}")
+
+        # Update Main Output Target (if it exists and its window is visible)
+        if self.main_output_target and self.output_window.isVisible():
+            self.main_output_target.update_slide(slide_data_to_display)
+            # Its pixmap_updated signal will call self.output_window.set_pixmap
+
+        # Update DeckLink Output Target (if it exists and DeckLink is active)
+        if self.decklink_output_target and self.is_decklink_output_active:
+            self.decklink_output_target.update_slide(slide_data_to_display)
+            # Its pixmap_updated signal will call self._handle_decklink_target_update
+
+        # Update MainWindow's internal tracking of the "persistent" background
+        # This is for UI elements or logic within MainWindow that might need to know
+        # what the conceptual background is, separate from what OutputTargets are doing.
+        if slide_data_to_display and slide_data_to_display.is_background_slide:
+            # To get a representative pixmap for self.current_live_background_pixmap,
+            # we can render it once using the main output target's resolution.
+            # This is a bit redundant if main_output_target is active, but ensures
+            # self.current_live_background_pixmap is correctly sized and rendered.
+            width = self.output_resolution.width() # Default to screen output res
+            height = self.output_resolution.height()
+            if self.main_output_target: # Prefer main target's size if available
+                width = self.main_output_target.target_size.width()
+                height = self.main_output_target.target_size.height()
+            
+            # Render standalone to get the background pixmap
+            bg_pixmap, _, _ = self.slide_renderer.render_slide(
+                slide_data_to_display, width, height, base_pixmap=None, is_final_output=True
+            )
+            self.current_live_background_pixmap = bg_pixmap.copy() if bg_pixmap and not bg_pixmap.isNull() else None
+            self.current_background_slide_id = slide_data_to_display.id
+        # If it's a content slide, self.current_live_background_pixmap remains unchanged.
+        # If slide_data_to_display is None (blanking), _show_blank_on_output handles clearing these.
+
+    def _show_blank_on_output(self):
+        print("MainWindow: _show_blank_on_output called.")
+        # Update Main Output Target to blank
+        if self.main_output_target and self.output_window.isVisible():
+            self.main_output_target.update_slide(None)
+
+        # Update DeckLink Output Target to blank
+        if self.decklink_output_target and self.is_decklink_output_active:
+            self.decklink_output_target.update_slide(None)
+
+        # Clear MainWindow's internal persistent background tracking
+        self.current_live_background_pixmap = None
+        self.current_background_slide_id = None
+
+        # If the output window itself needs to be explicitly blanked (e.g., if no target was active)
+        if not self.main_output_target and self.output_window.isVisible():
+            blank_pixmap = QPixmap(self.output_resolution.width(), self.output_resolution.height())
+            blank_pixmap.fill(Qt.GlobalColor.black)
+            self.output_window.set_pixmap(blank_pixmap)
+
+    @Slot(QPixmap)
+    def _handle_decklink_target_update(self, fill_pixmap: QPixmap):
+        """Slot connected to decklink_output_target.pixmap_updated."""
+        if not self.is_decklink_output_active or not self.decklink_output_target:
             return
 
-        render_output_start_time = time.perf_counter()
-        slide_data = slides[index]
-        base_pixmap_for_render = None
-        output_width = self.output_resolution.width()
-        output_height = self.output_resolution.height()
-        
-        if slide_data.is_background_slide:
-            # This slide IS a background setter. Render it standalone.
-            # Its output will become the new self.current_live_background_pixmap.
-            base_pixmap_for_render = None # Render standalone
-            # Clear the ID of any *content* slide that might have been active
-            # (though current_slide_index already points to this BG slide)
-        else: # This is a content slide
-            # Check if this content slide itself has a transparent background
-            is_content_slide_transparent = False
-            if not slide_data.background_image_path: # Condition 1: No image path
-                if slide_data.background_color is None: # Condition 2a: background_color is explicitly None
-                    is_content_slide_transparent = True
-                else: # Condition 2b: background_color is a string, check its alpha
-                    # Ensure slide_data.background_color is a string before passing to QColor
-                    if isinstance(slide_data.background_color, str):
-                        slide_bg_qcolor = QColor(slide_data.background_color)
-                        if slide_bg_qcolor.isValid() and slide_bg_qcolor.alpha() == 0:
-                            is_content_slide_transparent = True
-                            
-            # Only use the persistent background if the content slide is transparent
-            # AND a persistent background is actually set and valid.
-            if is_content_slide_transparent and \
-               self.current_live_background_pixmap and \
-               not self.current_live_background_pixmap.isNull() and \
-               self.current_live_background_pixmap.size() == self.output_resolution:
-                base_pixmap_for_render = self.current_live_background_pixmap
-            else:
-                base_pixmap_for_render = None # Render content slide standalone
+        # The fill_pixmap is the composited output from decklink_output_target
+        key_matte_pixmap = self.decklink_output_target.get_key_matte()
 
-        try:
-            # render_slide now returns (pixmap, has_font_error)
-            # For live output, we don't aggregate these individual timings here, but still need to unpack.
-            render_result = self.slide_renderer.render_slide(
-                 slide_data, output_width, output_height, base_pixmap=base_pixmap_for_render, is_final_output=True
-            )
-            if len(render_result) == 3: # New renderer with benchmarks
-                output_pixmap, has_font_error_on_output, _ = render_result
-            else: # Old renderer
-                output_pixmap, has_font_error_on_output = render_result
-                
-            # After rendering, decide if this render should BECOME the new live background
-            if slide_data.is_background_slide:
-                if output_pixmap and not output_pixmap.isNull():
-                    self.current_live_background_pixmap = output_pixmap.copy()
-                    self.current_background_slide_id = slide_data.id # Track the ID of the active BG
-                else: # Should not happen if rendering was successful
-                    self.current_live_background_pixmap = None
-                    self.current_background_slide_id = None
-            if not output_pixmap.isNull():
-                self.output_window.set_pixmap(output_pixmap)
-            
-            # We don't directly use has_font_error_on_output here, but it's good practice
-            # The button icon should already reflect this from the preview rendering.
-        except Exception as e:
-            print(f"Error rendering slide {index} (ID: {slide_data.id}) for output: {e}")
-            error_slide = SlideData(lyrics=f"Error rendering slide:\n{e}", background_color="#AA0000", template_settings={"color": "#FFFFFF"})
-            # Render error slide standalone, ignore its font error status and benchmarks for this specific display
-            render_result = self.slide_renderer.render_slide(error_slide, output_width, output_height, base_pixmap=None, is_final_output=True)
+        if fill_pixmap.isNull() or not key_matte_pixmap or key_matte_pixmap.isNull():
+            print("MainWindow: Error - Fill or Key pixmap is null for DeckLink in _handle_decklink_target_update.")
+            return
 
-            if len(render_result) == 3: # New renderer with benchmarks
-                error_pixmap, _, _ = render_result
-            else: # Old renderer
-                error_pixmap, _ = render_result
-            if not error_pixmap.isNull():
-                self.output_window.set_pixmap(error_pixmap)
-            self.show_error_message(f"Error rendering slide {index} (ID: {slide_data.id}): {e}")
-        render_output_duration = time.perf_counter() - render_output_start_time
+        # Convert QPixmaps to QImages, then to bytes (existing logic)
+        # Ensure correct format for DeckLink
+        fill_qimage = fill_pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        key_qimage = key_matte_pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
 
-        # --- Send frame to DeckLink if active ---
-        if self.is_decklink_output_active and not output_pixmap.isNull():
-            # Create a QImage from the pixmap, then make a deep copy
-            # to ensure it's independent for DeckLink processing.
-            temp_qimage = output_pixmap.toImage()
-            decklink_fill_qimage = temp_qimage.copy() # Create a deep copy
+        fill_bytes = decklink_handler.get_image_bytes_from_qimage(fill_qimage)
+        key_bytes = decklink_handler.get_image_bytes_from_qimage(key_qimage)
 
-            # Ensure the image is scaled to DeckLink's expected resolution
-            if (decklink_fill_qimage.width() != decklink_handler.DLL_WIDTH or
-                decklink_fill_qimage.height() != decklink_handler.DLL_HEIGHT):
-                decklink_fill_qimage = decklink_fill_qimage.scaled(
-                    decklink_handler.DLL_WIDTH,
-                    decklink_handler.DLL_HEIGHT,
-                    Qt.AspectRatioMode.IgnoreAspectRatio, # Or KeepAspectRatioByExpanding and crop
-                    Qt.TransformationMode.SmoothTransformation
-                )
-            
-            # Ensure correct format for get_image_bytes_from_qimage
-            if decklink_fill_qimage.format() != QImage.Format_ARGB32_Premultiplied:
-                decklink_fill_qimage = decklink_fill_qimage.convertToFormat(QImage.Format_ARGB32_Premultiplied)
-            
-            # --- More detailed check before calling get_image_bytes_from_qimage ---
-            if decklink_fill_qimage.isNull():
-                print("MainWindow: ERROR - decklink_fill_qimage is NULL before get_image_bytes_from_qimage for slide.")
-                fill_bytes = None
-            elif decklink_fill_qimage.sizeInBytes() == 0:
-                print(f"MainWindow: ERROR - decklink_fill_qimage has zero bytes. Size: {decklink_fill_qimage.width()}x{decklink_fill_qimage.height()}, Format: {decklink_fill_qimage.format()}")
-                fill_bytes = None
-            else:
-                fill_bytes = decklink_handler.get_image_bytes_from_qimage(decklink_fill_qimage)
-            
-            # --- Generate Key Matte (White text on Black background) ---
-            key_bytes = None
-            try:
-                # Assuming self.slide_renderer has a new method render_key_matte
-                # This method should return a QPixmap (white text on black background)
-                # at DeckLink resolution.
-                key_matte_pixmap = self.slide_renderer.render_key_matte(
-                    slide_data, 
-                    decklink_handler.DLL_WIDTH, 
-                    decklink_handler.DLL_HEIGHT
-                )
-                if not key_matte_pixmap.isNull():
-                    key_matte_qimage = key_matte_pixmap.toImage()
-                    if key_matte_qimage.format() != QImage.Format_ARGB32_Premultiplied:
-                        key_matte_qimage = key_matte_qimage.convertToFormat(QImage.Format_ARGB32_Premultiplied)
-                    
-                    if not key_matte_qimage.isNull() and key_matte_qimage.sizeInBytes() > 0:
-                        key_bytes = decklink_handler.get_image_bytes_from_qimage(key_matte_qimage)
-                    else:
-                        print("MainWindow: ERROR - key_matte_qimage is NULL or has zero bytes after conversion/check.")
-                else:
-                    print("MainWindow: ERROR - render_key_matte returned a NULL pixmap.")
-            except AttributeError:
-                print("MainWindow: ERROR - self.slide_renderer.render_key_matte method not found. Sending black key.")
-            except Exception as e:
-                print(f"MainWindow: ERROR during key matte generation: {e}. Sending black key.")
+        if fill_bytes and key_bytes:
+            # print(f"MainWindow: Sending to DeckLink via OutputTarget. Fill size: {len(fill_bytes)}, Key size: {len(key_bytes)}")
+            if not decklink_handler.send_external_keying_frames(fill_bytes, key_bytes):
+                print("MainWindow: decklink_handler.send_external_keying_frames reported FAILURE (via OutputTarget).")
+        else:
+            print("MainWindow: Error converting pixmaps to bytes for DeckLink (via OutputTarget).")
 
-            if key_bytes is None: # Fallback to black key if matte generation failed
-                print("MainWindow: Fallback - Key matte generation failed or not implemented, sending black key.")
-                black_key_fallback_image = QImage(decklink_handler.DLL_WIDTH, decklink_handler.DLL_HEIGHT, QImage.Format_ARGB32_Premultiplied)
-                black_key_fallback_image.fill(QColor(0,0,0,255)) # Opaque black
-                key_bytes = decklink_handler.get_image_bytes_from_qimage(black_key_fallback_image)
-            
-            # This line was duplicated, removing one instance
-            # fill_bytes = decklink_handler.get_image_bytes_from_qimage(decklink_fill_qimage) 
-            
-            if fill_bytes and key_bytes:
-                print(f"MainWindow: Attempting to send slide to DeckLink. Fill size: {len(fill_bytes)}, Key size: {len(key_bytes)}")
-                if decklink_handler.send_external_keying_frames(fill_bytes, key_bytes):
-                    print("MainWindow: decklink_handler.send_external_keying_frames reported SUCCESS for slide.")
-                else:
-                    print("MainWindow: decklink_handler.send_external_keying_frames reported FAILURE for slide.")
-            else:
-                print(f"MainWindow: ERROR after get_image_bytes - fill_bytes or key_bytes is None. Fill is None: {fill_bytes is None}, Key is None: {key_bytes is None}")
-
-        print(f"[BENCHMARK] _display_slide() for output took: {render_output_duration:.4f} seconds for slide {index}")
-
-    def _show_blank_on_output(self):
-        if self.output_window.isVisible():
-            blank_slide = SlideData(lyrics="", background_color="#000000")
-            # Render blank slide standalone, ignore its font error status and benchmarks
-            render_result = self.slide_renderer.render_slide(
-                blank_slide, self.output_resolution.width(), self.output_resolution.height(), base_pixmap=None, is_final_output=True
-            )
-            if len(render_result) == 3: # New renderer
-                blank_pixmap, _, _ = render_result
-            else: # Old renderer
-                blank_pixmap, _ = render_result
-            
-            if not blank_pixmap.isNull():
-                self.output_window.set_pixmap(blank_pixmap)
-
-            # --- Send blank frame to DeckLink if active ---
-            if self.is_decklink_output_active:
-                # Create a black QImage specifically for DeckLink at its resolution
-                decklink_blank_fill_image = QImage(
-                    decklink_handler.DLL_WIDTH,
-                    decklink_handler.DLL_HEIGHT,
-                    QImage.Format_ARGB32_Premultiplied
-                )
-                decklink_blank_fill_image.fill(QColor(0,0,0,255)) # Opaque black
-
-                if decklink_blank_fill_image.isNull() or decklink_blank_fill_image.sizeInBytes() == 0:
-                    print("MainWindow: ERROR - decklink_blank_fill_image is NULL or has zero bytes for BLANK.")
-                    fill_bytes = None
-                else:
-                    fill_bytes = decklink_handler.get_image_bytes_from_qimage(decklink_blank_fill_image)
-                
-                # Key is also black for a blank output
-                if fill_bytes: 
-                    key_bytes = fill_bytes 
-                else:
-                    key_bytes = None 
-                
-                if fill_bytes and key_bytes:
-                    print(f"MainWindow: Attempting to send BLANK to DeckLink. Fill size: {len(fill_bytes)}, Key size: {len(key_bytes)}")
-                    if decklink_handler.send_external_keying_frames(fill_bytes, key_bytes):
-                        print("MainWindow: decklink_handler.send_external_keying_frames reported SUCCESS for BLANK.")
-                    else:
-                        print("MainWindow: decklink_handler.send_external_keying_frames reported FAILURE for BLANK.")
-                else:
-                    print(f"MainWindow: ERROR after get_image_bytes - fill_bytes or key_bytes is None for BLANK. Fill is None: {fill_bytes is None}, Key is None: {key_bytes is None}")
-
-        # When showing blank, clear the persistent background
-        self.current_live_background_pixmap = None # Clear any persistent background
-        self.current_background_slide_id = None
-               
-    def _show_blank_on_output(self):
-        if self.output_window.isVisible():
-            blank_slide = SlideData(lyrics="", background_color="#000000")
-            # Render blank slide standalone, ignore its font error status and benchmarks
-            render_result = self.slide_renderer.render_slide(
-                blank_slide, self.output_resolution.width(), self.output_resolution.height(), base_pixmap=None, is_final_output=True
-            )
-            if len(render_result) == 3: # New renderer
-                blank_pixmap, _, _ = render_result
-            else: # Old renderer
-                blank_pixmap, _ = render_result
-            
-            if not blank_pixmap.isNull():
-                self.output_window.set_pixmap(blank_pixmap)
-
-            # --- Send blank frame to DeckLink if active ---
-            if self.is_decklink_output_active:
-                # Create a black QImage specifically for DeckLink at its resolution
-                decklink_blank_fill_image = QImage(
-                    decklink_handler.DLL_WIDTH,
-                    decklink_handler.DLL_HEIGHT,
-                    QImage.Format_ARGB32_Premultiplied
-                )
-                decklink_blank_fill_image.fill(QColor(0,0,0,255)) # Opaque black
-
-                if decklink_blank_fill_image.isNull() or decklink_blank_fill_image.sizeInBytes() == 0:
-                    print("MainWindow: ERROR - decklink_blank_fill_image is NULL or has zero bytes for BLANK.")
-                    fill_bytes = None
-                else:
-                    fill_bytes = decklink_handler.get_image_bytes_from_qimage(decklink_blank_fill_image)
-                
-                # Key is also black for a blank output
-                # We can reuse fill_bytes if it's guaranteed to be the black frame data
-                # or create a separate one for clarity if needed later.
-                # For now, if fill_bytes is the black frame, key_bytes can be the same.
-                if fill_bytes: # Only assign if fill_bytes was successfully created
-                    key_bytes = fill_bytes 
-                else:
-                    key_bytes = None # Ensure key_bytes is also None if fill_bytes failed
-                
-                if fill_bytes and key_bytes:
-                    print(f"MainWindow: Attempting to send BLANK to DeckLink. Fill size: {len(fill_bytes)}, Key size: {len(key_bytes)}")
-                    if decklink_handler.send_external_keying_frames(fill_bytes, key_bytes):
-                        print("MainWindow: decklink_handler.send_external_keying_frames reported SUCCESS for BLANK.")
-                    else:
-                        print("MainWindow: decklink_handler.send_external_keying_frames reported FAILURE for BLANK.")
-                else:
-                    print(f"MainWindow: ERROR after get_image_bytes - fill_bytes or key_bytes is None for BLANK. Fill is None: {fill_bytes is None}, Key is None: {key_bytes is None}")
-
-        # When showing blank, clear the persistent background
-        self.current_live_background_pixmap = None # Clear any persistent background
-        self.current_background_slide_id = None
-
+    
+    #Main window Utility 
     def show_error_message(self, message: str):
         QMessageBox.critical(self, "Error", message)
 
+    #Main Window Utility
     def closeEvent(self, event):
-        if self.presentation_manager.is_dirty:
+        if self.presentation_manager.is_overall_dirty():
             reply = QMessageBox.question(self, 'Unsaved Changes',
                                          "You have unsaved changes. Do you want to save before exiting?",
                                          QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
@@ -1618,11 +1364,24 @@ class MainWindow(QMainWindow):
             decklink_handler.shutdown_selected_devices()
             decklink_handler.shutdown_sdk()
             self.is_decklink_output_active = False
+        # Clean up OutputTargets
+        if self.main_output_target:
+            self.main_output_target.deleteLater()
+        if self.decklink_output_target:
+            self.decklink_output_target.deleteLater()
         self.output_window.close()
         self.config_manager.save_all_configs() # Save settings via config manager
         self._save_benchmark_history() # Save benchmark history on close
+
+        # Save window state (including dock widgets)
+        window_state = self.saveState().toBase64().data().decode('utf-8')
+        self.config_manager.set_app_setting("main_window_state", window_state)
+        print("MainWindow: Saved window state.")
+
+
         super().closeEvent(event)
 
+    #Main Window Utility
     def showEvent(self, event):
         """Override showEvent to capture benchmark timings when the window is actually shown."""
         # Calculate app_init and mw_show times when the window is first shown
@@ -1639,8 +1398,19 @@ class MainWindow(QMainWindow):
         self._update_recent_files_menu() # Ensure menu is up-to-date
         self._load_benchmark_history()
 
+        # Attempt to fix macOS menu bar unresponsiveness on startup by activating in showEvent
+        # Use QTimer.singleShot to delay activation slightly, allowing event loop to process show.
+        def activate_and_focus_main_window():
+            self.raise_()
+            self.activateWindow()
+            self.setFocus() # Explicitly try to set focus to the MainWindow
+            # self.menuBar().update() # Keep this commented for now, can re-introduce if needed
+
+        QTimer.singleShot(50, activate_and_focus_main_window) # Increased delay slightly
+
         super().showEvent(event)
 
+    #Main Window Utility (maybe extract Benchmarking things to external program)
     def _save_benchmark_history(self):
         """Saves the last presentation benchmark data to a file."""
         data_to_save = {key: self.benchmark_data_store[key] for key in self.benchmark_data_store if key.startswith("last_presentation_")}
@@ -1654,6 +1424,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Unexpected error saving benchmark history: {e}")
 
+    #Main Window Utility (maybe extract Benchmarking things to external program)
     def _load_benchmark_history(self):
         """Loads the last presentation benchmark data from a file."""
         if os.path.exists(BENCHMARK_HISTORY_FILE_PATH_MW):
@@ -1675,6 +1446,7 @@ class MainWindow(QMainWindow):
         else:
             print(f"Benchmark history file not found: {BENCHMARK_HISTORY_FILE_PATH_MW}")
 
+    # Needs to be updated so that when tempates are updated it will retroactively refresh all of the templates in the presentation
     @Slot()
     def on_template_collection_changed(self):
         """
@@ -1682,85 +1454,32 @@ class MainWindow(QMainWindow):
         This ensures ScaledSlideButtons get the new list of template names for their context menus.
         """
         print("MainWindow: Template collection changed, refreshing slide display.")
-        self.update_slide_display_and_selection()
+        if self.slide_ui_manager:
+            self.slide_ui_manager.refresh_slide_display()
 
+    # This was modified alot when making could be funky
     def eventFilter(self, watched_object, event):
         # This is where key events will go if a child (like a button) doesn't handle them
         # and focus is on the QScrollArea (for keyboard navigation).
         if watched_object == self.scroll_area:
             if event.type() == QEvent.Type.KeyPress:
-                # print(f"EventFilter: KeyPress on scroll_area. Focus: {QApplication.focusWidget()}, Key: {event.key()}") # Can be noisy
-                
-                if event.isAutoRepeat():
-                    return True # Consume auto-repeat events for our navigation keys, do nothing
-
-                key = event.key()
-
-                num_slides = len(self.presentation_manager.get_slides())
-                # Ignore navigation keys if Ctrl or Shift is held, to allow default scroll area behavior
-                # or future multi-selection range behavior.
-                if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
-                     return super().eventFilter(watched_object, event)
-
-                if num_slides == 0:
-                    return super().eventFilter(watched_object, event) # Pass on if no slides
-
-                current_selection_index = self.current_slide_index
-                new_selection_index = current_selection_index
-
-                if key == Qt.Key_Right:
-                    if current_selection_index == -1 and num_slides > 0:
-                        new_selection_index = 0 # Select first if nothing selected
-                    elif current_selection_index < num_slides - 1:
-                        new_selection_index = current_selection_index + 1
-                    elif current_selection_index == num_slides - 1: # Wrap
-                        new_selection_index = 0
-                    else: # No change in selection logic based on this key, let default happen
-                        return super().eventFilter(watched_object, event)
-                elif key == Qt.Key_Left:
-                    # If current_slide_index is -1, it means no slide is selected.
-                    if current_selection_index == -1 and num_slides > 0: # If nothing selected, select last
-                        new_selection_index = num_slides - 1
-                        print(f"EventFilter ArrowKeyDebug: Left - Was: None, Next: {new_selection_index}")
-                    elif current_selection_index > 0:
-                        new_selection_index = current_selection_index - 1
-                        print(f"EventFilter ArrowKeyDebug: Left - Was: {current_selection_index}, Next: {new_selection_index}")
-                    elif current_selection_index == 0 and num_slides > 0: # Wrap
-                        new_selection_index = num_slides - 1
-                        print(f"EventFilter ArrowKeyDebug: Left - Was: {current_selection_index} (first), Next: {new_selection_index} (wrap)")
-                    else: # No change
-                        return super().eventFilter(watched_object, event)
-                else:
-                    # For other keys (like Up/Down for scrolling, Tab), let the scroll area handle them
-                    return super().eventFilter(watched_object, event)
-
-                if new_selection_index != current_selection_index or \
-                   (current_selection_index == -1 and new_selection_index != -1): # Ensure selection actually changes or initializes
-                    # Find button in our list
-                    button_to_select = next((btn for btn in self.slide_buttons_list if btn._slide_id == new_selection_index), None)
-                    if button_to_select:
-                        print(f"EventFilter: Navigating to slide index {new_selection_index} from {current_selection_index}") # DEBUG
-                        
-                        # Directly call the method that handles all aspects of slide selection.
-                        self._handle_manual_slide_selection(new_selection_index)
-                        # The handler above already calls setChecked(True) on the target button.
-                        self.scroll_area.ensureWidgetVisible(button_to_select, 50, 50)
-                    return True # Event handled
+                # Delegate to SlideUIManager's event filter if it's managing the scroll_area
+                if self.slide_ui_manager and hasattr(self.slide_ui_manager, 'eventFilter'):
+                    return self.slide_ui_manager.eventFilter(watched_object, event)
 
         return super().eventFilter(watched_object, event) # Pass on unhandled events/objects
     
     @Slot(QPoint)
     def _handle_slide_panel_custom_context_menu(self, local_pos: QPoint):
-        """Handles customContextMenuRequested signal from slide_buttons_widget."""
-        # Convert the local position from slide_buttons_widget to global coordinates
-        global_pos = self.slide_buttons_widget.mapToGlobal(local_pos)
-        self._show_insert_slide_context_menu(global_pos)
+        """Delegates to SlideUIManager."""
+        if self.slide_ui_manager:
+            self.slide_ui_manager._handle_slide_panel_custom_context_menu(local_pos)
 
-
+    #Main Window Structure
     def create_menu_bar(self):
         menu_bar = QMenuBar(self)
         # Set a theme-aware background color for the menu bar to make it more distinct
-        menu_bar.setStyleSheet("QMenuBar { background-color: palette(button); }")
+        # menu_bar.setStyleSheet("QMenuBar { background-color: palette(button); }") # EXPERIMENT: Comment out
         
         # File Menu
         file_menu = menu_bar.addMenu("File")
@@ -1774,6 +1493,8 @@ class MainWindow(QMainWindow):
         new_action = file_menu.addAction("New")
         new_action.triggered.connect(self.handle_new)
         # Edit Menu
+        # Removed Import submenu and ProPresenter import action
+
         file_menu.addSeparator()
         self.recent_files_menu = file_menu.addMenu("Recents") # Store as instance member
         self._update_recent_files_menu() # Initial population
@@ -1789,20 +1510,43 @@ class MainWindow(QMainWindow):
         presentation_menu = menu_bar.addMenu("Presentation")
         go_live_action = presentation_menu.addAction("Go Live")
         go_live_action.triggered.connect(self.toggle_live)
-        
-        add_song_action = presentation_menu.addAction("Add Song")
-        add_song_action.triggered.connect(self.handle_add_song)
+        # Renamed "Add Song" to "Add New Section"
+        add_song_action = presentation_menu.addAction("Add New Section")
+        add_song_action.triggered.connect(self.handle_add_new_section) # Connect to new handler
         # Keep it disabled as in the toolbar
-        add_song_action.setEnabled(False)
-        add_song_action.setToolTip("Temporarily disabled pending multi-textbox feature.")
+        add_song_action.setEnabled(True) # Enable this feature now
+        add_song_action.setToolTip("Add a new song or content section to the presentation.")
 
         # Settings Menu (New)
         settings_menu = menu_bar.addMenu("Settings")
         open_settings_action = settings_menu.addAction("Open Settings...")
         open_settings_action.triggered.connect(self.handle_open_settings)
 
+        # View Menu (for toggling panels)
+        view_menu = menu_bar.addMenu("View")
+        toggle_section_manager_action = view_menu.addAction("Section Manager")
+        toggle_section_manager_action.triggered.connect(self._toggle_section_manager_panel)
+
+        # Developer Menu (New)
+        current_prod_mode = self.config_manager.get_app_setting("production_mode", "Developer")
+
+        # Only show the Developer menu if in Developer mode
+        if current_prod_mode == "Developer":
+            dev_menu = menu_bar.addMenu("Developer")
+
+            # The "Mode" submenu is removed as it's handled in SettingsWindow.
+            # If you had other Developer-specific menu items that selected the mode,
+            # they would also be removed or rethought.
+
+            # Add "Enable Hover Debug" directly to the Developer menu
+            dev_menu.addSeparator()
+            self.enable_hover_debug_action = dev_menu.addAction("Enable Hover Debug")
+            self.enable_hover_debug_action.setCheckable(True)
+            # Set checked state based on whether debugger is already active
+            self.enable_hover_debug_action.setChecked(self.hover_debugger_instance is not None)
+            self.enable_hover_debug_action.toggled.connect(self._toggle_hover_debugger)
         return menu_bar
-    
+    #Main Window Utility (add function to clear recents)
     def _update_recent_files_menu(self):
         """Clears and repopulates the 'Recents' submenu."""
         if not hasattr(self, 'recent_files_menu') or self.recent_files_menu is None:
@@ -1822,14 +1566,16 @@ class MainWindow(QMainWindow):
             action = self.recent_files_menu.addAction(os.path.basename(filepath)) # Display just the filename
             action.triggered.connect(lambda checked, path=filepath: self._load_recent_file_action(path)) # Use lambda to pass argument
     
+    #doubble check to see if it does the dirty check 
     def handle_new(self):
         """
         Starts a new presentation.  If there are unsaved changes, prompts the user to save.
         """
-        if self.presentation_manager.is_dirty:
+        if self.presentation_manager.is_overall_dirty():
             reply = QMessageBox.question(self, 'Unsaved Changes',
                                          "You have unsaved changes. Save before starting a new presentation?",
-                                         QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+                                         QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                                         QMessageBox.StandardButton.Save) # Default to Save
             if reply == QMessageBox.Save:
                 if not self.handle_save():  # If save fails or is cancelled
                     return
@@ -1837,80 +1583,24 @@ class MainWindow(QMainWindow):
                 return
 
         # Clear the current presentation (or load a blank one)
-        self.preview_pixmap_cache.clear() # Clear preview cache for a new presentation
+        if self.slide_ui_manager:
+            self.slide_ui_manager.preview_pixmap_cache.clear()
         self.presentation_manager.clear_presentation()
         # Reset the window title to reflect a new, unsaved presentation
         self.setWindowTitle("Plucky Presentation - New Presentation")
         # If you wish to force a save immediately to a new file you could do the following (uncomment).
         # But I do not recommend forcing it. Let the user decide when to save:
-    
+
+    #Fancy speed boost function make sure it's well structures to keep it fast
     @Slot(list)
     def _handle_slide_visual_property_change(self, updated_indices: list[int]):
         """
         Handles changes to visual properties of specific slides without a full UI rebuild.
         'updated_indices' is a list of slide indices that were modified.
         """
-        print(f"MainWindow: _handle_slide_visual_property_change for indices: {updated_indices}")
-        slides = self.presentation_manager.get_slides()
-        # Calculate dynamic preview dimensions based on current scale factor
-        # This is needed if we are re-rendering previews.
-        current_dynamic_preview_width = int(BASE_PREVIEW_WIDTH * self.button_scale_factor)
-        current_dynamic_preview_height = int(BASE_PREVIEW_HEIGHT * self.button_scale_factor)
-        preview_render_width = self.output_resolution.width() if self.output_window.isVisible() else 1920
-        preview_render_height = self.output_resolution.height() if self.output_window.isVisible() else 1080
-        for index in updated_indices:
-            if 0 <= index < len(self.slide_buttons_list) and 0 <= index < len(slides):
-                button = self.slide_buttons_list[index]
-                slide_data = slides[index]
-                if not isinstance(button, ScaledSlideButton):
-                    continue
-
-                # --- Re-render preview pixmap (necessary for template changes) ---
-                # This part assumes a template change might have occurred.
-                # For simple banner color changes, re-rendering the pixmap is often overkill but included for robustness
-                # if this handler is also used for template changes.
-                try:
-                    full_res_pixmap, has_font_error, _ = self.slide_renderer.render_slide(
-                        slide_data, preview_render_width, preview_render_height, is_final_output=False
-                    )
-                    preview_pixmap = full_res_pixmap.scaled(
-                        current_dynamic_preview_width,
-                        current_dynamic_preview_height,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation
-                    )
-                    button.set_pixmap(preview_pixmap)
-                    # Update cache with the newly rendered preview
-                    self.preview_pixmap_cache[slide_data.id] = preview_pixmap
-                    button.set_icon_state("error", has_font_error)
-                    # If you have a warning icon, reset/update it too
-                    # button.set_icon_state("warning", some_warning_condition_from_slide_data)
-                except Exception as e:
-                    print(f"Error re-rendering preview for slide {index} in _handle_slide_visual_property_change: {e}")
-                    error_preview = QPixmap(current_dynamic_preview_width, current_dynamic_preview_height)
-                    error_preview.fill(Qt.GlobalColor.magenta) # Or a less intrusive error indicator
-                    button.set_pixmap(error_preview)
-                    button.set_icon_state("error", True)
-
-                # --- Update banner color ---
-                if hasattr(slide_data, 'banner_color'): # Check if the attribute exists
-                    new_color = QColor(slide_data.banner_color) if slide_data.banner_color else None
-                    button.set_banner_color(new_color)
-
-                # --- Update overlay label display on the banner ---
-                button.set_center_overlay_label(slide_data.overlay_label, emit_signal_on_change=False)
-
-                # --- Update other button states ---
-                button.setToolTip(f"Slide {index + 1}: {slide_data.lyrics.splitlines()[0] if slide_data.lyrics else 'Empty'}")
-                button.set_is_background_slide(slide_data.is_background_slide)
-                current_label_for_banner = "BG" if slide_data.is_background_slide else ""
-                button.set_slide_info(number=index + 1, label=current_label_for_banner)
-
-                button.update() # Ensure the button repaints with all changes
-
-                # If the updated slide is the currently live one, re-display it on the output
-                if self.current_slide_index == index and self.output_window.isVisible():
-                    self._display_slide(index)
+        # This is now handled by SlideUIManager's own slot connected to this signal.
+        # print(f"MainWindow: _handle_slide_visual_property_change for indices: {updated_indices} - (Delegated to SlideUIManager)")
+        pass
 
         # if not self.handle_save_as():
         #     # Optionally, warn the user if even the 'Save As...' was cancelled.
@@ -1918,108 +1608,30 @@ class MainWindow(QMainWindow):
 
         # The event filter on QScrollArea should handle Left/Right.
         #super().keyPressEvent(event)
-
-    def _determine_insertion_context(self, global_pos: QPoint) -> tuple[int, Optional[str]]:
-        pos_in_slide_buttons_widget = self.slide_buttons_widget.mapFromGlobal(global_pos)
         
-        # Default: append to the end of the presentation, no specific song title (new block)
-        target_insertion_index = len(self.presentation_manager.get_slides())
-        target_song_title: Optional[str] = None
+    @Slot(bool)
+    def _toggle_hover_debugger(self, checked: bool):
+        if checked and not self.hover_debugger_instance:
+            self.hover_debugger_instance = MouseHoverDebugger(parent=QApplication.instance())
+            QApplication.instance().installEventFilter(self.hover_debugger_instance)
+            print("MainWindow: Hover debugger ENABLED.")
+        elif not checked and self.hover_debugger_instance:
+            QApplication.instance().removeEventFilter(self.hover_debugger_instance)
+            self.hover_debugger_instance.deleteLater() # Proper cleanup
+            self.hover_debugger_instance = None
+            print("MainWindow: Hover debugger DISABLED.")
+        sys.stdout.flush()
 
-        # Handle case of no slides: insert at index 0, no song title
-        if not self.presentation_manager.get_slides():
-            return 0, None
+    def _determine_insertion_context(self, global_pos: QPoint) -> Dict[str, Any]:
+        """Delegates to SlideUIManager."""
+        if self.slide_ui_manager:
+            return self.slide_ui_manager._determine_insertion_context(global_pos)
+        # Fallback if SlideUIManager is not available (should not happen in normal operation)
+        return {"action_on_slide_instance_id": None, "target_section_id_for_slide_insert": None,
+                "target_arrangement_name_for_slide_insert": None, "index_in_arrangement_for_slide_insert": 0,
+                "manifest_index_for_new_section_insert": 0}
 
-        # Find the widget directly under the mouse cursor
-        clicked_widget = self.slide_buttons_widget.childAt(pos_in_slide_buttons_widget)
-        
-        widget_iterator = clicked_widget
-        # Traverse up from clicked_widget to find relevant parent 
-        # (ScaledSlideButton, SongHeaderWidget, or FlowContainer QWidget)
-        while widget_iterator and widget_iterator != self.slide_buttons_widget:
-            if isinstance(widget_iterator, ScaledSlideButton):
-                slide_idx = widget_iterator._slide_id # Access directly
-                slides = self.presentation_manager.get_slides()
-                if 0 <= slide_idx < len(slides):
-                    target_song_title = slides[slide_idx].song_title
-                    target_insertion_index = slide_idx + 1 # Insert after this slide
-                    return target_insertion_index, target_song_title
-                break # Should not happen if button exists
-
-            # Check if widget_iterator is a direct child of slide_buttons_layout 
-            # (i.e., a SongHeader or a FlowContainer)
-            if widget_iterator.parentWidget() == self.slide_buttons_widget:
-                if isinstance(widget_iterator, SongHeaderWidget):
-                    target_song_title = widget_iterator.get_song_title()
-                    # Calculate insertion index for start of this song
-                    current_cumulative_idx = 0
-                    for i in range(self.slide_buttons_layout.count()):
-                        item = self.slide_buttons_layout.itemAt(i)
-                        if not item or not item.widget(): continue
-                        vbox_child = item.widget()
-                        if vbox_child == widget_iterator: # This is the header
-                            target_insertion_index = current_cumulative_idx
-                            return target_insertion_index, target_song_title
-                        if isinstance(vbox_child.layout(), FlowLayout): # Count slides in preceding flow layouts
-                            current_cumulative_idx += vbox_child.layout().count()
-                    break 
-
-                elif isinstance(widget_iterator.layout(), FlowLayout): # A FlowContainer QWidget
-                    target_song_title = self.drag_drop_handler._get_song_title_for_flow_widget(widget_iterator)
-                    # Click was on the container but not a specific button. Insert at end of this song.
-                    current_cumulative_idx = 0
-                    found_container = False
-                    for i in range(self.slide_buttons_layout.count()):
-                        item = self.slide_buttons_layout.itemAt(i)
-                        if not item or not item.widget(): continue
-                        vbox_child = item.widget()
-                        if isinstance(vbox_child.layout(), FlowLayout):
-                            current_cumulative_idx += vbox_child.layout().count()
-                        if vbox_child == widget_iterator: # Found the container
-                            target_insertion_index = current_cumulative_idx # Index is after all slides in this flow
-                            found_container = True
-                            break 
-                    if found_container:
-                        return target_insertion_index, target_song_title
-                    break 
-            
-            widget_iterator = widget_iterator.parentWidget()
-
-        # If clicked_widget is None or traversal didn't identify a specific context,
-        # it implies a click on the empty background of slide_buttons_widget.
-        # Determine if it's between songs or at the very end.
-        if clicked_widget is None:
-            y_click = pos_in_slide_buttons_widget.y()
-            cumulative_idx_at_item_top = 0
-            for i in range(self.slide_buttons_layout.count()):
-                item = self.slide_buttons_layout.itemAt(i)
-                if not item or not item.widget(): continue
-                vbox_child = item.widget()
-                
-                if y_click < vbox_child.geometry().top(): # Click is above this item
-                    target_insertion_index = cumulative_idx_at_item_top
-                    # Determine song title for this insertion point (could be start of next song, or end of prev)
-                    if isinstance(vbox_child, SongHeaderWidget):
-                        target_song_title = vbox_child.get_song_title()
-                    elif isinstance(vbox_child.layout(), FlowLayout):
-                        target_song_title = self.drag_drop_handler._get_song_title_for_flow_widget(vbox_child)
-                    else: # Unlikely, but if it's a spacer, use previous song's title or None
-                        if i > 0:
-                            prev_item_widget = self.slide_buttons_layout.itemAt(i-1).widget()
-                            if isinstance(prev_item_widget.layout(), FlowLayout): # prev was flow
-                                target_song_title = self.drag_drop_handler._get_song_title_for_flow_widget(prev_item_widget)
-                    return target_insertion_index, target_song_title
-
-                # Update cumulative index based on type of vbox_child
-                if isinstance(vbox_child.layout(), FlowLayout):
-                    cumulative_idx_at_item_top += vbox_child.layout().count()
-            # If loop finishes, click is below all items, so append (default is already set)
-            target_song_title = None # New block at the very end
-            return target_insertion_index, target_song_title
-
-        # Fallback if specific item not identified through traversal, use default (append)
-        return target_insertion_index, target_song_title
-
+    # Probably needs to be updated to the new ways (make a generalized function for making slides and sections)
     def _prompt_for_song_title_and_insert_blank_slide(self, insertion_index: int):
         """Prompts for a song title and inserts a new blank slide (using Default Layout)."""
         song_title, ok = QInputDialog.getText(self, "Start New Song",
@@ -2032,110 +1644,53 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Template Missing",
                                     "'Default Layout' template not found. Cannot add new song slide.")
                 return
-            # Use the existing _handle_insert_slide_from_layout method
-            self._handle_insert_slide_from_layout("Default Layout", insertion_index, final_song_title)
+            # This needs to be adapted. The old method inserted into a flat list.
+            # Now we need section context. This method is likely deprecated or needs significant rework.
+            self.show_error_message("Function '_prompt_for_song_title_and_insert_blank_slide' needs update for section-based structure.")
 
+    # Main window utility
+    def _handle_insert_slide_from_layout(self,
+                                         layout_name_to_apply: str,
+                                         target_section_id_in_manifest: str,
+                                         target_arrangement_name: str,
+                                         insert_at_index_in_arrangement: int):
+        """Delegates to SlideUIManager."""
+        print(f"MW: _handle_insert_slide_from_layout(layout='{layout_name_to_apply}', section_id='{target_section_id_in_manifest}', arr='{target_arrangement_name}', index={insert_at_index_in_arrangement})")
+        if self.slide_ui_manager:
+            self.slide_ui_manager._handle_insert_slide_from_layout_action(
+                layout_name_to_apply, target_section_id_in_manifest,
+                target_arrangement_name, insert_at_index_in_arrangement
+            )
 
-    def _show_insert_slide_context_menu(self, global_pos: QPoint):
-        insertion_index, song_title_for_new_slide = self._determine_insertion_context(global_pos)
-        
-        context_menu = QMenu(self)
-        add_slide_menu = context_menu.addMenu("Add new slide")
-
-        layout_template_names = self.template_manager.get_layout_names()
-        if not layout_template_names:
-            no_layouts_action = add_slide_menu.addAction("No Layout Templates Available")
-            no_layouts_action.setEnabled(False)
-        else:
-            for layout_name in layout_template_names:
-                action = add_slide_menu.addAction(layout_name)
-                action.triggered.connect(
-                    lambda checked=False, name=layout_name, index=insertion_index, title=song_title_for_new_slide: 
-                    self._handle_insert_slide_from_layout(name, index, title)
-                )
-        
-        context_menu.addSeparator()
-        # "Add new Section" action
-        # This reuses the existing _prompt_and_insert_new_section method, which prompts for a title
-        # and inserts a new slide (typically using "Default Layout") at the determined insertion_index.
-        add_section_action = context_menu.addAction("Add new Section")
-        # The song_title_for_new_slide from _determine_insertion_context is not used for the new section's title itself,
-        # as that will be prompted. The insertion_index is key.
-        add_section_action.triggered.connect(
-            lambda checked=False, index=insertion_index: self._prompt_and_insert_new_section(index)
-        )
-        
-        context_menu.exec(global_pos)
-
-    def _handle_insert_slide_from_layout(self, layout_name: str, insertion_index: int, song_title: Optional[str]):
-        resolved_template_settings = self.template_manager.resolve_layout_template(layout_name)
-        if not resolved_template_settings:
-            self.show_error_message(f"Could not resolve layout template '{layout_name}'. Cannot insert slide.")
-            return
-
-        # print(f"DEBUG: Resolved template settings for '{layout_name}': {resolved_template_settings}")
-
-        # Get background color from template
-        bg_color_hex_from_template = resolved_template_settings.get("background_color")
-        print(f"DEBUG: bg_color_hex_from_template for '{layout_name}': {bg_color_hex_from_template}")
-
-        # If the template specifies fully transparent black ("#00000000"),
-        # or if no background color is specified at all, treat it as no background color (use None for SlideData).
-        # Otherwise, use the color specified.
-        bg_color_for_slide_data = None # Default to None (transparent texture)
-        if bg_color_hex_from_template and bg_color_hex_from_template.lower() != "#00000000":
-            bg_color_for_slide_data = bg_color_hex_from_template
-
-        new_slide_data = SlideData(
-            lyrics="", song_title=song_title, template_settings=resolved_template_settings, background_color=bg_color_for_slide_data
-        )
-        # Ensure text_content is empty for a new slide
-        new_slide_data.template_settings.setdefault("text_content", {})
-        for tb in new_slide_data.template_settings.get("text_boxes", []):
-            tb_id = tb.get("id")
-            if tb_id:
-                 new_slide_data.template_settings["text_content"][tb_id] = ""
-
-        cmd = AddSlideCommand(self.presentation_manager, new_slide_data, at_index=insertion_index)
-        self.presentation_manager.do_command(cmd)
-        
-        # Ensure the newly added slide's area is visible
-        # Note: The actual button for the new slide is created by update_slide_display_and_selection
-        # This ensures visibility of the *area* where it will appear.
-        if self.slide_buttons_list: # Check if list is not empty
-            # Determine a button to scroll to. If inserting in middle, use that index. If at end, use last.
-            scroll_to_idx = min(insertion_index, len(self.slide_buttons_list) -1)
-            if scroll_to_idx >= 0:
-                 button_to_ensure_visible = self.slide_buttons_list[scroll_to_idx]
-                 self.scroll_area.ensureWidgetVisible(button_to_ensure_visible, 50, 50)
-
+    #Main window utility
     @Slot(int, str)
     def _handle_insert_slide_from_button_context_menu(self, after_slide_id: int, layout_name: str):
-        """Handles inserting a slide when requested from a ScaledSlideButton's context menu."""
-        slides = self.presentation_manager.get_slides()
-        if not (0 <= after_slide_id < len(slides)):
-            self.show_error_message(f"Cannot insert slide: Reference slide ID {after_slide_id} is invalid.")
-            return
+        """Delegates to SlideUIManager."""
+        if self.slide_ui_manager:
+            self.slide_ui_manager._handle_insert_slide_from_button_context_menu(after_slide_id, layout_name)
 
-        insertion_index = after_slide_id + 1
-        song_title_for_new_slide = slides[after_slide_id].song_title
-        print(f"MainWindow: Inserting slide from button context menu. Layout: '{layout_name}', After Slide ID: {after_slide_id}, Index: {insertion_index}, Song Title: '{song_title_for_new_slide}'")
-        self._handle_insert_slide_from_layout(layout_name, insertion_index, song_title_for_new_slide)
-
+    #Probably remove due to new generic and song setup
     @Slot(int)
     def _handle_insert_new_section_from_button_context_menu(self, after_slide_id: int):
-        """Handles inserting a new section when requested from a ScaledSlideButton's context menu."""
-        slides = self.presentation_manager.get_slides()
-        if not (0 <= after_slide_id < len(slides)):
-            self.show_error_message(f"Cannot insert new section: Reference slide ID {after_slide_id} is invalid.")
-            return
+        """Delegates to SlideUIManager."""
+        if self.slide_ui_manager:
+            self.slide_ui_manager._handle_insert_new_section_from_button_context_menu(after_slide_id)
 
-        insertion_index = after_slide_id + 1
-        print(f"MainWindow: Inserting new section after slide ID {after_slide_id} (at index {insertion_index}).")
-        self._prompt_and_insert_new_section(insertion_index)
+    #Main window Structure
+    def _show_insert_slide_context_menu(self, global_pos: QPoint):
+        """Delegates to SlideUIManager if the context menu is for the slide panel background."""
+        # This was originally connected to slide_buttons_widget.customContextMenuRequested
+        # SlideUIManager now handles this directly.
+        # If MainWindow needs to show other global context menus, this method could be adapted.
+        # For now, assuming SlideUIManager handles its own context menu.
+        pass
 
-    def _prompt_and_insert_new_section(self, insertion_index: int):
-        """Prompts for a new section title and inserts a new slide to mark the section."""
+    # probably remove or change due to new generic and song setup
+    def _prompt_and_insert_new_section(self, manifest_insertion_index: int):
+        """
+        Prompts for a new section title, creates a new section file using SectionFactory,
+        and adds it to the presentation manifest at the specified index.
+        """
         new_section_title_str, ok = QInputDialog.getText(
             self,
             "Create New Section",
@@ -2144,42 +1699,50 @@ class MainWindow(QMainWindow):
         )
 
         if ok:
-            # If user enters empty string, treat as None for song_title
-            final_song_title = new_section_title_str.strip() if new_section_title_str.strip() else None
+            cleaned_section_title = new_section_title_str.strip()
+            if not cleaned_section_title: # If title is empty after stripping, make it "Untitled Section"
+                cleaned_section_title = f"Untitled Section {uuid.uuid4().hex[:4]}"
 
-            resolved_template_settings = self.template_manager.resolve_layout_template("Default Layout")
-            if not resolved_template_settings:
-                QMessageBox.warning(self, "Warning", "'Default Layout' template not found. Using a very basic slide for the new section.")
-                resolved_template_settings = {"layout_name": "Default Layout", "text_boxes": [], "text_content": {}}
-            else:
-                resolved_template_settings = copy.deepcopy(resolved_template_settings) # Ensure we have a mutable copy
-                resolved_template_settings.setdefault("text_content", {})
-                for tb in resolved_template_settings.get("text_boxes", []):
-                    tb_id = tb.get("id")
-                    if tb_id:
-                        resolved_template_settings["text_content"][tb_id] = "" # Ensure blank content
-
-            bg_color_hex_from_template = resolved_template_settings.get("background_color")
-            bg_color_for_slide_data = None
-            if bg_color_hex_from_template and bg_color_hex_from_template.lower() != "#00000000":
-                bg_color_for_slide_data = bg_color_hex_from_template
-
-            new_slide = SlideData(
-                lyrics="", song_title=final_song_title, template_settings=resolved_template_settings, background_color=bg_color_for_slide_data
+            section_file_id = f"section_{uuid.uuid4().hex}"
+            
+            # Use SectionFactory to create the data
+            new_section_data = SectionFactory.create_new_section_data(
+                title=cleaned_section_title,
+                section_file_id=section_file_id,
+                section_type="Generic" # Context menu is generic
             )
-            cmd = AddSlideCommand(self.presentation_manager, new_slide, at_index=insertion_index)
-            self.presentation_manager.do_command(cmd)
+            try:
+                from core.plucky_standards import PluckyStandards
+            except ImportError:
+                from plucky_standards import PluckyStandards
+            central_sections_dir = PluckyStandards.get_sections_dir()
+            
+            full_filepath, section_filename = SectionFactory.save_new_section_file(
+                new_section_data, cleaned_section_title, self.presentation_manager.io_handler, central_sections_dir
+            )
 
+            if full_filepath and section_filename:
+                self.presentation_manager.add_section_to_presentation(
+                    section_filename, manifest_insertion_index, desired_arrangement_name="Default"
+                )
+                self.set_status_message(f"New section '{cleaned_section_title}' created and added at specified position.", 3000)
+            else:
+                self.show_error_message(f"Failed to create and save new section '{cleaned_section_title}'.")
+
+
+    #Main Window Utility
     @Slot()
     def handle_undo(self):
         print("MainWindow: Undo action triggered.")
         self.presentation_manager.undo()
 
+    #Main Window Utility
     @Slot()
     def handle_redo(self):
         print("MainWindow: Redo action triggered.")
         self.presentation_manager.redo()
-        
+    
+    #Main Window window spawn
     @Slot()
     def handle_open_settings(self):
         """Opens the settings dialog."""
@@ -2191,6 +1754,8 @@ class MainWindow(QMainWindow):
             current_decklink_fill_index=self.decklink_fill_device_idx, # Pass current fill index
             current_decklink_key_index=self.decklink_key_device_idx,   # Pass current key index
             current_decklink_video_mode=self.current_decklink_video_mode_details, # Pass current video mode
+            config_manager=self.config_manager, # Pass the config manager
+            template_manager=self.template_manager, # Pass the template manager
 
             parent=self
         )
@@ -2198,6 +1763,7 @@ class MainWindow(QMainWindow):
         # Connect to the new signal that emits both fill and key indices
         # We will get all settings when the dialog is accepted.
         # settings_dialog.decklink_fill_key_devices_selected.connect(self._handle_decklink_devices_changed_from_settings)
+        settings_dialog.production_mode_changed_signal.connect(self._handle_production_mode_setting_changed)
 
         if settings_dialog.exec() == QDialog.DialogCode.Accepted:
             print("MainWindow: Settings dialog accepted.")
@@ -2229,16 +1795,20 @@ class MainWindow(QMainWindow):
         try:
             settings_dialog.output_monitor_changed.disconnect(self._handle_settings_monitor_changed)
             
+            settings_dialog.production_mode_changed_signal.disconnect(self._handle_production_mode_setting_changed)
             # settings_dialog.decklink_fill_key_devices_selected.disconnect(self._handle_decklink_devices_changed_from_settings) # No longer connected
         except RuntimeError: # In case signals were already disconnected or dialog closed unexpectedly
             pass
 
+    #Main Window Utility
     @Slot(dict)
     def _load_recent_file_action(self, filepath: str):
         """Handler for clicking a recent file action in the menu."""
         print(f"Loading recent file: {filepath}")
         # Call the handle_load method with the specific filepath
         self.handle_load(filepath=filepath)
+
+    #Main Window Utility
     def _handle_editor_save_request(self, templates_collection: dict):
         
         """
@@ -2250,6 +1820,7 @@ class MainWindow(QMainWindow):
         # Optionally, provide feedback to the user, e.g., via a status bar or a brief message.
         # For now, the print statement and the TemplateManager's own save confirmation (if any) will suffice.
 
+    #Main Window Utility (Maybe integrate with plucky standards)
     @Slot(QScreen)
     def _handle_settings_monitor_changed(self, selected_screen: QScreen):
         """Handles the output_monitor_changed signal from the SettingsWindow."""
@@ -2258,29 +1829,7 @@ class MainWindow(QMainWindow):
         print(f"MainWindow: Target output monitor setting updated to {selected_screen.name()} via settings dialog.")
         # If already live, you might want to move the output window, or just apply on next "Go Live"
         
-    # The _handle_decklink_devices_changed_from_settings slot is removed as settings are applied on dialog accept.
-
-
-    # def reinitialize_decklink_output(self):
-    #     """Shuts down and re-initializes DeckLink output with current settings."""
-    #     print("MainWindow: Re-initializing DeckLink output...")
-    #     decklink_handler.shutdown_output() # Ensure existing is off
-
-    #     if self.current_decklink_idx == -1 or self.current_decklink_video_mode_details is None:
-    #         print("MainWindow: Cannot re-initialize DeckLink, device or video mode not selected.")
-    #         return
-
-    #     # Modify decklink_handler.initialize_output to accept these parameters
-    #     # or create a new function like initialize_output_with_settings
-    #     success = decklink_handler.initialize_output(
-    #         device_index=self.current_decklink_idx,
-    #         width=self.current_decklink_video_mode_details['width'],
-    #         height=self.current_decklink_video_mode_details['height'],
-    #         frame_rate_num=self.current_decklink_video_mode_details['fr_num'],
-    #         frame_rate_denom=self.current_decklink_video_mode_details['fr_den']
-    #     )
-    #     # Update UI or status based on success
-
+    #Main Window Utility
     def get_setting(self, key: str, default_value=None):
         """
         Provides a way for other components (like SlideRenderer) to get settings
@@ -2290,53 +1839,149 @@ class MainWindow(QMainWindow):
             return self.config_manager.get_app_setting(key, True) # Default to True
         return self.config_manager.get_app_setting(key, default_value)
         
+    @Slot(str)
+    def _handle_production_mode_setting_changed(self, new_mode: str):
+        """
+        Slot to react to production mode changes from the settings window.
+        MainWindow can update its behavior or inform other components if needed.
+        Rebuilds the menu bar to reflect changes in available developer tools.
+        """
+        print(f"MainWindow: Detected production mode change to '{new_mode}'.")
+        # Rebuild the menu bar to show/hide developer options
+        # This is crucial for the "Enable Hover Debug" to appear/disappear
+        self.setMenuBar(self.create_menu_bar())
+
+    # This slot is no longer needed as the mode selection is not in MainWindow's menu bar.
+    # @Slot(str)
+    # def _handle_prod_mode_menu_selection(self, mode_name: str):
+    #     pass # Functionality moved to SettingsWindow
+
+    
     # --- Drag and Drop for Background Slides ---
     def dragEnterEvent(self, event: QDragEnterEvent): # Added type hint
         # The SlideDragDropHandler will inspect mimeData and decide to accept.
-        # MainWindow simply delegates. The handler should call event.acceptProposedAction()
-        # if it can handle the data (either PLUCKY_SLIDE_MIME_TYPE or image URLs).
-        if self.drag_drop_handler:
-            self.drag_drop_handler.dragEnterEvent(event)
+        # MainWindow delegates to SlideUIManager's drag_drop_handler.
+        if self.slide_ui_manager and self.slide_ui_manager.drag_drop_handler:
+            self.slide_ui_manager.drag_drop_handler.dragEnterEvent(event)
         else:
             event.ignore() # No handler, ignore.
+
 
     def dragMoveEvent(self, event: QDragMoveEvent): # Added type hint
         # Delegate to the handler. It's responsible for:
         # 1. Checking if it can handle the event.mimeData().
         # 2. Calling event.acceptProposedAction() or event.ignore().
         # 3. Updating the self.drop_indicator if a slide (PLUCKY_SLIDE_MIME_TYPE) is being reordered.
-        if self.drag_drop_handler:
-            self.drag_drop_handler.dragMoveEvent(event)
+        if self.slide_ui_manager and self.slide_ui_manager.drag_drop_handler:
+            self.slide_ui_manager.drag_drop_handler.dragMoveEvent(event)
         else:
             event.ignore()
 
     def dragLeaveEvent(self, event: QDragLeaveEvent): # Added type hint
         # Delegate to the handler. It should hide the drop_indicator.
-        if self.drag_drop_handler:
-            self.drag_drop_handler.dragLeaveEvent(event)
-        # MainWindow's self.drop_indicator is managed by the handler
+        if self.slide_ui_manager and self.slide_ui_manager.drag_drop_handler:
+            self.slide_ui_manager.drag_drop_handler.dragLeaveEvent(event)
+        # No else: event.ignore() here, as the default behavior is usually fine for leave events.
 
     def dropEvent(self, event: QDropEvent): # Added type hint
         # Delegate to the handler. It's responsible for:
         # 1. Processing the drop (reordering slide or adding image).
         # 2. Hiding the self.drop_indicator.
-        if self.drag_drop_handler:
-            self.drag_drop_handler.dropEvent(event)
-        # MainWindow's self.drop_indicator is managed by the handler
+        if self.slide_ui_manager and self.slide_ui_manager.drag_drop_handler:
+            self.slide_ui_manager.drag_drop_handler.dropEvent(event)
+        else:
+            event.ignore()
+    # --- Slots for SectionManagementPanel signals ---
+    @Slot()
+    def _refresh_section_management_panel(self):
+        if hasattr(self, 'section_management_panel') and self.section_management_panel:
+            self.section_management_panel.refresh_sections_list()
 
+    @Slot(str, int)
+    def _handle_request_reorder_section(self, section_id_in_manifest: str, direction: int):
+        # Find current index
+        current_idx = -1
+        manifest_sections = self.presentation_manager.presentation_manifest_data.get("sections", [])
+        for i, sec_entry in enumerate(manifest_sections):
+            if sec_entry["id"] == section_id_in_manifest:
+                current_idx = i
+                break
+        if current_idx == -1: return
 
-# Example of how to run this if it's the main entry point for testing
-# (Your main.py would typically handle this)
-if __name__ == '__main__': # This block is for direct testing of MainWindow
-    # Simulate what main.py does for benchmarks
-    app_start_time_for_mw_test = time.perf_counter()
-    app = QApplication(sys.argv)
-    QApplication.instance().setProperty("app_start_time", app_start_time_for_mw_test)
+        new_idx = current_idx + direction
+        if 0 <= new_idx < len(manifest_sections):
+            # TODO: Create ReorderSectionCommand
+            self.presentation_manager.reorder_sections_in_manifest(section_id_in_manifest, new_idx)
 
-    main_win = MainWindow()
-    main_win.show()
+    @Slot(str)
+    def _handle_request_remove_section(self, section_id_in_manifest: str):
+        reply = QMessageBox.question(self, "Remove Section",
+                                     "Are you sure you want to remove this section from the presentation?\n(The section file itself will not be deleted from your computer.)",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            # TODO: Create RemoveSectionCommand
+            self.presentation_manager.remove_section_from_presentation(section_id_in_manifest)
 
-    app_ready_duration_for_mw_test = time.perf_counter() - app_start_time_for_mw_test
-    print(f"[BENCHMARK_MW_TEST] Application ready (after show) took: {app_ready_duration_for_mw_test:.4f} seconds")
-    sys.exit(app.exec())
-    
+    @Slot()
+    def _handle_request_add_existing_section(self):
+        default_load_path = self.config_manager.get_default_sections_path()
+        filepath, _ = QFileDialog.getOpenFileName(self, "Add Existing Section", default_load_path, "Plucky Section Files (*.plucky_section);;All Files (*)")
+        if filepath:
+            section_filename = os.path.basename(filepath) # PM expects simple filename for central store
+            # TODO: Create AddExistingSectionCommand or adapt add_section_to_presentation
+            num_current_sections = len(self.presentation_manager.presentation_manifest_data.get("sections", [])) if self.presentation_manager.presentation_manifest_data else 0
+            self.presentation_manager.add_section_to_presentation(section_filename, num_current_sections)
+
+    def _toggle_section_manager_panel(self):
+        if self.section_management_dock.isVisible():
+            self.section_management_dock.hide()
+        else:
+            self.section_management_dock.show()
+
+    @Slot()
+    def _handle_request_create_new_section_from_panel(self):
+        """Handles request from SectionManagementPanel to create and add a new section."""
+        section_types = ["Song", "Generic Content"]
+        chosen_type, ok_type = QInputDialog.getItem(self, "Select Section Type", "What type of section do you want to create?", section_types, 0, False)
+
+        if not ok_type:
+            return # User cancelled type selection
+
+        section_title_text, ok_title = QInputDialog.getText(
+            self,
+            f"Create New {chosen_type} Section",
+            f"Enter the title for the new {chosen_type.lower()} section:"
+        )
+
+        id_prefix = "song" if chosen_type == "Song" else "generic"
+
+        if not ok_title or not section_title_text.strip():
+            if ok_title and not section_title_text.strip():
+                QMessageBox.warning(self, "Empty Title", "Section title cannot be empty.")
+            return
+        
+        cleaned_section_title = section_title_text.strip()
+
+        section_file_id = f"{id_prefix}_{uuid.uuid4().hex}" # Use type prefix for ID
+
+        # Use SectionFactory to create the data
+        new_section_data = SectionFactory.create_new_section_data(
+            title=cleaned_section_title,
+            section_file_id=section_file_id,
+            section_type=chosen_type
+        )
+
+        try:
+            from core.plucky_standards import PluckyStandards
+        except ImportError:
+            from plucky_standards import PluckyStandards
+
+        central_sections_dir = PluckyStandards.get_sections_dir()
+        
+        full_filepath, section_filename = SectionFactory.save_new_section_file(
+            new_section_data, cleaned_section_title, self.presentation_manager.io_handler, central_sections_dir
+        )
+
+        if full_filepath and section_filename:
+            num_current_sections = len(self.presentation_manager.presentation_manifest_data.get("sections", [])) if self.presentation_manager.presentation_manifest_data else 0
+            self.presentation_manager.add_section_to_presentation(section_filename, num_current_sections, desired_arrangement_name="Default")

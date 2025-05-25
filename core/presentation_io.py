@@ -1,35 +1,50 @@
 # Optional: Handles serialization/deserialization of presentation data for file storage.
 import json
-from typing import List, Dict, Any
-from data_models.slide_data import SlideData # Adjust import if necessary based on your project structure
+import os # For directory creation
+from typing import Dict, Any # No longer directly deals with SlideData List
 
 class PresentationIO:
     """
-    Handles serialization and deserialization of presentation data.
+    Handles generic JSON serialization and deserialization for presentation manifest
+    and section files.
     """
-    def save_presentation(self, slides: List[SlideData], filepath: str) -> None:
+    def save_json_file(self, data: Dict[str, Any], filepath: str) -> None:
         """
-        Saves the presentation data (list of slides) to a JSON file.
+        Saves dictionary data to a JSON file.
         """
         try:
-            data_to_save = [slide.to_dict() for slide in slides]
-            with open(filepath, 'w') as f:
-                json.dump(data_to_save, f, indent=4)
-            print(f"Presentation saved to {filepath}")
+            # Ensure the directory exists
+            directory = os.path.dirname(filepath)
+            if directory: # Check if directory is not empty (e.g. for relative paths in current dir)
+                os.makedirs(directory, exist_ok=True)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4) # Use indent for readability
+            print(f"IO Success: Saved JSON data to {filepath}")
+        except IOError as e: # More specific exception for file I/O issues
+            print(f"IO Error: Could not write JSON to {filepath}: {e}")
+            raise # Re-raise for the caller to handle (e.g., PresentationManager or MainWindow)
         except Exception as e:
-            print(f"Error saving presentation to {filepath}: {e}")
-            raise # Or handle more gracefully, e.g., by returning a status
+            print(f"IO Error: An unexpected error occurred saving JSON to {filepath}: {e}")
+            raise
 
-    def load_presentation(self, filepath: str) -> List[SlideData]:
+    def load_json_file(self, filepath: str) -> Dict[str, Any]: # Return type is now Dict
         """
-        Loads presentation data (list of slides) from a JSON file.
+        Loads data from a JSON file and returns it as a dictionary.
         """
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 data_loaded = json.load(f)
-            slides = [SlideData.from_dict(slide_data) for slide_data in data_loaded]
-            print(f"Presentation loaded from {filepath}")
-            return slides
+            if not isinstance(data_loaded, dict): # Basic validation
+                raise ValueError(f"File {filepath} does not contain a valid JSON object at the root.")
+            print(f"IO Success: Loaded JSON data from {filepath}")
+            return data_loaded
+        except FileNotFoundError:
+            print(f"IO Error: File not found at {filepath}")
+            raise
+        except json.JSONDecodeError as e:
+            print(f"IO Error: Could not decode JSON from {filepath}: {e}")
+            raise
         except Exception as e:
-            print(f"Error loading presentation from {filepath}: {e}")
-            raise # Or handle more gracefully
+            print(f"IO Error: An unexpected error occurred loading {filepath}: {e}")
+            raise

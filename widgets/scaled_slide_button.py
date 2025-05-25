@@ -36,13 +36,15 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
     # New signal for inserting slide from layout
     insert_slide_from_layout_requested = Signal(int, str) # slide_id (to insert after), layout_name
     insert_new_section_requested = Signal(int) # slide_id (to insert section AFTER this one)
-    def __init__(self, slide_id: int, plucky_slide_mime_type: str, parent=None): # Added plucky_slide_mime_type
+    def __init__(self, slide_id: int, instance_id: str, plucky_slide_mime_type: str, parent=None): # Added instance_id
         super().__init__(parent)
         self._pixmap_to_display = QPixmap() # Stores the pixmap (already scaled by MainWindow)
         self._slide_id = slide_id
+        self._instance_id = instance_id # Store the unique instance ID
         self._center_overlay_label: Optional[str] = "" # New: For the prominent centered label
         self._available_template_names: List[str] = [] # Will be set by MainWindow
         self._is_background_slide: bool = False # New property
+        self._is_arrangement_enabled: bool = True # New: For enabled/disabled state in arrangement
 
         self._banner_height = 25
         self._is_checked = False
@@ -141,6 +143,13 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
             self.banner_widget.set_section_label(new_label_value) # Pass to banner for display
         self.update()
 
+    def set_arrangement_enabled_state(self, is_enabled: bool):
+        """Sets the visual state based on whether the slide is enabled in the current arrangement."""
+        if self._is_arrangement_enabled != is_enabled:
+            self._is_arrangement_enabled = is_enabled
+            self.update() # Trigger a repaint to reflect the change
+        self.update()
+
     def set_banner_color(self, color: Optional[QColor]):
         """Sets a custom color for the banner widget."""
         self.banner_widget.set_custom_color(color)
@@ -204,6 +213,10 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         painter.setClipRect(drawable_image_content_area)
         painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
 
+        # Apply opacity if the slide is not enabled in the arrangement
+        if not self._is_arrangement_enabled:
+            painter.setOpacity(0.5) # Adjust opacity value as needed (e.g., 0.5 for 50%)
+
         actual_pixmap_rect = QRectF()
         if not self._pixmap_to_display.isNull() and drawable_image_content_area.width() > 0 and drawable_image_content_area.height() > 0:
             target_w = min(self._pixmap_to_display.width(), drawable_image_content_area.width())
@@ -222,6 +235,10 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
             painter.fillRect(actual_pixmap_rect, QColor(Qt.GlobalColor.darkGray).lighter(150))
 
         # Center overlay label drawing on the image is now removed. It's handled by InfoBannerWidget.
+        
+        # Restore opacity if it was changed
+        if not self._is_arrangement_enabled:
+            painter.setOpacity(1.0)
         painter.restore() # Restore clipping
         painter.end()
 
@@ -252,8 +269,8 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         drag = QDrag(self)
         mime_data = QMimeData()
         
-        # Use the stored MIME type and slide_id
-        slide_id_bytes = QByteArray(str(self._slide_id).encode('utf-8'))
+        # Use the stored MIME type and instance_id
+        slide_id_bytes = QByteArray(str(self._instance_id).encode('utf-8'))
         mime_data.setData(self.plucky_slide_mime_type, slide_id_bytes)
         
         # Create a semi-transparent pixmap of the button itself for drag visual

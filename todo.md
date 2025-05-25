@@ -116,3 +116,9 @@
 
 
 Modify the DLL so that I can set the profile of the decklink device to be (bmdProfileTwoSubDevicesHalfDuplex) if it is not already that
+
+give better contrls over styles (kerning, different bolding veriation)
+
+make a program version so that if  Imove a folder or break something the version upgrader will move or change that thign
+
+remove the rtfstripper from packages

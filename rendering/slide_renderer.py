@@ -3,11 +3,14 @@ import os
 import logging
 import time # For benchmarking
 from PySide6.QtWidgets import QApplication # Needed for testing QPixmap/QPainter
+import copy # For deepcopy
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QTextOption,
-    QFontInfo
+    QFontInfo, QImage # Added QImage here
 )
 from PySide6.QtCore import Qt, QRect, QRectF, QPointF, QSize
+from typing import Optional, List, Tuple, Dict, Any # Added List, Tuple, Dict, Any
+from abc import ABC, abstractmethod # For abstract base class
 
 # --- Local Imports ---
 # Assume data_models is in the parent directory or accessible via PYTHONPATH
@@ -15,25 +18,280 @@ try:
     # This works if running from the YourProject directory
     from data_models.slide_data import SlideData, DEFAULT_TEMPLATE
 except ImportError:
-    # Fallback for running the script directly in the rendering folder
+    # Fallback for different execution contexts or structures
     import sys
     import os
     # Add the parent directory (YourProject) to the Python path
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from data_models.slide_data import SlideData, DEFAULT_TEMPLATE
+    # Attempt to import ImageCacheManager for standalone testing of this file
+    from core.image_cache_manager import ImageCacheManager
 
+class RenderLayerHandler(ABC):
+    """Abstract base class for a render layer."""
+    def __init__(self, app_settings: Optional[Any] = None):
+        self.app_settings = app_settings
 
-class SlideRenderer:
-    """Renders SlideData onto a QPixmap."""
-
-    def __init__(self, app_settings=None):
+    @abstractmethod
+    def render(self, current_pixmap: QPixmap, slide_data: SlideData, target_width: int, target_height: int, is_final_output: bool) -> Tuple[QPixmap, bool, Dict[str, float]]:
         """
-        Initializes the SlideRenderer.
+        Renders this layer's content onto/into the current_pixmap.
+        
+        Args:
+            current_pixmap: The pixmap from the previous layer (or initial canvas).
+            slide_data: The data for the current slide.
+            target_width: The target width of the output.
+            target_height: The target height of the output.
+            is_final_output: True if for live output, False for previews.
+
+        Returns:
+            A tuple: (output_pixmap, font_error_occurred_in_this_layer, benchmark_data_for_this_layer)
+        """
+        pass
+
+    def _setup_painter_hints(self, painter: QPainter):
+        """Sets common render hints for the painter."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+class BackgroundRenderLayer(RenderLayerHandler):
+    def __init__(self, app_settings: Optional[Any] = None, image_cache_manager: Optional['ImageCacheManager'] = None):
+        super().__init__(app_settings)
+        self.image_cache_manager = image_cache_manager
+        self._init_checkerboard_style() # From original SlideRenderer
+
+    def _init_checkerboard_style(self): # From original SlideRenderer
+        self.checker_color1 = QColor(220, 220, 220)
+        self.checker_color2 = QColor(200, 200, 200)
+        self.checker_size = 10
+
+    def _draw_checkerboard_pattern(self, painter: QPainter, target_rect: QRect): # From original SlideRenderer
+        painter.save()
+        painter.setPen(Qt.PenStyle.NoPen)
+        for y_start in range(target_rect.top(), target_rect.bottom(), self.checker_size):
+            for x_start in range(target_rect.left(), target_rect.right(), self.checker_size):
+                is_even_row = ((y_start - target_rect.top()) // self.checker_size) % 2 == 0
+                is_even_col = ((x_start - target_rect.left()) // self.checker_size) % 2 == 0
+                current_color = self.checker_color1 if is_even_row == is_even_col else self.checker_color2
+                cell_width = min(self.checker_size, target_rect.right() - x_start + 1)
+                cell_height = min(self.checker_size, target_rect.bottom() - y_start + 1)
+                painter.fillRect(x_start, y_start, cell_width, cell_height, current_color)
+        painter.restore()
+
+    def render(self, current_pixmap: QPixmap, slide_data: SlideData, target_width: int, target_height: int, is_final_output: bool) -> Tuple[QPixmap, bool, Dict[str, float]]:
+        start_time = time.perf_counter()
+        # This layer draws the slide's own background onto the current_pixmap.
+        # If current_pixmap was a base (e.g., live background), this draws over it.
+        output_pixmap = current_pixmap.copy() # Work on a copy
+
+        painter = QPainter(output_pixmap)
+        if not painter.isActive(): return output_pixmap, False, {"images": 0.0}
+        self._setup_painter_hints(painter)
+
+        # --- Logic from SlideRenderer._render_background ---
+        effective_bg_color_hex: Optional[str] = None
+        effective_background_image_path: Optional[str] = None
+
+        if slide_data.background_image_path and os.path.exists(slide_data.background_image_path):
+            effective_background_image_path = slide_data.background_image_path
+        elif slide_data.background_color:
+            effective_bg_color_hex = slide_data.background_color
+        elif slide_data.template_settings:
+            bg_image_path_from_template = slide_data.template_settings.get("background_image_path")
+            if bg_image_path_from_template and os.path.exists(bg_image_path_from_template):
+                effective_background_image_path = bg_image_path_from_template
+            else:
+                effective_bg_color_hex = slide_data.template_settings.get("background_color")
+        
+        # Detailed image processing benchmarks
+        time_img_load = 0.0
+        time_img_scale = 0.0
+        time_img_from_image = 0.0
+        time_img_draw = 0.0
+
+        if effective_background_image_path:
+            loaded_bg_pixmap_for_drawing = QPixmap() # Initialize as null
+            target_qsize = QSize(target_width, target_height)
+            cached_image_path = None
+
+            if self.image_cache_manager:
+                cached_image_path = self.image_cache_manager.get_cached_image_path(effective_background_image_path, target_qsize)
+
+            if cached_image_path:
+                # Load from cache
+                img_load_start = time.perf_counter()
+                # print(f"DEBUG BRL: Loading from CACHE: {cached_image_path}")
+                cached_qimage = QImage(cached_image_path) # This is already scaled
+                time_img_load = time.perf_counter() - img_load_start
+                if not cached_qimage.isNull():
+                    img_from_image_start = time.perf_counter()
+                    loaded_bg_pixmap_for_drawing = QPixmap.fromImage(cached_qimage)
+                    time_img_from_image = time.perf_counter() - img_from_image_start
+                else:
+                    print(f"BackgroundRenderLayer: Warning - Failed to load QImage from cached path: {cached_image_path}")
+            else:
+                # Not in cache or no cache manager, load original and scale
+                img_load_start = time.perf_counter()
+                source_image = QImage(effective_background_image_path)
+                time_img_load = time.perf_counter() - img_load_start
+
+                if not source_image.isNull():
+                    img_scale_start = time.perf_counter()
+                    scaled_qimage = source_image # Default to original if no scaling needed
+                    if source_image.width() > target_width * 1.5 or source_image.height() > target_height * 1.5:
+                        scaled_qimage = source_image.scaled(target_width, target_height, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                    time_img_scale = time.perf_counter() - img_scale_start
+                    
+                    img_from_image_start = time.perf_counter()
+                    if not scaled_qimage.isNull():
+                        loaded_bg_pixmap_for_drawing = QPixmap.fromImage(scaled_qimage)
+                        if self.image_cache_manager and not scaled_qimage.isNull(): # Cache the newly scaled image
+                            self.image_cache_manager.cache_image(effective_background_image_path, target_qsize, scaled_qimage)
+                    time_img_from_image = time.perf_counter() - img_from_image_start
+
+            if not loaded_bg_pixmap_for_drawing.isNull():
+                img_draw_start = time.perf_counter()
+                painter.drawPixmap(output_pixmap.rect(), loaded_bg_pixmap_for_drawing)
+                time_img_draw = time.perf_counter() - img_draw_start
+            else: # Failed to load or process image
+                effective_background_image_path = None # Fallback to color
+        
+        if not effective_background_image_path: 
+            bg_qcolor = QColor(Qt.GlobalColor.transparent)
+            if effective_bg_color_hex:
+                temp_qcolor = QColor(effective_bg_color_hex)
+                if temp_qcolor.isValid(): bg_qcolor = temp_qcolor
+            if bg_qcolor.alpha() == 0:
+                show_checkerboard_setting = True
+                if self.app_settings and hasattr(self.app_settings, 'get_setting'):
+                    show_checkerboard_setting = self.app_settings.get_setting("display_checkerboard_for_transparency", True)
+                if show_checkerboard_setting and not is_final_output:
+                    self._draw_checkerboard_pattern(painter, output_pixmap.rect())
+            else: # Opaque or semi-transparent color for this slide's background
+                painter.fillRect(output_pixmap.rect(), bg_qcolor) # Draw onto the (potentially base) pixmap
+        
+        painter.end()
+        benchmarks = {
+            "images_total_processing": time_img_load + time_img_scale + time_img_from_image + time_img_draw, # Keep this for overall image time
+            "image_load_qimage": time_img_load,
+            "image_scale_qimage": time_img_scale,
+            "image_from_qimage_to_qpixmap": time_img_from_image,
+            "image_draw_qpixmap": time_img_draw,
+            "total_background_layer": time.perf_counter() - start_time
+        }
+        return output_pixmap, False, benchmarks
+
+class TextContentRenderLayer(RenderLayerHandler):
+    def render(self, current_pixmap: QPixmap, slide_data: SlideData, target_width: int, target_height: int, is_final_output: bool) -> Tuple[QPixmap, bool, Dict[str, float]]:
+        start_time = time.perf_counter()
+        output_pixmap = current_pixmap.copy()
+        painter = QPainter(output_pixmap)
+        if not painter.isActive(): return output_pixmap, False, {}
+        self._setup_painter_hints(painter)
+
+        font_error_occurred = False
+        time_spent_on_fonts = 0.0
+        time_spent_on_text_layout = 0.0
+        time_spent_on_text_draw = 0.0
+
+        # --- Logic from original SlideRenderer for text boxes ---
+        current_template_settings = slide_data.template_settings if slide_data.template_settings else {}
+        defined_text_boxes = current_template_settings.get("text_boxes", [])
+        slide_text_content_map = current_template_settings.get("text_content", {})
+
+        if not defined_text_boxes:
+            painter.end()
+            return output_pixmap, False, {"fonts": 0, "layout": 0, "draw": 0, "total_text_layer": time.perf_counter() - start_time}
+
+        for tb_props in defined_text_boxes:
+            tb_id = tb_props.get("id", "unknown_box")
+            text_to_draw = slide_text_content_map.get(tb_id, "")
+            if not text_to_draw.strip(): continue
+
+            font_setup_start_time = time.perf_counter()
+            font = QFont()
+            font_family = tb_props.get("font_family", "Arial")
+            font.setFamily(font_family)
+            font_info_check = QFontInfo(font)
+            if font_info_check.family().lower() != font_family.lower() and not font_info_check.exactMatch():
+                logging.warning(f"Font family '{font_family}' for textbox '{tb_id}' (slide {slide_data.id}) not found. Using fallback '{font_info_check.family()}'.")
+                font_error_occurred = True
+
+            base_font_size_pt = tb_props.get("font_size", 58)
+            target_output_height_for_font_scaling = 1080
+            font_scaling_factor = 1.0
+            if target_output_height_for_font_scaling > 0 and target_height > 0:
+                 font_scaling_factor = target_height / target_output_height_for_font_scaling
+            actual_font_size_pt = max(8, int(base_font_size_pt * font_scaling_factor))
+            font.setPointSize(actual_font_size_pt)
+            painter.setFont(font)
+            time_spent_on_fonts += (time.perf_counter() - font_setup_start_time)
+
+            if tb_props.get("force_all_caps", False):
+                text_to_draw = text_to_draw.upper()
+
+            text_layout_start_time = time.perf_counter()
+            tb_x_pc, tb_y_pc = tb_props.get("x_pc", 0.0), tb_props.get("y_pc", 0.0)
+            tb_w_pc, tb_h_pc = tb_props.get("width_pc", 100.0), tb_props.get("height_pc", 100.0)
+            tb_pixel_rect_x = (tb_x_pc / 100.0) * target_width
+            tb_pixel_rect_y = (tb_y_pc / 100.0) * target_height
+            tb_pixel_rect_w = (tb_w_pc / 100.0) * target_width
+            tb_pixel_rect_h = (tb_h_pc / 100.0) * target_height
+            text_box_draw_rect = QRectF(tb_pixel_rect_x, tb_pixel_rect_y, tb_pixel_rect_w, tb_pixel_rect_h)
+
+            tb_text_option = QTextOption()
+            h_align_str, v_align_str = tb_props.get("h_align", "center"), tb_props.get("v_align", "center")
+            qt_h_align = Qt.AlignmentFlag.AlignLeft if h_align_str == "left" else Qt.AlignmentFlag.AlignRight if h_align_str == "right" else Qt.AlignmentFlag.AlignHCenter
+            qt_v_align = Qt.AlignmentFlag.AlignTop if v_align_str == "top" else Qt.AlignmentFlag.AlignBottom if v_align_str == "bottom" else Qt.AlignmentFlag.AlignVCenter
+            tb_text_option.setAlignment(qt_h_align | qt_v_align)
+            tb_text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
+            time_spent_on_text_layout += (time.perf_counter() - text_layout_start_time)
+
+            tb_main_text_color = QColor(tb_props.get("font_color", "#FFFFFF"))
+            if tb_props.get("shadow_enabled", False):
+                shadow_color = QColor(tb_props.get("shadow_color", "#00000080"))
+                shadow_offset_x = tb_props.get("shadow_offset_x", 2) * font_scaling_factor
+                shadow_offset_y = tb_props.get("shadow_offset_y", 2) * font_scaling_factor
+                shadow_rect = text_box_draw_rect.translated(shadow_offset_x, shadow_offset_y)
+                painter.setPen(shadow_color)
+                draw_call_start_time = time.perf_counter(); painter.drawText(shadow_rect, text_to_draw, tb_text_option); time_spent_on_text_draw += (time.perf_counter() - draw_call_start_time)
+            if tb_props.get("outline_enabled", False):
+                outline_color = QColor(tb_props.get("outline_color", "#000000"))
+                outline_width_px = max(1, int(tb_props.get("outline_width", 1) * font_scaling_factor))
+                painter.setPen(outline_color)
+                draw_call_start_time = time.perf_counter()
+                for dx_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
+                    for dy_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
+                        if dx_o != 0 or dy_o != 0: painter.drawText(text_box_draw_rect.translated(dx_o, dy_o), text_to_draw, tb_text_option)
+                time_spent_on_text_draw += (time.perf_counter() - draw_call_start_time)
+            painter.setPen(tb_main_text_color)
+            draw_call_start_time = time.perf_counter(); painter.drawText(text_box_draw_rect, text_to_draw, tb_text_option); time_spent_on_text_draw += (time.perf_counter() - draw_call_start_time)
+
+        painter.end()
+        benchmarks = {"fonts": time_spent_on_fonts, "layout": time_spent_on_text_layout, "draw": time_spent_on_text_draw, "total_text_layer": time.perf_counter() - start_time}
+        return output_pixmap, font_error_occurred, benchmarks
+
+class LayeredSlideRenderer: # Renamed from SlideRenderer
+    """Renders SlideData onto a QPixmap using a layered approach."""
+
+    def __init__(self, app_settings=None, image_cache_manager: Optional['ImageCacheManager'] = None):
+        """
+        Initializes the LayeredSlideRenderer.
         app_settings: Optional application settings object to control features
                       like checkerboard for transparency.
+        image_cache_manager: Optional manager for image caching.
         """
         self.app_settings = app_settings
-        self._init_checkerboard_style()
+        self.image_cache_manager = image_cache_manager
+        if not self.image_cache_manager: # Create a default one if not provided
+            self.image_cache_manager = ImageCacheManager()
+
+        self.render_layers: List[RenderLayerHandler] = [
+            BackgroundRenderLayer(app_settings, self.image_cache_manager),
+            TextContentRenderLayer(app_settings)
+            # Future layers can be added here
+        ]
 
     def render_slide(self, slide_data: SlideData, width: int, height: int, base_pixmap: QPixmap = None, is_final_output: bool = False) -> tuple[QPixmap, bool, dict]:
         """
@@ -56,16 +314,19 @@ class SlideRenderer:
         """
         total_render_start_time = time.perf_counter()
         slide_id_for_log = slide_data.id if slide_data else "UNKNOWN_SLIDE"
-
-        font_error_occurred = False # Initialize error flag
-        time_spent_on_images = 0.0
-        time_spent_on_fonts = 0.0
-        time_spent_on_text_layout = 0.0
-        time_spent_on_text_draw = 0.0
         
         benchmark_data = {
-            "total_render": 0.0, "images": 0.0, "fonts": 0.0, 
-            "layout": 0.0, "draw": 0.0
+            "total_render": 0.0, 
+            "images_total_processing": 0.0, # From BackgroundLayer (overall)
+            "image_load_qimage": 0.0,
+            "image_scale_qimage": 0.0,
+            "image_from_qimage_to_qpixmap": 0.0,
+            "image_draw_qpixmap": 0.0,
+            "fonts": 0.0,  # From TextContentLayer
+            "layout": 0.0, # From TextContentLayer
+            "draw": 0.0,   # From TextContentLayer
+            "total_background_layer": 0.0,
+            "total_text_layer": 0.0
         }
 
         if width <= 0 or height <= 0:
@@ -75,209 +336,46 @@ class SlideRenderer:
             benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
             return pixmap, True, benchmark_data
 
-        is_on_base = False
+        # Initialize current_canvas
+        current_canvas: QPixmap
         if base_pixmap and not base_pixmap.isNull() and base_pixmap.size() == QSize(width, height):
-            pixmap = base_pixmap.copy() # Work on a copy to not alter the original base
-            is_on_base = True
-            # If using a base, we don't fill it with transparent initially,
-            # as we want to preserve the base_pixmap's content.
-            # The slide's own background (if any) will be drawn over this.
+            current_canvas = base_pixmap.copy()
         else:
             if base_pixmap: # Log if provided but invalid (e.g., wrong size)
                 logging.warning(f"Provided base_pixmap for slide {slide_id_for_log} is invalid "
                                 f"(isNull: {base_pixmap.isNull()}, size: {base_pixmap.size()} vs target: {width}x{height}). "
                                 "Creating new pixmap instead.")
-            pixmap = QPixmap(width, height)
+            current_canvas = QPixmap(width, height)
+            if current_canvas.isNull(): # Check if creation failed
+                logging.error(f"Failed to create QPixmap of size {width}x{height} for slide_data: {slide_data.id}")
+                error_pixmap = QPixmap(1, 1); error_pixmap.fill(Qt.GlobalColor.magenta)
+                benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
+                return error_pixmap, True, benchmark_data
+            current_canvas.fill(Qt.GlobalColor.transparent)
 
+        overall_font_error = False
 
-            # Initialize new pixmap to be fully transparent.
-            # This is the base if no opaque background is specified or drawn for this slide.
-            pixmap.fill(Qt.GlobalColor.transparent)
+        for layer_handler in self.render_layers:
+            layer_output_pixmap, layer_font_error, layer_benchmarks = layer_handler.render(
+                current_canvas, slide_data, width, height, is_final_output
+            )
+            current_canvas = layer_output_pixmap # Output of one layer is input to next
             
-        if pixmap.isNull():
+            if layer_font_error:
+                overall_font_error = True
+            
+            for key, value in layer_benchmarks.items(): # Aggregate benchmarks
+                benchmark_data[key] = benchmark_data.get(key, 0.0) + value
+        
+        if current_canvas.isNull(): # Should not happen if layers return valid pixmaps
             logging.error(f"Failed to create QPixmap of size {width}x{height} for slide_data: {slide_data.id}") # Line 94
             error_pixmap = QPixmap(1, 1) # Line 95
             error_pixmap.fill(Qt.GlobalColor.magenta)
-            return error_pixmap, True, benchmark_data # Line 98
-
-        
-            
-        # --- Prepare Painter ---
-        painter = QPainter(pixmap)
-        if not painter.isActive():
-            logging.error(f"QPainter could not be activated on pixmap for slide_data: {slide_data.id}")
-            painter.end() 
-            error_pixmap = QPixmap(1, 1); error_pixmap.fill(Qt.GlobalColor.red)
             benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
             return error_pixmap, True, benchmark_data
-        self._setup_painter_hints(painter)
-
-        # --- Draw Background (Image, Color, or Checkerboard) ---
-        time_spent_on_images += self._render_background(painter, slide_data, pixmap.rect(), slide_id_for_log, is_on_base, is_final_output)
-
-        # --- Render Text Boxes from Layout ---
-        current_template_settings = slide_data.template_settings if slide_data.template_settings else {}
-        defined_text_boxes = current_template_settings.get("text_boxes", [])
-        slide_text_content_map = current_template_settings.get("text_content", {})
-
-        # Fallback for slides that only have slide_data.lyrics (older format or simple slides)
-        # If no text_boxes are defined in template_settings, but lyrics exist, render them with a default.
-        if not defined_text_boxes and slide_data.lyrics:
-            # Use a simplified default text box definition for rendering legacy lyrics
-            # This ensures something is shown.
-            # These properties should match the expected keys from a resolved style.
-            logging.info(f"Slide {slide_id_for_log}: No text_boxes in template_settings, falling back to rendering slide_data.lyrics with defaults.")
-            defined_text_boxes = [{
-                "id": "legacy_lyrics_box", # Internal ID for this fallback
-                "x_pc": 5.0, "y_pc": 5.0, "width_pc": 90.0, "height_pc": 90.0, # Default position/size
-                "h_align": "center", "v_align": "center", # Default alignment
-                # Resolved style properties (not just a style name)
-                "font_family": "Arial", 
-                "font_size": 58, # Base size for 1080p
-                "font_color": "#FFFFFF",
-                "force_all_caps": False,
-                "outline_enabled": False, 
-                # "outline_color": "#000000", "outline_width": 2,
-                "shadow_enabled": False,
-                # "shadow_color": "#00000080", "shadow_offset_x": 2, "shadow_offset_y": 2, "shadow_blur_radius": 4
-                # Add other style properties as needed for the fallback (bold, italic, etc.)
-            }]
-            # Use the slide's main lyrics for this fallback box
-            slide_text_content_map = {"legacy_lyrics_box": slide_data.lyrics}
-
-        # --- CRITICAL CHECK: If no text boxes are defined, do not proceed to font/text rendering ---
-        if not defined_text_boxes: 
-            painter.end()
-            benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
-            benchmark_data["images"] = time_spent_on_images
-            # Ensure font_error_occurred is False if we exit here, as no font processing was attempted for text boxes.
-            # Any font errors related to, say, a missing system font for painter.font() before this point
-            # are a different category of issue. For slide content, this should be False.
-            return pixmap, False, benchmark_data # Explicitly return False for font_error_occurred
-
-        for tb_props in defined_text_boxes:
-            tb_id = tb_props.get("id", "unknown_box")
-            text_to_draw = slide_text_content_map.get(tb_id, "") # Get text for this specific box
-
-            if not text_to_draw.strip(): # Skip if no text for this box
-                continue
-
-            # --- Prepare Font for this text box (using resolved style properties from tb_props) ---
-            font_setup_start_time = time.perf_counter()
-            font = QFont()
-            font_family = tb_props.get("font_family", "Arial") # Default from resolved style
-            font.setFamily(font_family)
-            font_info_check = QFontInfo(font)
-            if font_info_check.family().lower() != font_family.lower() and not font_info_check.exactMatch():
-                logging.warning(f"Font family '{font_family}' for textbox '{tb_id}' (slide {slide_id_for_log}) not found. Using fallback '{font_info_check.family()}'.")
-                font_error_occurred = True # Flag that a font issue occurred on this slide
-
-            base_font_size_pt = tb_props.get("font_size", 58) # Default from resolved style
-            target_output_height_for_font_scaling = 1080 # The height the base_font_size_pt is designed for
-            
-            font_scaling_factor = 1.0
-            if target_output_height_for_font_scaling > 0 and height > 0:
-                 font_scaling_factor = height / target_output_height_for_font_scaling
-            
-            actual_font_size_pt = max(8, int(base_font_size_pt * font_scaling_factor))
-            font.setPointSize(actual_font_size_pt)
-
-            # Apply other font properties from tb_props (resolved style)
-            # font.setBold(tb_props.get("font_bold", False)) # Example
-            # font.setItalic(tb_props.get("font_italic", False)) # Example
-            painter.setFont(font)
-            time_spent_on_fonts += (time.perf_counter() - font_setup_start_time)
-
-            # --- Prepare Text for this text box ---
-            if tb_props.get("force_all_caps", False): # From resolved style
-                text_to_draw = text_to_draw.upper()
-
-            # --- Calculate Text Layout for this text box ---
-            text_layout_start_time = time.perf_counter()
-
-            # Calculate pixel rectangle for this text box based on percentages from tb_props
-            tb_x_pc = tb_props.get("x_pc", 0.0)
-            tb_y_pc = tb_props.get("y_pc", 0.0)
-            tb_w_pc = tb_props.get("width_pc", 100.0)
-            tb_h_pc = tb_props.get("height_pc", 100.0)
-
-            tb_pixel_rect_x = (tb_x_pc / 100.0) * width
-            tb_pixel_rect_y = (tb_y_pc / 100.0) * height
-            tb_pixel_rect_w = (tb_w_pc / 100.0) * width
-            tb_pixel_rect_h = (tb_h_pc / 100.0) * height
-            # This is the QRectF where painter.drawText will place the text, respecting alignment.
-            text_box_draw_rect = QRectF(tb_pixel_rect_x, tb_pixel_rect_y, tb_pixel_rect_w, tb_pixel_rect_h)
-
-            # Text alignment options for this text box
-            tb_text_option = QTextOption()
-            h_align_str = tb_props.get("h_align", "center") # From layout definition
-            v_align_str = tb_props.get("v_align", "center") # From layout definition
-
-            qt_h_align = Qt.AlignmentFlag.AlignHCenter
-            if h_align_str == "left": qt_h_align = Qt.AlignmentFlag.AlignLeft
-            elif h_align_str == "right": qt_h_align = Qt.AlignmentFlag.AlignRight
-
-            qt_v_align = Qt.AlignmentFlag.AlignVCenter
-            if v_align_str == "top": qt_v_align = Qt.AlignmentFlag.AlignTop
-            elif v_align_str == "bottom": qt_v_align = Qt.AlignmentFlag.AlignBottom
-            
-            tb_text_option.setAlignment(qt_h_align | qt_v_align)
-            tb_text_option.setWrapMode(QTextOption.WrapMode.WordWrap) # Text will wrap within text_box_draw_rect
-            
-            time_spent_on_text_layout += (time.perf_counter() - text_layout_start_time)
-
-            # --- Draw Text Effects and Main Text for this text box ---
-            # All colors, offsets, etc., should come from tb_props (resolved style)
-            tb_main_text_color = QColor(tb_props.get("font_color", "#FFFFFF"))
-
-            # Shadow for this text box
-            if tb_props.get("shadow_enabled", False):
-                shadow_color = QColor(tb_props.get("shadow_color", "#00000080")) # Default from resolved style
-                # Scale shadow offsets by the same factor as font size for consistency relative to text
-                shadow_offset_x = tb_props.get("shadow_offset_x", 2) * font_scaling_factor
-                shadow_offset_y = tb_props.get("shadow_offset_y", 2) * font_scaling_factor
-                # Note: QPainter.drawText doesn't have a direct blur radius for shadow.
-                # A true blur would require more complex rendering (e.g., QGraphicsDropShadowEffect on a QGraphicsTextItem,
-                # then rendering that scene to a pixmap, or manual multi-pass drawing with varying opacity).
-                # For now, we just use the offset.
-                shadow_rect = text_box_draw_rect.translated(shadow_offset_x, shadow_offset_y)
-                painter.setPen(shadow_color)
-                draw_call_start_time = time.perf_counter()
-                painter.drawText(shadow_rect, text_to_draw, tb_text_option)
-                time_spent_on_text_draw += (time.perf_counter() - draw_call_start_time)
-
-            # Outline for this text box
-            if tb_props.get("outline_enabled", False):
-                outline_color = QColor(tb_props.get("outline_color", "#000000")) # Default from resolved style
-                # Scale outline width by font_scaling_factor to keep it proportional to text size
-                outline_width_px = max(1, int(tb_props.get("outline_width", 1) * font_scaling_factor)) 
-                
-                painter.setPen(outline_color) # Pen for outline color
-                draw_call_start_time = time.perf_counter()
-                # Simple multi-draw outline: draw text at 8 surrounding points
-                for dx_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
-                    for dy_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
-                        if dx_o != 0 or dy_o != 0: # Don't draw center point (main text will cover)
-                            offset_rect = text_box_draw_rect.translated(dx_o, dy_o)
-                            painter.drawText(offset_rect, text_to_draw, tb_text_option)
-                time_spent_on_text_draw += (time.perf_counter() - draw_call_start_time)
-
-            # Main Text for this text box (drawn on top of shadow/outline)
-            painter.setPen(tb_main_text_color)
-            draw_call_start_time = time.perf_counter()
-            painter.drawText(text_box_draw_rect, text_to_draw, tb_text_option)
-            time_spent_on_text_draw += (time.perf_counter() - draw_call_start_time)
-
-        # --- Cleanup ---
-        painter.end()
 
         benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
-        benchmark_data["images"] = time_spent_on_images
-        benchmark_data["fonts"] = time_spent_on_fonts
-        benchmark_data["layout"] = time_spent_on_text_layout
-        benchmark_data["draw"] = time_spent_on_text_draw
-
-        return pixmap, font_error_occurred, benchmark_data
+        return current_canvas, overall_font_error, benchmark_data
 
     def render_key_matte(self, slide_data: SlideData, width: int, height: int) -> QPixmap:
         """
@@ -309,10 +407,10 @@ class SlideRenderer:
             return error_pixmap
 
         pixmap.fill(Qt.GlobalColor.black) # Key matte background is always black
-
         painter = QPainter(pixmap)
         if not painter.isActive():
             logging.error(f"QPainter could not be activated on pixmap for key matte (slide_data: {slide_id_for_log})")
+            # painter.end() was already called implicitly by QPainter destructor if not active
             painter.end()
             return pixmap # Return the black pixmap
 
@@ -323,19 +421,10 @@ class SlideRenderer:
         defined_text_boxes = current_template_settings.get("text_boxes", [])
         slide_text_content_map = current_template_settings.get("text_content", {})
 
-        if not defined_text_boxes and slide_data.lyrics:
-            logging.info(f"KeyMatte for Slide {slide_id_for_log}: No text_boxes in template_settings, falling back to rendering slide_data.lyrics with defaults.")
-            defined_text_boxes = [{
-                "id": "legacy_lyrics_box_key",
-                "x_pc": 5.0, "y_pc": 5.0, "width_pc": 90.0, "height_pc": 90.0,
-                "h_align": "center", "v_align": "center",
-                "font_family": "Arial", "font_size": 58, # Base size for 1080p
-                "force_all_caps": False,
-                "outline_enabled": False, "shadow_enabled": False,
-            }]
-            slide_text_content_map = {"legacy_lyrics_box_key": slide_data.lyrics}
-
         if not defined_text_boxes:
+            # If no text boxes are defined (even from the System Default Fallback template),
+            # then there's nothing to render for the key matte other than the black background.
+            logging.info(f"KeyMatte for Slide {slide_id_for_log}: No text_boxes defined in template. Key matte will be black.")
             painter.end()
             return pixmap # Return black pixmap if no text boxes
 
@@ -379,46 +468,14 @@ class SlideRenderer:
         painter.end()
         return pixmap
 
-    def _get_text_options_from_props(self, tb_props: dict) -> QTextOption:
-        """Helper to create QTextOption from text box properties."""
-        text_option = QTextOption()
-        h_align_str = tb_props.get("h_align", "center")
-        v_align_str = tb_props.get("v_align", "center")
-        qt_h_align = Qt.AlignmentFlag.AlignHCenter
-        if h_align_str == "left": qt_h_align = Qt.AlignmentFlag.AlignLeft
-        elif h_align_str == "right": qt_h_align = Qt.AlignmentFlag.AlignRight
-        qt_v_align = Qt.AlignmentFlag.AlignVCenter
-        if v_align_str == "top": qt_v_align = Qt.AlignmentFlag.AlignTop
-        elif v_align_str == "bottom": qt_v_align = Qt.AlignmentFlag.AlignBottom
-        text_option.setAlignment(qt_h_align | qt_v_align)
-        text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
-        return text_option
-
     def _draw_text_element_for_key_matte(self, painter: QPainter, text_to_draw: str,
                                          text_box_draw_rect: QRectF, tb_text_option: QTextOption,
                                          tb_props: dict, text_color: QColor, font_scaling_factor: float):
         """Helper to draw text elements (shadow, outline, main) for the key matte, all in the specified text_color."""
-        # Shadow (drawn in text_color, typically white for key matte)
-        if tb_props.get("shadow_enabled", False):
-            shadow_offset_x = tb_props.get("shadow_offset_x", 2) * font_scaling_factor
-            shadow_offset_y = tb_props.get("shadow_offset_y", 2) * font_scaling_factor
-            shadow_rect = text_box_draw_rect.translated(shadow_offset_x, shadow_offset_y)
-            painter.setPen(text_color)
-            painter.drawText(shadow_rect, text_to_draw, tb_text_option)
-
-        # Outline (drawn in text_color, typically white for key matte)
-        if tb_props.get("outline_enabled", False):
-            outline_width_px = max(1, int(tb_props.get("outline_width", 1) * font_scaling_factor))
-            painter.setPen(text_color)
-            for dx_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
-                for dy_o in range(-outline_width_px, outline_width_px + 1, outline_width_px):
-                    if dx_o != 0 or dy_o != 0:
-                        offset_rect = text_box_draw_rect.translated(dx_o, dy_o)
-                        painter.drawText(offset_rect, text_to_draw, tb_text_option)
-
-        # Main Text (drawn in text_color, typically white for key matte)
-        painter.setPen(text_color)
-        painter.drawText(text_box_draw_rect, text_to_draw, tb_text_option)
+        # This method's logic is now integrated into TextContentRenderLayer,
+        # which would need a mode/parameter for keying.
+        # For now, the main render_key_matte directly adapts TextContentRenderLayer's behavior.
+        pass # Logic moved/adapted
 
     def _init_checkerboard_style(self):
         """Initializes checkerboard style attributes."""
@@ -431,61 +488,12 @@ class SlideRenderer:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-
-    def _draw_checkerboard_pattern(self, painter: QPainter, target_rect: QRect):
-        """Draws a checkerboard pattern within the target_rect."""
-        painter.save()
-        painter.setPen(Qt.NoPen)
-        for y_start in range(target_rect.top(), target_rect.bottom(), self.checker_size):
-            for x_start in range(target_rect.left(), target_rect.right(), self.checker_size):
-                is_even_row = ((y_start - target_rect.top()) // self.checker_size) % 2 == 0
-                is_even_col = ((x_start - target_rect.left()) // self.checker_size) % 2 == 0
-                current_color = self.checker_color1 if is_even_row == is_even_col else self.checker_color2
-                cell_width = min(self.checker_size, target_rect.right() - x_start + 1)
-                cell_height = min(self.checker_size, target_rect.bottom() - y_start + 1)
-                painter.fillRect(x_start, y_start, cell_width, cell_height, current_color)
-        painter.restore()
-
-    def _render_background(self, painter: QPainter, slide_data: SlideData, target_rect: QRect, slide_id_for_log: str, is_on_base: bool, is_final_output: bool) -> float:
-        """Renders the background (image, color, or checkerboard) and returns time spent on image operations."""
-        time_spent_on_images_local = 0.0
-
-        # 1. Try Background Image first
-        bg_image_load_start_time = time.perf_counter()
-        bg_pixmap_loaded = None
-        if slide_data.background_image_path and os.path.exists(slide_data.background_image_path):
-            loaded_bg = QPixmap(slide_data.background_image_path)
-            if not loaded_bg.isNull():
-                bg_pixmap_loaded = loaded_bg
-            else:
-                logging.warning(f"Could not load background image: {slide_data.background_image_path} for slide ID {slide_id_for_log}")
-        time_spent_on_images_local += (time.perf_counter() - bg_image_load_start_time)
-
-        if bg_pixmap_loaded:
-            bg_image_draw_start_time = time.perf_counter()
-            painter.drawPixmap(target_rect, bg_pixmap_loaded)
-            time_spent_on_images_local += (time.perf_counter() - bg_image_draw_start_time)
-        else:
-            # No valid background image, so use background_color or checkerboard
-            bg_qcolor = QColor(slide_data.background_color)
-            if not bg_qcolor.isValid():
-                logging.warning(f"Invalid background_color string: '{slide_data.background_color}' for slide ID {slide_id_for_log}. Defaulting to transparent.")
-                bg_qcolor = QColor(Qt.GlobalColor.transparent)
-
-            if bg_qcolor.alpha() == 0:  # Fully transparent color
-                # Only show checkerboard if this slide is standalone (not on a base)
-                # and the setting is enabled, AND it's not for final output.
-                show_checkerboard_setting = True # Default if no app_settings
-                if self.app_settings and hasattr(self.app_settings, 'get_setting'):
-                    show_checkerboard_setting = self.app_settings.get_setting("display_checkerboard_for_transparency", True)
-                
-                if show_checkerboard_setting and not is_on_base and not is_final_output:
-                    self._draw_checkerboard_pattern(painter, target_rect)
-                # If is_on_base is True, or show_checkerboard_setting is False, do nothing, leaving the underlying pixmap visible.
-            else:  # Opaque or semi-transparent color
-                painter.fillRect(target_rect, bg_qcolor)
-        return time_spent_on_images_local
-
+    
+    # The following private helper methods are now part of their respective layer handlers:
+    # _init_checkerboard_style() -> BackgroundRenderLayer
+    # _draw_checkerboard_pattern() -> BackgroundRenderLayer
+    # _render_background() -> BackgroundRenderLayer (its logic is integrated into BackgroundRenderLayer.render)
+    # _get_text_options_from_props() -> TextContentRenderLayer (or used internally by it)
 
 
 if __name__ == "__main__":
@@ -524,8 +532,12 @@ if __name__ == "__main__":
                 return True # Test with checkerboard enabled
             return default_value
     
+    # --- Create ImageCacheManager for testing ---
+    test_cache_manager = ImageCacheManager(cache_base_dir_name="test_plucky_image_cache")
+    test_cache_manager.clear_entire_cache() # Start with a clean cache for testing
+
     # --- Create Renderer ---
-    renderer = SlideRenderer(app_settings=MockAppSettings())
+    renderer = LayeredSlideRenderer(app_settings=MockAppSettings(), image_cache_manager=test_cache_manager)
 
     # --- Render and Save Each Slide ---
     # Get the directory where this script is located

@@ -5,6 +5,11 @@ from PySide6.QtGui import QScreen
 from PySide6.QtWidgets import QApplication # For QApplication.screens()
 from typing import Optional, List, Dict, Any
 
+try:
+    from core.plucky_standards import PluckyStandards
+except ImportError:
+    from plucky_standards import PluckyStandards # Fallback for direct execution or different project structure
+
 SETTINGS_FILE_PATH_CONFIG = os.path.join(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation), "app_settings.json")
 RECENT_FILES_FILE_PATH_CONFIG = os.path.join(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation), "recent_files.json")
 MAX_RECENT_FILES_CONFIG = 10
@@ -18,6 +23,9 @@ class ApplicationConfigManager(QObject):
         self._app_settings: Dict[str, Any] = {}
         self._recent_files_list: List[str] = []
         self._target_output_screen: Optional[QScreen] = None
+
+        # Initialize Plucky standard user directories
+        PluckyStandards.initialize_user_store()
 
         self._load_app_settings()
         self._load_recent_files()
@@ -139,6 +147,18 @@ class ApplicationConfigManager(QObject):
     def set_app_setting(self, key: str, value: Any):
         self._app_settings[key] = value
         self._save_app_settings() # Save when any app setting changes
+
+    def get_default_presentations_path(self) -> str:
+        """Returns the default directory for storing presentation manifest files."""
+        return PluckyStandards.get_presentations_dir()
+
+    def get_default_sections_path(self) -> str:
+        """Returns the default directory for storing individual section files."""
+        return PluckyStandards.get_sections_dir()
+
+    def get_default_templates_path(self) -> str:
+        """Returns the default directory for storing user-defined template files."""
+        return PluckyStandards.get_templates_dir()
 
     def save_all_configs(self): # Explicit save if needed, e.g. on app close
         self._save_app_settings()

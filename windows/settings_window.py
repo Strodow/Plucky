@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QDir, QFileInfo, Slot, Signal
 from PySide6.QtGui import QScreen
 from PySide6.QtUiTools import QUiLoader
-import os # Needed for os.path.basename
+import os, sys # Needed for os.path.basename
 import ctypes # For HRESULT S_OK
 
 # Attempt to import from decklink_handler.
@@ -13,11 +13,22 @@ try:
     # This assumes decklink_handler.py is in the parent directory of 'windows'
     # Adjust if your project structure is different (e.g. Plucky.decklink_handler)
     from .. import decklink_handler
+    from ..core.app_config_manager import ApplicationConfigManager
+    from ..core.template_manager import TemplateManager, SYSTEM_DEFAULT_FALLBACK_LAYOUT_NAME
 except ImportError:
     # Fallback for different execution contexts or structures
     import decklink_handler
+    # This path might need adjustment if running settings_window.py directly for testing
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.app_config_manager import ApplicationConfigManager
+    from core.template_manager import TemplateManager, SYSTEM_DEFAULT_FALLBACK_LAYOUT_NAME
+
+from enum import Enum
 
 class SettingsWindow(QDialog):
+    production_mode_changed_signal = Signal(str) # Emits the new mode string
+
+
     # Signal to indicate the selected output monitor has changed
     output_monitor_changed = Signal(QScreen)  # Emits the selected QScreen object
     # Emits (fill_device_index, key_device_index)
@@ -28,13 +39,27 @@ class SettingsWindow(QDialog):
                  current_decklink_fill_index: int = -1, # Pass current fill selection
                  current_decklink_key_index: int = -1,   # Pass current key selection
                  current_decklink_video_mode: dict = None, # Pass current video mode
+                 config_manager: ApplicationConfigManager = None,
+                 template_manager: TemplateManager = None, # Pass TemplateManager
                  parent=None):
         super().__init__(parent)
         self._current_output_screen = current_output_screen
         self._current_decklink_fill_index = current_decklink_fill_index
         self._current_decklink_key_index = current_decklink_key_index
         self._current_decklink_video_mode = current_decklink_video_mode # Store current video mode
+        self.config_manager = config_manager
+        self.template_manager = template_manager
+
+        if not self.config_manager:
+            # This is a fallback if not provided, but ideally it should always be passed.
+            # For standalone testing, this might be okay.
+            print("SettingsWindow WARNING: ApplicationConfigManager not provided. Prod Toggle will not persist.")
+            self.config_manager = ApplicationConfigManager() # Create a temporary one
         self._decklink_api_initialized_by_settings = False # Track if we initialized it
+        if not self.template_manager:
+            # Fallback, ideally always passed
+            print("SettingsWindow WARNING: TemplateManager not provided. Default template selection will be limited.")
+            self.template_manager = TemplateManager()
 
 
         # Load the UI file
@@ -80,6 +105,12 @@ class SettingsWindow(QDialog):
         self.refresh_decklink_devices_button: QPushButton = self.ui.findChild(QPushButton, "refreshDecklinkDevicesButton")
         self.decklink_video_mode_combo: QComboBox = self.ui.findChild(QComboBox, "decklinkVideoModeComboBox")
 
+        # Access Prod Toggle ComboBox (Developer Tab)
+        self.prod_toggle_combo_box: QComboBox = self.ui.findChild(QComboBox, "ProdToggleComboBox")
+
+        # Access Default Template ComboBox (Slide Defaults Tab)
+        self.default_template_combo_box: QComboBox = self.ui.findChild(QComboBox, "defaultTemplateComboBox")
+
         # Set window properties
         self.setWindowTitle("Settings")
         self.resize(500, 450) # Adjusted size for new groupbox
@@ -114,6 +145,16 @@ class SettingsWindow(QDialog):
             self.decklink_key_device_combo.currentIndexChanged.connect(self._handle_decklink_key_device_selection_changed)
         
         self.populate_decklink_devices_combo() # Initial population
+
+        # Populate and connect Prod Toggle ComboBox
+        if self.prod_toggle_combo_box:
+            self.populate_prod_toggle_combo()
+            self.prod_toggle_combo_box.currentTextChanged.connect(self._handle_prod_mode_changed)
+        
+        # Populate and connect Default Template ComboBox
+        if self.default_template_combo_box:
+            self.populate_default_template_combo()
+            self.default_template_combo_box.currentTextChanged.connect(self._handle_default_template_changed)
 
     def update_benchmarking_display(self, data: dict):
         """Updates the labels in the benchmarking section with provided data."""
@@ -423,3 +464,79 @@ class SettingsWindow(QDialog):
         if self.decklink_video_mode_combo and self.decklink_video_mode_combo.currentIndex() >= 0:
             return self.decklink_video_mode_combo.itemData(self.decklink_video_mode_combo.currentIndex())
         return None # Return None if no item is selected
+
+    def populate_prod_toggle_combo(self):
+        if not self.prod_toggle_combo_box:
+            return
+
+        self.prod_toggle_combo_box.blockSignals(True)
+        self.prod_toggle_combo_box.clear()
+
+        modes = ["Developer", "Basic", "Premium"] # User-friendly names
+        self.prod_toggle_combo_box.addItems(modes)
+
+        current_mode_str = "Developer" # Default
+        if self.config_manager:
+            current_mode_str = self.config_manager.get_app_setting("production_mode", "Developer")
+
+        if current_mode_str in modes:
+            self.prod_toggle_combo_box.setCurrentText(current_mode_str)
+        else: # If saved mode is invalid, default to Developer and save it
+            self.prod_toggle_combo_box.setCurrentText("Developer")
+            if self.config_manager:
+                self.config_manager.set_app_setting("production_mode", "Developer")
+
+        self.prod_toggle_combo_box.blockSignals(False)
+
+    @Slot(str)
+    def _handle_prod_mode_changed(self, mode_text: str):
+        if self.config_manager:
+            self.config_manager.set_app_setting("production_mode", mode_text)
+            print(f"SettingsWindow: Production mode changed to '{mode_text}' and saved.")
+            self.production_mode_changed_signal.emit(mode_text) # Emit signal
+        else:
+            print(f"SettingsWindow: Production mode changed to '{mode_text}' (config_manager not available, not saved).")
+
+    def populate_default_template_combo(self):
+        if not self.default_template_combo_box or not self.template_manager:
+            return
+
+        self.default_template_combo_box.blockSignals(True)
+        self.default_template_combo_box.clear()
+
+        # Special option to use the system fallback (template_id: None)
+        system_fallback_display_text = f"(Use '{SYSTEM_DEFAULT_FALLBACK_LAYOUT_NAME}')"
+        self.default_template_combo_box.addItem(system_fallback_display_text, None) # Store None as data
+
+        layout_names = self.template_manager.get_layout_names()
+        for name in sorted(layout_names):
+            if name != SYSTEM_DEFAULT_FALLBACK_LAYOUT_NAME: # Don't list it twice if it exists
+                self.default_template_combo_box.addItem(name, name) # Store name as data
+
+        current_default_template_id = None
+        if self.config_manager:
+            # If "None" is stored as string, convert to Python None
+            saved_setting = self.config_manager.get_app_setting("new_slide_default_template_id", None)
+            current_default_template_id = None if saved_setting == "None" else saved_setting
+
+        if current_default_template_id is None:
+            self.default_template_combo_box.setCurrentText(system_fallback_display_text)
+        else:
+            index = self.default_template_combo_box.findData(current_default_template_id)
+            if index != -1:
+                self.default_template_combo_box.setCurrentIndex(index)
+            else: # Saved template not found, default to system fallback
+                self.default_template_combo_box.setCurrentText(system_fallback_display_text)
+
+        self.default_template_combo_box.blockSignals(False)
+
+    @Slot(str)
+    def _handle_default_template_changed(self, text: str):
+        if not self.default_template_combo_box or not self.config_manager:
+            return
+        
+        selected_template_id = self.default_template_combo_box.currentData() # This will be None or the template name string
+        # Store Python None as string "None" for JSON compatibility, or actual name
+        value_to_save = "None" if selected_template_id is None else selected_template_id
+        self.config_manager.set_app_setting("new_slide_default_template_id", value_to_save)
+        print(f"SettingsWindow: New slide default template set to '{selected_template_id}' (saved as '{value_to_save}').")

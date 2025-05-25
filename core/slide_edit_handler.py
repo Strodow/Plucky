@@ -40,14 +40,11 @@ class SlideEditHandler(QObject):
 
         # Get current text content from template_settings or fallback to legacy lyrics
         old_text_content: Dict[str, str] = {}
-        old_legacy_lyrics: Optional[str] = None
 
         if slide_data.template_settings and isinstance(slide_data.template_settings.get("text_content"), dict):
             old_text_content = copy.deepcopy(slide_data.template_settings["text_content"])
-
-        # The dialog will handle the case where text_boxes are not defined and use slide_data.lyrics
-        # So, we also need to capture the old legacy lyrics for the command.
-        old_legacy_lyrics = slide_data.lyrics
+        elif slide_data.lyrics: # Fallback if text_content is not structured, use legacy lyrics as main_text
+            old_text_content = {"main_text": slide_data.lyrics}
 
         # Pass parent_widget to the dialog
         dialog = EditSlideContentDialog(slide_data, self.parent_widget)
@@ -55,29 +52,20 @@ class SlideEditHandler(QObject):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_text_content_from_dialog = dialog.get_updated_content()
 
-            # Determine if actual changes were made
-            content_changed = False
-            new_legacy_lyrics_from_dialog: Optional[str] = None
-            new_text_content_for_command: Dict[str, str | None] = {} # Use Dict[str, str | None] to allow None for legacy_lyrics key if not present
-
-            if "legacy_lyrics" in new_text_content_from_dialog: # Dialog was in legacy mode
-                new_legacy_lyrics_from_dialog = new_text_content_from_dialog["legacy_lyrics"]
-                if new_legacy_lyrics_from_dialog != old_legacy_lyrics:
-                    content_changed = True
-                # For the command, pass only the legacy part if that's what was edited
-                new_text_content_for_command = {"legacy_lyrics": new_legacy_lyrics_from_dialog}
-            else: # Dialog was in template mode
-                # Compare the dictionaries directly
-                if new_text_content_from_dialog != old_text_content:
-                    content_changed = True
-                new_text_content_for_command = new_text_content_from_dialog
-                # Ensure legacy_lyrics is explicitly None in the command data if not in dialog result
-                new_legacy_lyrics_from_dialog = None # Not applicable in template mode
-
-            if not content_changed:
+            # Compare the new content dictionary with the old one.
+            # The EditSlideContentDialog should return a dictionary representing the new 'content'
+            # field of a slide_block.
+            if new_text_content_from_dialog == old_text_content:
+                print("SlideEditHandler: No changes detected in slide content.")
                 return # No actual changes made
 
-            cmd = EditLyricsCommand(self.presentation_manager, slide_index,
-                                    old_text_content, new_text_content_for_command,
-                                    old_legacy_lyrics, new_legacy_lyrics_from_dialog)
+            # Use slide_data.id as the instance_slide_id
+            instance_id_to_edit = slide_data.id
+
+            cmd = EditLyricsCommand(
+                self.presentation_manager,
+                instance_id_to_edit,
+                old_text_content, # The original content dictionary
+                new_text_content_from_dialog # The new content dictionary from the dialog
+            )
             self.presentation_manager.do_command(cmd)
