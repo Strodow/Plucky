@@ -40,6 +40,7 @@ try:
     from core.slide_ui_manager import SlideUIManager # Import the new Slide UI Manager
     from core.slide_edit_handler import SlideEditHandler # Import the new handler    
     from widgets.section_management_panel import SectionManagementPanel # New import
+    from windows.resource_manager_window import ResourceManagerWindow # New Import for Resource Manager
     from core.image_cache_manager import ImageCacheManager # New import
     from core.output_target import OutputTarget # New import for Phase 2
     from PySide6.QtGui import QActionGroup # For mutually exclusive menu items
@@ -69,6 +70,7 @@ except ImportError:
     from core.slide_ui_manager import SlideUIManager # Import the new Slide UI Manager
     from core.slide_edit_handler import SlideEditHandler # Import the new handler    
     from widgets.section_management_panel import SectionManagementPanel # New import
+    from windows.resource_manager_window import ResourceManagerWindow # New Import for Resource Manager
     from core.image_cache_manager import ImageCacheManager # New import
     from core.output_target import OutputTarget # New import for Phase 2
     from PySide6.QtGui import QActionGroup # For mutually exclusive menu items
@@ -384,6 +386,7 @@ class MainWindow(QMainWindow):
         # Restore window state (including dock widgets)
         # Do this after all UI elements, including docks, are created but before showEvent typically.
         saved_window_state_str = self.config_manager.get_app_setting("main_window_state")
+        self._resource_manager_window_instance = None # To keep a reference
         if saved_window_state_str:
             # Ensure dock widgets are created before restoring state
             if not self.section_management_dock: # Should not happen if init order is correct
@@ -1514,6 +1517,10 @@ class MainWindow(QMainWindow):
         add_song_action = presentation_menu.addAction("Add New Section")
         add_song_action.triggered.connect(self.handle_add_new_section) # Connect to new handler
         # Keep it disabled as in the toolbar
+        presentation_menu.addSeparator() # Optional: to visually group it
+        toggle_section_manager_action_presentation_menu = presentation_menu.addAction("Section Manager")
+        toggle_section_manager_action_presentation_menu.setToolTip("Show/Hide the Section Manager panel")
+        toggle_section_manager_action_presentation_menu.triggered.connect(self._toggle_section_manager_panel)
         add_song_action.setEnabled(True) # Enable this feature now
         add_song_action.setToolTip("Add a new song or content section to the presentation.")
 
@@ -1543,8 +1550,12 @@ class MainWindow(QMainWindow):
             self.enable_hover_debug_action = dev_menu.addAction("Enable Hover Debug")
             self.enable_hover_debug_action.setCheckable(True)
             # Set checked state based on whether debugger is already active
-            self.enable_hover_debug_action.setChecked(self.hover_debugger_instance is not None)
-            self.enable_hover_debug_action.toggled.connect(self._toggle_hover_debugger)
+            # Tools Menu (New or existing)
+        tools_menu = menu_bar.addMenu("Tools")
+        open_resource_manager_action = tools_menu.addAction("Resource Manager...")
+        open_resource_manager_action.triggered.connect(self.handle_open_resource_manager)
+        self.enable_hover_debug_action.setChecked(self.hover_debugger_instance is not None)
+        self.enable_hover_debug_action.toggled.connect(self._toggle_hover_debugger)
         return menu_bar
     #Main Window Utility (add function to clear recents)
     def _update_recent_files_menu(self):
@@ -1792,6 +1803,20 @@ class MainWindow(QMainWindow):
             # but current attributes should still hold their pre-dialog values.
         
         # Disconnect after use to prevent issues if dialog is reopened or multiple instances exist
+        # Make sure to disconnect all signals that were connected from settings_dialog
+        # For example:
+        # try:
+        #     settings_dialog.decklink_device_selected.disconnect(self._handle_decklink_device_changed_from_settings)
+        # except RuntimeError:
+        #     pass # Signal might have already been disconnected or dialog closed unexpectedly
+        #
+        # try:
+        #     settings_dialog.decklink_video_mode_selected.disconnect(self._handle_decklink_video_mode_changed_from_settings)
+        # except RuntimeError:
+        #     pass
+        #
+        # try:
+        #     settings_dialog.production_mode_changed_signal.disconnect(self._handle_production_mode_setting_changed)
         try:
             settings_dialog.output_monitor_changed.disconnect(self._handle_settings_monitor_changed)
             
@@ -1799,6 +1824,20 @@ class MainWindow(QMainWindow):
             # settings_dialog.decklink_fill_key_devices_selected.disconnect(self._handle_decklink_devices_changed_from_settings) # No longer connected
         except RuntimeError: # In case signals were already disconnected or dialog closed unexpectedly
             pass
+
+    @Slot()
+    def handle_open_resource_manager(self):
+        """Opens the Resource Manager window."""
+        if self._resource_manager_window_instance is None:
+            self._resource_manager_window_instance = ResourceManagerWindow(
+                presentation_manager=self.presentation_manager,
+                image_cache_manager=self.image_cache_manager,
+                parent=self
+            )
+        # Use exec() for a modal dialog, or show() for non-modal.
+        # Modal is often better for management tasks to ensure focus.
+        self._resource_manager_window_instance.exec()
+
 
     #Main Window Utility
     @Slot(dict)

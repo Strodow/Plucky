@@ -35,13 +35,6 @@ DEFAULT_LAYOUT_NAME = "Default Layout"
 DEFAULT_STYLE_NAME = "Default Style"
 SYSTEM_DEFAULT_FALLBACK_LAYOUT_NAME = "System Default Fallback"
 
-DEFAULT_MASTER_TEMPLATE_PROPS: Dict[str, Any] = {
-    "layout_name": "Default Layout", # Refers to a layout definition name
-    "text_box_styles": { # Maps text_box_id from the layout to a style_definition name
-        "main": "Default Style"
-    }
-}
-
 class TemplateManager(QObject):
     """Manages the collection of named presentation templates."""
 
@@ -52,14 +45,12 @@ class TemplateManager(QObject):
     # File extensions for template types
     STYLE_EXT = ".style.json"
     LAYOUT_EXT = ".layout.json"
-    MASTER_EXT = ".master.json"
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._template_collection: Dict[str, Dict[str, Any]] = {
             "styles": {},
             "layouts": {},
-            "master_templates": {}
         }
         # Note: The old DEFAULT_TEMPLATE from slide_data.py is no longer directly used here.
         # This manager now deals with the structured collection.
@@ -97,24 +88,19 @@ class TemplateManager(QObject):
         layout_def = self._template_collection.get("layouts", {}).get(name)
         return copy.deepcopy(layout_def) if layout_def else None
 
-    def get_master_template_names(self) -> List[str]:
-        return list(self._template_collection.get("master_templates", {}).keys())
-
-    def get_master_template_definition(self, name: str) -> Optional[Dict[str, Any]]:
-        master_def = self._template_collection.get("master_templates", {}).get(name)
-        return copy.deepcopy(master_def) if master_def else None
-
     # --- Deprecated/Replaced Methods (from the old flat template structure) ---
     # These methods are no longer directly applicable to the new structured system
     # in the same way. The TemplateEditorWindow will now work with the full collection.
     # If other parts of your application relied on these, they'll need to be updated
     # to use the new category-specific getters or work with the full collection.
 
+    # This method is fully deprecated as "master templates" are removed.
     def get_template_names_old(self) -> List[str]:
-        """DEPRECATED: Returns a list of master template names as a stand-in."""
-        print("TemplateManager: get_template_names_old() is deprecated. Use get_master_template_names() or similar.")
-        return self.get_master_template_names()
+        """DEPRECATED: Master templates are removed. This will return an empty list."""
+        print("TemplateManager: get_template_names_old() is deprecated. Master templates are removed.")
+        return []
 
+    # This method is fully deprecated as "master templates" are removed.
     def get_template_settings_old(self, template_name: str) -> Optional[Dict[str, Any]]:
         """
         DEPRECATED: Tries to return a master template definition as a stand-in.
@@ -122,11 +108,7 @@ class TemplateManager(QObject):
         """
         print(f"TemplateManager: get_template_settings_old('{template_name}') is deprecated. Use get_master_template_definition() or resolve styles/layouts.")
         # This is a placeholder. The actual "settings" for a slide will come from resolving
-        # a master template, its layout, and the styles for its text boxes.
-        # For now, just return the master template definition if it exists.
-        master_def = self.get_master_template_definition(template_name)
-        if master_def:
-            return master_def # This isn't the final "renderable" settings, but it's the stored data.
+        # a layout and its styles. Master templates are removed.
         return None
 
     def resolve_layout_template(self, layout_name: str) -> Dict[str, Any]:
@@ -185,9 +167,7 @@ class TemplateManager(QObject):
             })
             resolved_layout["text_boxes"].append(resolved_tb)
         # print(f"DEBUG_TM: Resolved layout '{layout_name}' has {len(resolved_layout['text_boxes'])} text_boxes.")
-        return resolved_layout
-
-    # The old add_new_template, delete_template, update_template_settings methods
+        return resolved_layout    # The old add_new_template, delete_template, update_template_settings methods
     # would need to be significantly refactored to work with categories (styles, layouts, master_templates)
     # or be removed if all modifications are handled through the TemplateEditorWindow and update_from_collection.
     # For now, they are effectively replaced by the editor's more comprehensive management.
@@ -231,25 +211,17 @@ class TemplateManager(QObject):
             self._save_single_template_to_file("layouts", SYSTEM_DEFAULT_FALLBACK_LAYOUT_NAME, fallback_layout_content)
             print(f"TemplateManager: Created default fallback layout template: '{SYSTEM_DEFAULT_FALLBACK_LAYOUT_NAME}'")
 
-        if "master_templates" not in self._template_collection or not isinstance(self._template_collection["master_templates"], dict):
-            self._template_collection["master_templates"] = {}
-        if "Default Master" not in self._template_collection["master_templates"]: # Assuming "Default Master" is the standard name
-            self._template_collection["master_templates"]["Default Master"] = copy.deepcopy(DEFAULT_MASTER_TEMPLATE_PROPS)
-            self._save_single_template_to_file("master_templates", "Default Master", self._template_collection["master_templates"]["Default Master"])
-
     def _get_template_dir_and_ext(self, category: str) -> tuple[Optional[str], Optional[str]]:
         if category == "styles":
             return PluckyStandards.get_templates_styles_dir(), self.STYLE_EXT
         elif category == "layouts":
             return PluckyStandards.get_templates_layouts_dir(), self.LAYOUT_EXT
-        elif category == "master_templates":
-            return PluckyStandards.get_templates_master_templates_dir(), self.MASTER_EXT
         return None, None
 
     def _load_templates_from_files(self):
         """Loads all templates from their individual files in respective subdirectories."""
-        loaded_collection = {"styles": {}, "layouts": {}, "master_templates": {}}
-        categories = ["styles", "layouts", "master_templates"]
+        loaded_collection = {"styles": {}, "layouts": {}}
+        categories = ["styles", "layouts"] # Removed "master_templates"
 
         for category in categories:
             template_dir, ext = self._get_template_dir_and_ext(category)
@@ -297,7 +269,7 @@ class TemplateManager(QObject):
 
     def _save_templates_to_files(self):
         """Saves all in-memory templates to their individual files and deletes orphaned files."""
-        categories = ["styles", "layouts", "master_templates"]
+        categories = ["styles", "layouts"] # Removed "master_templates"
 
         for category in categories:
             template_dir, ext = self._get_template_dir_and_ext(category)
