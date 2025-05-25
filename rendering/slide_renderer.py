@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QApplication # Needed for testing QPixmap/QPainter
 import copy # For deepcopy
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QTextOption,
-    QFontInfo, QImage # Added QImage here
+    QFontInfo, QImage, qAlpha, qRgba # Added QImage, qAlpha, qRgba here
 )
 from PySide6.QtCore import Qt, QRect, QRectF, QPointF, QSize
 from typing import Optional, List, Tuple, Dict, Any # Added List, Tuple, Dict, Any
@@ -399,15 +399,15 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
             pixmap.fill(Qt.GlobalColor.black)
             return pixmap
 
-        pixmap = QPixmap(width, height)
-        if pixmap.isNull():
+        # 1. Render the slide's text content (with its inherent alpha) onto a temporary transparent base.
+        content_with_alpha_pixmap = QPixmap(width, height)
+        if content_with_alpha_pixmap.isNull():
             logging.error(f"Failed to create QPixmap of size {width}x{height} for key matte (slide_data: {slide_id_for_log})")
             error_pixmap = QPixmap(1, 1)
             error_pixmap.fill(Qt.GlobalColor.black) # Fallback to black
             return error_pixmap
-
-        pixmap.fill(Qt.GlobalColor.black) # Key matte background is always black
-        painter = QPainter(pixmap)
+        content_with_alpha_pixmap.fill(Qt.GlobalColor.transparent) # Start with a transparent base for content
+        painter = QPainter(content_with_alpha_pixmap)
         if not painter.isActive():
             logging.error(f"QPainter could not be activated on pixmap for key matte (slide_data: {slide_id_for_log})")
             # painter.end() was already called implicitly by QPainter destructor if not active
@@ -415,7 +415,7 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
             return pixmap # Return the black pixmap
 
         self._setup_painter_hints(painter)
-
+        
         # --- Render Text Boxes from Layout (similar to render_slide) ---
         current_template_settings = slide_data.template_settings if slide_data.template_settings else {}
         defined_text_boxes = current_template_settings.get("text_boxes", [])
@@ -426,9 +426,7 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
             # then there's nothing to render for the key matte other than the black background.
             logging.info(f"KeyMatte for Slide {slide_id_for_log}: No text_boxes defined in template. Key matte will be black.")
             painter.end()
-            return pixmap # Return black pixmap if no text boxes
-
-        key_matte_text_color = QColor(Qt.GlobalColor.white)
+            # Fall through to the conversion step, which will result in a black matte.
 
         for tb_props in defined_text_boxes:
             tb_id = tb_props.get("id", "unknown_box_key")
@@ -463,10 +461,115 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
 
             tb_text_option = self._get_text_options_from_props(tb_props)
 
-            self._draw_text_element_for_key_matte(painter, text_to_draw, text_box_draw_rect, tb_text_option, tb_props, key_matte_text_color, font_scaling_factor)
+            # --- CRITICAL CHANGE: Use actual colors from tb_props for rendering ---
+
+            # Shadow (rendered with its actual color and alpha)
+            if tb_props.get("shadow_enabled", False):
+                shadow_color_hex = tb_props.get("shadow_color", "#00000080") # Default to semi-transparent black
+                shadow_qcolor = QColor(shadow_color_hex)
+                shadow_offset_x_scaled = tb_props.get("shadow_offset_x", 2) * font_scaling_factor
+                shadow_offset_y_scaled = tb_props.get("shadow_offset_y", 2) * font_scaling_factor
+                shadow_rect = text_box_draw_rect.translated(shadow_offset_x_scaled, shadow_offset_y_scaled)
+                painter.setPen(shadow_qcolor)
+                painter.drawText(shadow_rect, text_to_draw, tb_text_option)
+
+            # Outline (rendered with its actual color and alpha)
+            if tb_props.get("outline_enabled", False):
+                outline_color_hex = tb_props.get("outline_color", "#000000") # Default to solid black
+                outline_qcolor = QColor(outline_color_hex)
+                outline_width_px_scaled = max(1, int(tb_props.get("outline_width", 1) * font_scaling_factor))
+                painter.setPen(outline_qcolor)
+                for dx_o in range(-outline_width_px_scaled, outline_width_px_scaled + 1, outline_width_px_scaled):
+                    for dy_o in range(-outline_width_px_scaled, outline_width_px_scaled + 1, outline_width_px_scaled):
+                        if dx_o != 0 or dy_o != 0:
+                            painter.drawText(text_box_draw_rect.translated(dx_o, dy_o), text_to_draw, tb_text_option)
+            
+            # Main text (rendered with its actual color and alpha)
+            font_color_hex = tb_props.get("font_color", "#FFFFFF") # Default to solid white
+            main_text_qcolor = QColor(font_color_hex)
+            painter.setPen(main_text_qcolor)
+            painter.drawText(text_box_draw_rect, text_to_draw, tb_text_option)
 
         painter.end()
-        return pixmap
+
+        # 2. Convert the content_with_alpha_pixmap (which has ARGB content)
+        #    into a final matte pixmap (black background, with white elements
+        #    whose intensity/alpha is derived from the original content's alpha).
+        
+        # Get the rendered content as a QImage
+        source_content_image = content_with_alpha_pixmap.toImage()
+        if source_content_image.isNull():
+            logging.error(f"KeyMatte: Failed to convert content_with_alpha_pixmap to QImage for slide {slide_id_for_log}")
+            error_matte = QPixmap(width, height); error_matte.fill(Qt.GlobalColor.black); return error_matte
+
+        # Ensure it's in a format with an alpha channel we can extract
+        if source_content_image.format() != QImage.Format_ARGB32_Premultiplied and source_content_image.format() != QImage.Format_ARGB32:
+            source_content_image = source_content_image.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+
+        # Convert the source image to an 8-bit alpha mask.
+        # Pixels in alpha_mask_image will have grayscale values corresponding to the alpha
+        # based on the alpha of source_content_image.
+        # This image will be used to set the alpha channel of our white matte source.
+        alpha_mask_image = source_content_image.convertToFormat(QImage.Format_Alpha8)
+        if alpha_mask_image.isNull():
+            logging.error(f"KeyMatte: Failed to convert source_content_image to Format_Alpha8 for slide {slide_id_for_log}")
+            error_matte = QPixmap(width, height); error_matte.fill(Qt.GlobalColor.black); return error_matte
+
+        # Create the final matte pixmap, starting with black.
+        final_matte_pixmap = QPixmap(width, height)
+        if final_matte_pixmap.isNull(): # Should not happen
+            logging.error(f"KeyMatte: Failed to create final_matte_pixmap for slide {slide_id_for_log}")
+            error_matte = QPixmap(1,1); error_matte.fill(Qt.GlobalColor.black); return error_matte
+        final_matte_pixmap.fill(Qt.GlobalColor.black)
+
+        # Prepare to draw onto the matte. We'll draw white, but use the alpha_channel_img
+        # to control the "opacity" of that white drawing.
+        matte_painter = QPainter(final_matte_pixmap)
+        if not matte_painter.isActive():
+            logging.error(f"KeyMatte: QPainter failed to activate on final_matte_pixmap for slide {slide_id_for_log}")
+            # matte_painter.end() implicitly called
+            return final_matte_pixmap # Return black pixmap
+
+        # Create a temporary white image that will have its alpha channel set by our mask.
+        # This white image will then be drawn onto the black matte.
+        white_source_for_matte = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+        white_source_for_matte.fill(Qt.GlobalColor.white)
+        white_source_for_matte.setAlphaChannel(alpha_mask_image) # Apply our alpha mask
+
+        matte_painter.setCompositionMode(QPainter.CompositionMode_SourceOver) # Draw white (with alpha) over black
+        matte_painter.drawImage(0, 0, white_source_for_matte)
+        matte_painter.end()
+            
+        if final_matte_pixmap.isNull():
+            logging.error(f"KeyMatte: Failed to convert matte_image to QPixmap for slide {slide_id_for_log}")
+            error_matte = QPixmap(width, height); error_matte.fill(Qt.GlobalColor.black); return error_matte
+            
+        return final_matte_pixmap
+
+    def _get_text_options_from_props(self, tb_props: dict) -> QTextOption:
+        """
+        Creates a QTextOption object from textbox properties.
+        This logic is similar to what's in TextContentRenderLayer.
+        """
+        text_option = QTextOption()
+        h_align_str = tb_props.get("h_align", "center")
+        v_align_str = tb_props.get("v_align", "center")
+
+        qt_h_align = Qt.AlignmentFlag.AlignLeft
+        if h_align_str == "right":
+            qt_h_align = Qt.AlignmentFlag.AlignRight
+        elif h_align_str == "center":
+            qt_h_align = Qt.AlignmentFlag.AlignHCenter
+
+        qt_v_align = Qt.AlignmentFlag.AlignTop
+        if v_align_str == "bottom":
+            qt_v_align = Qt.AlignmentFlag.AlignBottom
+        elif v_align_str == "center":
+            qt_v_align = Qt.AlignmentFlag.AlignVCenter
+        
+        text_option.setAlignment(qt_h_align | qt_v_align)
+        text_option.setWrapMode(QTextOption.WrapMode.WordWrap) # Default to WordWrap
+        return text_option
 
     def _draw_text_element_for_key_matte(self, painter: QPainter, text_to_draw: str,
                                          text_box_draw_rect: QRectF, tb_text_option: QTextOption,
@@ -474,7 +577,10 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
         """Helper to draw text elements (shadow, outline, main) for the key matte, all in the specified text_color."""
         # This method's logic is now integrated into TextContentRenderLayer,
         # which would need a mode/parameter for keying.
-        # For now, the main render_key_matte directly adapts TextContentRenderLayer's behavior.
+        # For the fix, the logic from TextContentRenderLayer's drawing part,
+        # adapted for keying (all white), is now directly in render_key_matte.
+        # So this specific helper can remain pass or be removed if render_key_matte
+        # inline its drawing logic.
         pass # Logic moved/adapted
 
     def _init_checkerboard_style(self):

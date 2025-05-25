@@ -1,5 +1,5 @@
-from PySide6.QtGui import QPixmap, QPainter, QColor
-from PySide6.QtCore import QObject, Signal, QSize, Qt
+from PySide6.QtGui import QPixmap, QPainter, QColor, QImage
+from PySide6.QtCore import QObject, Signal, QSize, Qt, QRectF
 from typing import Optional, TYPE_CHECKING, Dict, Any
 import time # For benchmarking
 import copy # For deepcopy if needed, though direct rendering is preferred
@@ -31,6 +31,9 @@ class OutputTarget(QObject):
         if self.final_composited_pixmap.isNull():
             print(f"OutputTarget '{self.name}': Failed to create final_composited_pixmap of size {target_size}. Using 1x1.")
             self.final_composited_pixmap = QPixmap(1,1) # Fallback
+        
+        self._cached_key_matte_pixmap: Optional[QPixmap] = None
+        self._key_matte_dirty: bool = True
         self.final_composited_pixmap.fill(Qt.GlobalColor.black) # Default to black
 
     def update_slide(self, slide_data: Optional['SlideData']):
@@ -56,6 +59,7 @@ class OutputTarget(QObject):
             if needs_recomposite:
                 recomposite_start_time = time.perf_counter()
                 self._recomposite_and_emit()
+                # self._key_matte_dirty will be set in _recomposite_and_emit
                 print(f"  OutputTarget '{self.name}': _recomposite_and_emit (blanking) took: {(time.perf_counter() - recomposite_start_time):.4f}s")
             print(f"OutputTarget '{self.name}': update_slide total for BLANK took: {(time.perf_counter() - update_start_time):.4f}s")
 
@@ -173,21 +177,62 @@ class OutputTarget(QObject):
         # print(f"    OutputTarget '{self.name}': QPainter operations took: {(time.perf_counter() - painter_start_time):.4f}s")
 
         self.pixmap_updated.emit(self.final_composited_pixmap)
+        self._key_matte_dirty = True # Mark key as dirty whenever fill is updated
         # print(f"OutputTarget '{self.name}': Emitted pixmap_updated.")
 
 
     def get_current_pixmap(self) -> QPixmap:
         return self.final_composited_pixmap
 
-    def get_key_matte(self) -> Optional[QPixmap]:
-        """Generates a key matte, typically based on the content layer."""
-        if self._active_content_slide_data:
-            # render_key_matte should produce white text on black for the content
-            return self.slide_renderer.render_key_matte(
-                self._active_content_slide_data, self.target_size.width(), self.target_size.height()
-            )
-        # If no active content, key is just black
-        black_matte = QPixmap(self.target_size)
-        if black_matte.isNull(): black_matte = QPixmap(1,1) # Fallback
-        black_matte.fill(Qt.GlobalColor.black)
-        return black_matte
+    def get_key_matte(self) -> QPixmap:
+        """
+        Generates or retrieves the key matte. The key matte is derived from the
+        alpha channel of the final_composited_pixmap (the fill signal).
+        Opaque areas in fill become white in key, transparent in fill become black in key.
+        """
+        if not self._key_matte_dirty and self._cached_key_matte_pixmap is not None:
+            return self._cached_key_matte_pixmap
+
+        if self.final_composited_pixmap.isNull():
+            print(f"OutputTarget '{self.name}': final_composited_pixmap is null in get_key_matte. Returning black matte.")
+            error_matte = QPixmap(self.target_size)
+            if error_matte.isNull(): error_matte = QPixmap(1,1)
+            error_matte.fill(Qt.GlobalColor.black)
+            return error_matte
+
+        source_fill_image = self.final_composited_pixmap.toImage()
+        if source_fill_image.isNull():
+            print(f"OutputTarget '{self.name}': Failed to convert final_composited_pixmap to QImage for key matte.")
+            error_matte = QPixmap(self.target_size)
+            if error_matte.isNull(): error_matte = QPixmap(1,1)
+            error_matte.fill(Qt.GlobalColor.black)
+            return error_matte
+
+        # Ensure the image is in a format with an alpha channel we can process
+        if source_fill_image.format() != QImage.Format_ARGB32_Premultiplied and \
+           source_fill_image.format() != QImage.Format_ARGB32:
+            source_fill_image = source_fill_image.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+
+        # Convert the source image's alpha information into an alpha mask (grayscale image)
+        alpha_mask_image = source_fill_image.convertToFormat(QImage.Format_Alpha8)
+        if alpha_mask_image.isNull():
+            print(f"OutputTarget '{self.name}': Failed to convert source_fill_image to Format_Alpha8 for key matte.")
+            error_matte = QPixmap(self.target_size); error_matte.fill(Qt.GlobalColor.black); return error_matte
+
+        # Create the key matte: black background, with white elements derived from the alpha mask
+        key_matte_pixmap = QPixmap(self.target_size)
+        key_matte_pixmap.fill(Qt.GlobalColor.black)
+
+        matte_painter = QPainter(key_matte_pixmap)
+        # Create a temporary white image, apply the derived alpha mask to it
+        white_source_for_matte = QImage(self.target_size, QImage.Format_ARGB32_Premultiplied)
+        white_source_for_matte.fill(Qt.GlobalColor.white)
+        white_source_for_matte.setAlphaChannel(alpha_mask_image)
+
+        matte_painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        matte_painter.drawImage(0, 0, white_source_for_matte)
+        matte_painter.end()
+
+        self._cached_key_matte_pixmap = key_matte_pixmap
+        self._key_matte_dirty = False
+        return self._cached_key_matte_pixmap
