@@ -1486,6 +1486,8 @@ class MainWindow(QMainWindow):
         
         # File Menu
         file_menu = menu_bar.addMenu("File")
+        new_action = file_menu.addAction("New")
+        new_action.triggered.connect(self.handle_new)
         load_action = file_menu.addAction("Load")
         load_action.triggered.connect(lambda: self.handle_load(filepath=None)) # Ensure filepath is None
         save_action = file_menu.addAction("Save")
@@ -1493,8 +1495,7 @@ class MainWindow(QMainWindow):
         save_as_action = file_menu.addAction("Save As...")
         save_as_action.triggered.connect(self.handle_save_as)
         
-        new_action = file_menu.addAction("New")
-        new_action.triggered.connect(self.handle_new)
+        
         # Edit Menu
         # Removed Import submenu and ProPresenter import action
 
@@ -1513,10 +1514,8 @@ class MainWindow(QMainWindow):
         presentation_menu = menu_bar.addMenu("Presentation")
         go_live_action = presentation_menu.addAction("Go Live")
         go_live_action.triggered.connect(self.toggle_live)
-        # Renamed "Add Song" to "Add New Section"
         add_song_action = presentation_menu.addAction("Add New Section")
         add_song_action.triggered.connect(self.handle_add_new_section) # Connect to new handler
-        # Keep it disabled as in the toolbar
         presentation_menu.addSeparator() # Optional: to visually group it
         toggle_section_manager_action_presentation_menu = presentation_menu.addAction("Section Manager")
         toggle_section_manager_action_presentation_menu.setToolTip("Show/Hide the Section Manager panel")
@@ -1524,15 +1523,19 @@ class MainWindow(QMainWindow):
         add_song_action.setEnabled(True) # Enable this feature now
         add_song_action.setToolTip("Add a new song or content section to the presentation.")
 
+        # View Menu (for toggling panels)
+        view_menu = menu_bar.addMenu("View")
+        toggle_section_manager_action = view_menu.addAction("Section Manager")
+        toggle_section_manager_action.triggered.connect(self._toggle_section_manager_panel)
+
         # Settings Menu (New)
         settings_menu = menu_bar.addMenu("Settings")
         open_settings_action = settings_menu.addAction("Open Settings...")
         open_settings_action.triggered.connect(self.handle_open_settings)
 
-        # View Menu (for toggling panels)
-        view_menu = menu_bar.addMenu("View")
-        toggle_section_manager_action = view_menu.addAction("Section Manager")
-        toggle_section_manager_action.triggered.connect(self._toggle_section_manager_panel)
+        tools_menu = menu_bar.addMenu("Tools")
+        open_resource_manager_action = tools_menu.addAction("Resource Manager...")
+        open_resource_manager_action.triggered.connect(self.handle_open_resource_manager)
 
         # Developer Menu (New)
         current_prod_mode = self.config_manager.get_app_setting("production_mode", "Developer")
@@ -1551,9 +1554,7 @@ class MainWindow(QMainWindow):
             self.enable_hover_debug_action.setCheckable(True)
             # Set checked state based on whether debugger is already active
             # Tools Menu (New or existing)
-        tools_menu = menu_bar.addMenu("Tools")
-        open_resource_manager_action = tools_menu.addAction("Resource Manager...")
-        open_resource_manager_action.triggered.connect(self.handle_open_resource_manager)
+            
         self.enable_hover_debug_action.setChecked(self.hover_debugger_instance is not None)
         self.enable_hover_debug_action.toggled.connect(self._toggle_hover_debugger)
         # Add "Show Environment Variables" to the Developer menu

@@ -122,3 +122,11 @@ give better contrls over styles (kerning, different bolding veriation)
 make a program version so that if  Imove a folder or break something the version upgrader will move or change that thign
 
 remove the rtfstripper from packages
+
+
+
+
+
+Eventually redo the SDK DLL
+- Change over to ScheduleVideoFrame
+- make a static image `DeckLinkMutableVideoFrame` and a few video frame buffer for both key and fill (apparently ~3 per output)`IDeckLinkMutableVideoFrame` so that it has a static image to fall back to after video is done
