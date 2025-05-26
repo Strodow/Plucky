@@ -345,6 +345,232 @@
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="backupSharingTab">
+       <attribute name="title">
+        <string>Backup &amp; Sharing</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="backupSharingLayout">
+        <item>
+         <widget class="QLabel" name="backupStatusLabel">
+          <property name="text">
+           <string>Status: Not Configured</string>
+          </property>
+          <property name="font">
+           <font>
+            <weight>75</weight>
+            <bold>true</bold>
+           </font>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QWidget" name="unconfiguredRepoWidget" native="true">
+          <layout class="QVBoxLayout" name="unconfiguredRepoLayout">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="backupIntroLabel">
+             <property name="text">
+              <string>Configure a Git repository to enable backup and sharing of your data. This allows you to keep your data synchronized across multiple devices or restore it easily.</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+             <property name="margin">
+              <number>10</number>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="configureButtonLayout">
+             <item>
+              <spacer name="horizontalSpacer_configure_left">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>40</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+             <item>
+              <widget class="QPushButton" name="configureRepoButton">
+               <property name="text">
+                <string>Configure Repository...</string>
+               </property>
+               <property name="minimumSize">
+                <size>
+                 <width>200</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="toolTip">
+                <string>Set up or connect to a Git repository for backup and sharing.</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="horizontalSpacer_configure_right">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>40</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QWidget" name="configuredRepoWidget" native="true">
+          <!-- This widget will be hidden by default in Python code -->
+          <layout class="QVBoxLayout" name="configuredRepoLayout">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QGroupBox" name="repoDetailsGroupBox">
+             <property name="title">
+              <string>Repository Details</string>
+             </property>
+             <layout class="QHBoxLayout" name="repoDetailsLayout">
+              <item>
+               <widget class="QLabel" name="repoPathLabel">
+                <property name="text">
+                 <string>Path:</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLineEdit" name="repoPathLineEdit">
+                <property name="readOnly">
+                 <bool>true</bool>
+                </property>
+                <property name="placeholderText">
+                 <string>N/A</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="changeRepoButton">
+                <property name="text">
+                 <string>Change/Reconfigure...</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="repoActionsGroupBox">
+             <property name="title">
+              <string>Repository Actions</string>
+             </property>
+             <layout class="QHBoxLayout" name="repoActionsLayout">
+              <item>
+               <spacer name="repoActionsSpacerLeft">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeType">
+                 <enum>QSizePolicy::Expanding</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>40</width>
+                  <height>20</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item>
+               <widget class="QPushButton" name="pullRepoButton">
+                <property name="text">
+                 <string>Pull</string>
+                </property>
+                <property name="toolTip">
+                 <string>Fetch and integrate the latest changes from the remote repository.</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="pushRepoButton">
+                <property name="text">
+                 <string>Push</string>
+                </property>
+                <property name="toolTip">
+                 <string>Upload local commits to the remote repository.</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="commitRepoButton">
+                <property name="text">
+                 <string>Commit...</string>
+                </property>
+                <property name="toolTip">
+                 <string>Stage and commit local changes.</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <spacer name="verticalSpacer_backupSharing">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeType">
+           <enum>QSizePolicy::Expanding</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>20</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
     </widget>
    </item>
    <item>
