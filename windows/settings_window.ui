@@ -413,9 +413,9 @@
               </spacer>
              </item>
              <item>
-              <widget class="QPushButton" name="configureRepoButton">
+              <widget class="QPushButton" name="setupNewRepoButton"> <!-- Renamed from configureRepoButton -->
                <property name="text">
-                <string>Configure Repository...</string>
+                <string>Setup New Backup Location...</string> <!-- Changed text -->
                </property>
                <property name="minimumSize">
                 <size>
@@ -424,7 +424,7 @@
                 </size>
                </property>
                <property name="toolTip">
-                <string>Set up or connect to a Git repository for backup and sharing.</string>
+                <string>Set up a new backup location (creates a new bare Git repository).</string> <!-- Updated tooltip -->
                </property>
               </widget>
              </item>
@@ -442,6 +442,45 @@
               </spacer>
              </item>
             </layout>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="existingRepoGroupBox">
+             <property name="title">
+              <string>Or Connect to Existing Remote Repository</string>
+             </property>
+             <layout class="QFormLayout" name="existingRepoFormLayout">
+              <item row="0" column="0">
+               <widget class="QLabel" name="label_existingRepoUrl">
+                <property name="text">
+                 <string>Remote URL/Path:</string>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QLineEdit" name="existingRepoUrlLineEdit">
+                <property name="placeholderText">
+                 <string>e.g., https://github.com/user/repo.git or /path/to/remote.git</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <layout class="QHBoxLayout" name="connectExistingButtonLayout">
+                <item>
+                 <spacer name="horizontalSpacer_connect_existing_left">
+                  <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                  <property name="sizeType"><enum>QSizePolicy::Expanding</enum></property>
+                 </spacer>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="connectExistingRepoButton">
+                  <property name="text"><string>Connect</string></property>
+                  <property name="toolTip"><string>Connect to an existing Git remote repository.</string></property>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+             </layout>
+            </widget>
            </item>
           </layout>
          </widget>

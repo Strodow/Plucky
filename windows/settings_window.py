@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QComboBox, QPushButton, QApplication, QMessageBox, QGroupBox, QFileDialog, QLineEdit,
     QHBoxLayout, QInputDialog # Add QInputDialog
 )
-from PySide6.QtCore import QDir, QFileInfo, Slot, Signal
+from PySide6.QtCore import QDir, QFileInfo, Slot, Signal, Qt # Added Qt
 from PySide6.QtGui import QScreen
 from PySide6.QtUiTools import QUiLoader
 import git # Import GitPython
@@ -118,13 +118,18 @@ class SettingsWindow(QDialog):
         # Access Backup & Sharing Tab widgets
         self.backup_status_label: QLabel = self.ui.findChild(QLabel, "backupStatusLabel")
         self.unconfigured_repo_widget: QWidget = self.ui.findChild(QWidget, "unconfiguredRepoWidget")
-        self.configure_repo_button: QPushButton = self.ui.findChild(QPushButton, "configureRepoButton")
+        # Renamed in UI and here for clarity
+        self.setup_new_repo_button: QPushButton = self.ui.findChild(QPushButton, "setupNewRepoButton")
         self.configured_repo_widget: QWidget = self.ui.findChild(QWidget, "configuredRepoWidget")
         self.repo_path_line_edit: QLineEdit = self.ui.findChild(QLineEdit, "repoPathLineEdit")
         self.change_repo_button: QPushButton = self.ui.findChild(QPushButton, "changeRepoButton")
         self.pull_repo_button: QPushButton = self.ui.findChild(QPushButton, "pullRepoButton")
         self.push_repo_button: QPushButton = self.ui.findChild(QPushButton, "pushRepoButton")
         self.commit_repo_button: QPushButton = self.ui.findChild(QPushButton, "commitRepoButton")
+        # New widgets for connecting to an existing repository
+        self.existing_repo_url_line_edit: QLineEdit = self.ui.findChild(QLineEdit, "existingRepoUrlLineEdit")
+        self.connect_existing_repo_button: QPushButton = self.ui.findChild(QPushButton, "connectExistingRepoButton")
+
 
         # Set window properties
         self.setWindowTitle("Settings")
@@ -172,10 +177,12 @@ class SettingsWindow(QDialog):
             self.default_template_combo_box.currentTextChanged.connect(self._handle_default_template_changed)
 
         # Initialize Backup & Sharing Tab
-        if self.configure_repo_button:
-            self.configure_repo_button.clicked.connect(self.handle_configure_repository)
+        if self.setup_new_repo_button: # Was configure_repo_button
+            self.setup_new_repo_button.clicked.connect(self.handle_setup_new_repository) # Renamed handler
         if self.change_repo_button:
-            self.change_repo_button.clicked.connect(self.handle_configure_repository) # Can reuse
+            self.change_repo_button.clicked.connect(self.handle_setup_new_repository) # Can reuse setup new logic for reconfigure
+        if self.connect_existing_repo_button:
+            self.connect_existing_repo_button.clicked.connect(self.handle_connect_existing_repository)
         if self.pull_repo_button:
             self.pull_repo_button.clicked.connect(self.handle_pull_repository)
         if self.push_repo_button:
@@ -603,8 +610,11 @@ class SettingsWindow(QDialog):
         self.refresh_repository_status()
 
     @Slot()
-    def handle_configure_repository(self):
-        """Handles the 'Configure Repository...' or 'Change/Reconfigure...' button click."""
+    def handle_setup_new_repository(self):
+        """
+        Handles the 'Setup New Backup Location...' or 'Change/Reconfigure...' button click.
+        This involves creating/setting up a new (usually bare) remote repository.
+        """
         if not self.user_store_path or not os.path.isdir(self.user_store_path):
             QMessageBox.critical(self, "Configuration Error",
                                  "The UserStore path is not defined or invalid. Cannot configure backup.")
@@ -709,6 +719,97 @@ class SettingsWindow(QDialog):
                 # Optionally, attempt to clean up or revert UI to previous state
                 prev_repo_path = self.config_manager.get_app_setting("backup_repo_path", None) if self.config_manager else None
                 self._update_ui_for_repo_config(prev_repo_path)
+                
+    @Slot()
+    def handle_connect_existing_repository(self):
+        """Handles the 'Connect' button click for an existing remote repository."""
+        if not self.existing_repo_url_line_edit:
+            QMessageBox.critical(self, "UI Error", "Existing repository URL input field not found.")
+            return
+
+        remote_url = self.existing_repo_url_line_edit.text().strip()
+        if not remote_url:
+            QMessageBox.warning(self, "Input Required", "Please enter the remote repository URL or path.")
+            return
+
+        if not self.user_store_path or not os.path.isdir(self.user_store_path):
+            QMessageBox.critical(self, "Configuration Error",
+                                 "The UserStore path is not defined or invalid. Cannot connect to backup repository.")
+            return
+
+        try:
+            # 1. Initialize UserStore as a Git repository (if not already)
+            user_repo: git.Repo
+            try:
+                user_repo = git.Repo(self.user_store_path)
+                print(f"UserStore at {self.user_store_path} is already a Git repository.")
+            except GitExceptions.InvalidGitRepositoryError:
+                print(f"Initializing Git repository in UserStore: {self.user_store_path}")
+                user_repo = git.Repo.init(self.user_store_path)
+            except Exception as e: # Catch other potential errors like permission issues
+                QMessageBox.critical(self, "Local Repository Error", f"Failed to access or initialize local UserStore repository: {e}")
+                return
+
+            # 2. Add or Update 'origin' remote
+            origin: git.Remote | None = None
+            try:
+                origin = user_repo.remote("origin")
+                if origin.url != remote_url:
+                    reply = QMessageBox.question(self, "Confirm Remote Update",
+                                                 f"The UserStore repository already has a remote 'origin' configured:\n{origin.url}\n\nDo you want to change it to:\n{remote_url}?",
+                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if reply == QMessageBox.Yes:
+                        print(f"Updating 'origin' remote URL to {remote_url}")
+                        origin.set_url(remote_url)
+                    else:
+                        QMessageBox.information(self, "Connection Cancelled", "Connection to existing repository cancelled by user.")
+                        return
+            except ValueError: # Remote "origin" does not exist
+                print(f"Creating 'origin' remote with URL {remote_url}")
+                origin = user_repo.create_remote("origin", remote_url)
+            
+            if not origin: # Should ideally not be reached if logic above is correct
+                QMessageBox.critical(self, "Remote Configuration Error", "Failed to configure the 'origin' remote.")
+                return
+
+            # 3. Fetch from the remote to verify and get refs
+            try:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                print(f"Fetching from remote 'origin' ({remote_url})...")
+                origin.fetch()
+                print("Fetch successful.")
+            except GitExceptions.GitCommandError as e:
+                QMessageBox.critical(self, "Fetch Error",
+                                     f"Could not fetch from the remote repository '{remote_url}'.\n"
+                                     f"Error: {e.stderr}\n"
+                                     "Please check the URL/path and your network connection or authentication if applicable.")
+                return
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            # 4. If local repo has no commits yet but has content, create an initial commit.
+            if not user_repo.head.is_valid() and (user_repo.is_dirty(untracked_files=True) or any(user_repo.untracked_files)):
+                print("UserStore has uncommitted content in a repo with no commits. Creating initial commit.")
+                user_repo.git.add(A=True) # Stage all changes and untracked files
+                user_repo.index.commit("Initial commit of existing UserStore content before syncing with remote.")
+                print("Initial local commit created.")
+
+            # 5. Configuration successful, save settings
+            if self.config_manager:
+                self.config_manager.set_app_setting("backup_repo_path", self.user_store_path)
+                self.config_manager.set_app_setting("backup_repo_remote_location", remote_url)
+
+            self._update_ui_for_repo_config(self.user_store_path) # This will call refresh_repository_status
+            QMessageBox.information(self, "Connection Successful",
+                                    f"Successfully connected UserStore to remote repository:\n{remote_url}\n\n"
+                                    "Check the status for any pending pulls or pushes.")
+            if self.existing_repo_url_line_edit: self.existing_repo_url_line_edit.clear()
+
+        except GitExceptions.GitCommandError as e:
+            QMessageBox.critical(self, "Git Connection Error", f"A Git command failed during connection: {e}\nStderr: {e.stderr}")
+        except Exception as e:
+            QMessageBox.critical(self, "Connection Error", f"An unexpected error occurred while connecting: {e}")
+
 
     def refresh_repository_status(self):
         """
@@ -725,24 +826,77 @@ class SettingsWindow(QDialog):
             if not local_repo_path or not remote_location:
                 raise GitExceptions.InvalidGitRepositoryError("Local path or remote location not set.")
 
-            local_repo = git.Repo(local_repo_path)
+            try:
+                local_repo = git.Repo(local_repo_path)
+            except GitExceptions.NoSuchPathError:
+                raise GitExceptions.InvalidGitRepositoryError(f"Local repository path does not exist: {local_repo_path}")
+            except GitExceptions.InvalidGitRepositoryError:
+                 raise GitExceptions.InvalidGitRepositoryError(f"Not a valid Git repository: {local_repo_path}")
+
             if not local_repo.remotes:
                 raise GitExceptions.InvalidGitRepositoryError("No remotes configured.")
             
             origin_remote = local_repo.remote("origin")
             if not origin_remote.exists() or origin_remote.url != remote_location:
-                 raise GitExceptions.InvalidGitRepositoryError("Origin remote misconfigured or URL mismatch.")
+                raise GitExceptions.InvalidGitRepositoryError(f"Origin remote misconfigured or URL mismatch. Expected '{remote_location}', got '{origin_remote.url if origin_remote.exists() else 'N/A'}'.")
 
             print("Refreshing repository status: Fetching from origin...")
             origin_remote.fetch()
 
             has_uncommitted_changes = local_repo.is_dirty(untracked_files=True)
-            
-            active_branch_name = local_repo.active_branch.name
-            tracking_branch_name = f"origin/{active_branch_name}"
+           
+            # Initialize variables that will be determined in the try block
+            active_branch_name = None
+            commits_ahead = 0
+            commits_behind = 0
+ 
+            if not local_repo.head.is_valid(): # No commits yet
+                status_text = "Status: No commits yet."
+                status_color = "gray"
+                if has_uncommitted_changes: # Should be caught by add . in connect/setup
+                    status_text = "Status: Uncommitted changes (no commits yet)."
+                    status_color = "orange"
+                self.backup_status_label.setText(status_text)
+                self.backup_status_label.setStyleSheet(f"color: {status_color}; font-weight: bold;")
+                if self.pull_repo_button: self.pull_repo_button.setEnabled(True) # Allow pulling if remote might have content
+                if self.push_repo_button: self.push_repo_button.setEnabled(False)
+                if self.commit_repo_button: self.commit_repo_button.setEnabled(has_uncommitted_changes)
+                return
 
-            commits_ahead = len(list(local_repo.iter_commits(f"{tracking_branch_name}..HEAD")))
-            commits_behind = len(list(local_repo.iter_commits(f"HEAD..{tracking_branch_name}")))
+            try:
+                active_branch = local_repo.active_branch
+                active_branch_name = active_branch.name
+                tracking_branch = active_branch.tracking_branch()
+
+                if tracking_branch:
+                    # Ensure the tracking branch ref is valid after fetch
+                    if tracking_branch.is_valid():
+                        tracking_branch_name_for_compare = tracking_branch.name
+                        commits_ahead = len(list(local_repo.iter_commits(f"{tracking_branch_name_for_compare}..{active_branch_name}")))
+                        commits_behind = len(list(local_repo.iter_commits(f"{active_branch_name}..{tracking_branch_name_for_compare}")))
+                    else: # Tracking a remote branch that no longer exists or was never fetched properly
+                        raise GitExceptions.GitCommandError(f"Tracking branch {tracking_branch.name} is not valid.", "")
+                else: # Local branch not tracking any remote branch
+                    commits_ahead = len(list(local_repo.iter_commits(active_branch_name))) # All commits on this branch are "ahead"
+                    commits_behind = 0 # Not tracking anything, so not "behind"
+            except (GitExceptions.TypeError, GitExceptions.GitCommandError) as branch_error: # TypeError for detached HEAD, GitCommandError for unborn/other
+                print(f"Branch status error: {branch_error}")
+                # This case might indicate detached HEAD or an unborn branch if initial commit failed.
+                # If head is valid but active_branch access fails, it's likely detached HEAD.
+                if local_repo.head.is_detached:
+                    status_text = "Status: Detached HEAD"
+                    status_color = "purple"
+                    has_uncommitted_changes = local_repo.is_dirty(untracked_files=True) # Re-check for detached
+                    # For detached HEAD, pull/push are generally not standard operations without more context
+                    if self.pull_repo_button: self.pull_repo_button.setEnabled(False)
+                    if self.push_repo_button: self.push_repo_button.setEnabled(False)
+                    if self.commit_repo_button: self.commit_repo_button.setEnabled(has_uncommitted_changes)
+                    self.backup_status_label.setText(status_text)
+                    self.backup_status_label.setStyleSheet(f"color: {status_color}; font-weight: bold;")
+                    return
+                # If not detached but still error, could be complex. Fallback to general error.
+                raise GitExceptions.InvalidGitRepositoryError(f"Could not determine branch status: {branch_error}")
+
 
         except (GitExceptions.InvalidGitRepositoryError, GitExceptions.NoSuchPathError, ValueError, GitExceptions.GitCommandError) as e:
             print(f"Error accessing repository or remote: {e}")
@@ -763,13 +917,18 @@ class SettingsWindow(QDialog):
 
         status_text = "Status: Unknown"
         status_color = "black"
+        
+        active_branch_is_tracking = active_branch.tracking_branch() is not None if 'active_branch' in locals() and active_branch else False
+
 
         if has_uncommitted_changes:
             status_text = "Status: Uncommitted changes"
             status_color = "orange"
-        # After checking uncommitted changes, check relationship with remote
-        # commits_ahead means local is ahead of remote (needs push)
-        # commits_behind means remote is ahead of local (needs pull)
+        elif not active_branch_is_tracking and commits_ahead > 0 : # Local branch with commits, not tracking
+            status_text = f"Status: Branch '{active_branch_name}' has {commits_ahead} commit(s) not on remote. Push to publish."
+            status_color = "blue" # Suggests push
+        # Below assumes active_branch_is_tracking is true for these conditions
+
         elif commits_ahead > 0 and commits_behind > 0:
             status_text = f"Status: Diverged ({commits_ahead} ahead, {commits_behind} behind)"
             status_color = "purple"
@@ -779,16 +938,20 @@ class SettingsWindow(QDialog):
         elif commits_behind > 0:
             status_text = f"Status: {commits_behind} commit(s) to pull"
             status_color = "red"
-        else:
-            # No uncommitted changes, and synced with remote
+        elif active_branch_is_tracking: # No uncommitted, not ahead, not behind, and tracking
+
             status_text = "Status: Up to date"
             status_color = "green"
+        else: # No uncommitted, no commits_ahead (e.g. new repo, no commits), and not tracking
+            status_text = "Status: Ready (no local changes)" # Or "No commits yet" if that's the case
+            status_color = "gray"
 
         self.backup_status_label.setText(status_text)
         self.backup_status_label.setStyleSheet(f"color: {status_color}; font-weight: bold;")
 
         # Enable/disable buttons based on status
-        if self.pull_repo_button: self.pull_repo_button.setEnabled(True) # Always enabled if configured, or enable if commits_behind > 0
+        # Pull enabled if configured and (behind or diverged or simply to allow manual refresh)
+        if self.pull_repo_button: self.pull_repo_button.setEnabled(True) # Generally allow pull if configured
         if self.push_repo_button: self.push_repo_button.setEnabled(commits_ahead > 0)
         if self.commit_repo_button: self.commit_repo_button.setEnabled(has_uncommitted_changes)
 
