@@ -481,7 +481,7 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
         global_pos = self.slide_buttons_widget.mapToGlobal(local_pos)
         context = self._determine_insertion_context(global_pos)
         
-        context_menu = QMenu(self)
+        context_menu = QMenu(self.slide_buttons_widget) # Correct parent
         add_slide_menu = context_menu.addMenu("Add new slide from Layout")
 
         if context["target_section_id_for_slide_insert"] and context["target_arrangement_name_for_slide_insert"] is not None:
