@@ -48,3 +48,12 @@ class PresentationIO:
         except Exception as e:
             print(f"IO Error: An unexpected error occurred loading {filepath}: {e}")
             raise
+        
+    def load_manifest_data_from_file(self, filepath: str) -> Dict[str, Any]:
+        """
+        Loads manifest data from a presentation file (which is expected to be JSON).
+        This method is specifically for compatibility with ResourceTracker.
+        """
+        print(f"PresentationIO: Delegating load_manifest_data_from_file for {filepath} to load_json_file.")
+        # Assuming presentation manifest files are JSON files.
+        return self.load_json_file(filepath)

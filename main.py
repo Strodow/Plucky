@@ -27,7 +27,7 @@ if __name__ == "__main__":
 
     app_start_time = time.perf_counter()
     app = QApplication(sys.argv)
-    app.setOrganizationName("YourOrganizationName") # Replace if you have one
+    app.setOrganizationName("SwiftShot") # Replace if you have one
     app.setApplicationName("Plucky")
     app_icon_object = None # To store the QIcon object
 

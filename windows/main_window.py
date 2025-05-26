@@ -1556,7 +1556,30 @@ class MainWindow(QMainWindow):
         open_resource_manager_action.triggered.connect(self.handle_open_resource_manager)
         self.enable_hover_debug_action.setChecked(self.hover_debugger_instance is not None)
         self.enable_hover_debug_action.toggled.connect(self._toggle_hover_debugger)
+        # Add "Show Environment Variables" to the Developer menu
+        show_env_vars_action = dev_menu.addAction("Show Environment Variables")
+        show_env_vars_action.triggered.connect(self._show_environment_variables)
+
+        self.enable_hover_debug_action.setChecked(self.hover_debugger_instance is not None)
+        self.enable_hover_debug_action.toggled.connect(self._toggle_hover_debugger)
+
         return menu_bar
+    def _show_environment_variables(self):
+        """Displays system environment variables and Qt standard paths."""
+        env_vars_text = "System Environment Variables:\n"
+        for key, value in os.environ.items():
+            env_vars_text += f"{key}={value}\n"
+
+        qt_app_local_data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+        
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Environment Information")
+        msg_box.setText(f"<b>Qt AppLocalDataLocation:</b> {qt_app_local_data}\n\nSee details for all environment variables.")
+        msg_box.setDetailedText(env_vars_text)
+        msg_box.setIcon(QMessageBox.Icon.Information)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg_box.exec()
+
     #Main Window Utility (add function to clear recents)
     def _update_recent_files_menu(self):
         """Clears and repopulates the 'Recents' submenu."""

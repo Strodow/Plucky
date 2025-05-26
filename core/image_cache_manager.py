@@ -43,35 +43,37 @@ class ImageCacheManager:
                 print(f"ImageCacheManager: Error creating cache directory {self.cache_directory}: {e}")
                 # Fallback to a temporary directory or disable caching if creation fails
                 # For now, we'll proceed, and operations might fail if dir isn't writable.
+    
+    def get_base_hash_for_original_path(self, original_image_path: str) -> str:
+        """
+        Generates a base hash string from the original image path.
+        This hash is intended to identify the original source image,
+        independent of size or modification time, for comparison by ResourceTracker.
+        """
+        if not original_image_path:
+            # print("ImageCacheManager: Warning - empty original_image_path for get_base_hash.")
+            return "" # Or raise an error
+        normalized_path = os.path.normcase(os.path.abspath(original_image_path))
+        hasher = hashlib.sha256()
+        hasher.update(normalized_path.encode('utf-8'))
+        return hasher.hexdigest()
 
     def _generate_cache_filename(self, original_image_path: str, target_size: QSize) -> str:
         """
         Generates a unique filename for the cached image based on the original path and target size.
-        Uses a hash to keep filenames manageable and avoid issues with special characters in paths.
+        The filename prefix is a hash of the original path only.
+        NOTE: This version does NOT include mtime in the filename hash.
+              Cache freshness (mtime check) needs to be handled by get_cached_image_path.
         """
-        # Normalize path to handle different slashes and case sensitivity (on some systems)
-        normalized_path = os.path.normcase(os.path.abspath(original_image_path))
-        
-        # Create a string representation for hashing
-        # Include file modification time to handle cases where the original image is updated
-        try:
-            mtime = os.path.getmtime(normalized_path)
-        except OSError:
-            mtime = 0 # Fallback if file doesn't exist or mtime can't be read
+        base_path_hash = self.get_base_hash_for_original_path(original_image_path)
 
-        identifier_string = f"{normalized_path}|{target_size.width()}x{target_size.height()}|{mtime}"
-        
-        # Use SHA256 for a robust hash
-        hasher = hashlib.sha256()
-        hasher.update(identifier_string.encode('utf-8'))
-        hash_hex = hasher.hexdigest()
         
         # Keep original extension for easier identification, though not strictly necessary
         _, ext = os.path.splitext(original_image_path)
         if not ext: # Ensure there's an extension, default to .png
             ext = ".png"
             
-        return f"{hash_hex}_w{target_size.width()}_h{target_size.height()}{ext.lower()}"
+        return f"{base_path_hash}_w{target_size.width()}_h{target_size.height()}{ext.lower()}"
 
     def get_cached_image_path(self, original_image_path: str, target_size: QSize) -> Optional[str]:
         """

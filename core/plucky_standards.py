@@ -53,6 +53,14 @@ class PluckyStandards:
         return os.path.join(PluckyStandards.get_templates_dir(), "Layouts")
 
     @staticmethod
+    def get_image_cache_dir() -> str:
+        """
+        Returns the directory for storing cached image files.
+        Example: ~/Documents/Plucky/UserStore/ImageCache
+        """
+        return os.path.join(PluckyStandards.get_user_store_root(), "image_cache")
+
+    @staticmethod
     def ensure_directory_exists(path: str) -> None:
         """
         Ensures that the specified directory path exists. Creates it if it doesn't.
@@ -74,6 +82,8 @@ class PluckyStandards:
         PluckyStandards.ensure_directory_exists(PluckyStandards.get_templates_dir())
         PluckyStandards.ensure_directory_exists(PluckyStandards.get_templates_styles_dir())
         PluckyStandards.ensure_directory_exists(PluckyStandards.get_templates_layouts_dir())
+        PluckyStandards.ensure_directory_exists(PluckyStandards.get_image_cache_dir())
+
 
     @staticmethod
     def get_app_name() -> str:
