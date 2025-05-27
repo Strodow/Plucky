@@ -221,29 +221,34 @@ class PresentationManager(QObject):
 
     def set_slide_banner_color(self, slide_index: int, color: Optional[QColor], _suppress_signal: bool = False):
         """
-        DEPRECATED/REFACTOR: Operates on flat list. SlideData's banner_color is a UI concern.
-        The underlying `slide_block` in `ExampleSectionStructure.json` does not have a banner_color.
-        This might be removed or rethought. For now, marks as deprecated.
-        
-        If color is None, resets to the default color.
-        _suppress_signal: If True, presentation_changed is NOT emitted after the change.
-        """
-        # Note: _suppress_signal now controls the generic presentation_changed.
-        # We will always emit slide_visual_property_changed if not suppressed for batch operations.
-        if not 0 <= slide_index < len(self.slides):
-            # self.error_occurred.emit(f"Cannot set banner color: Index {slide_index} out of bounds.") # TODO: Refactor
-            return
-        
-        # Assuming SlideData has a 'banner_color' attribute that stores a string (like hex) or None, and it's mutable
-        # self.slides[slide_index].banner_color = color.name() if color is not None else None # TODO: Refactor
+        Sets the banner color for a slide. The color is stored in the
+        slide_block data as 'ui_banner_color'.
 
-        # self.is_dirty = True # TODO: Refactor (section specific or manifest specific)
-        if not _suppress_signal: # This controls the generic presentation_changed for single updates
-            # self.presentation_changed.emit() # TODO: Refactor
-            pass
-        else: # If part of a batch (suppressed generic), emit the specific signal for this slide
-            self.slide_visual_property_changed.emit([slide_index])
-        print("PM: set_slide_banner_color is deprecated/needs refactor.")
+        If color is None, resets to the default color.
+        _suppress_signal: If True, indicates a batch update, and update_slide_block_in_section
+                          will handle emitting slide_visual_property_changed without a full
+                          presentation_changed signal from its own _execute_command logic.
+        """
+        all_slides = self.get_slides()
+        if not (0 <= slide_index < len(all_slides)):
+            self.error_occurred.emit(f"Cannot set banner color: Index {slide_index} out of bounds.")
+            return
+
+        slide_data_instance = all_slides[slide_index]
+        section_id = slide_data_instance.section_id_in_manifest
+        block_id = slide_data_instance.slide_block_id
+
+        if section_id is None or block_id is None:
+            self.error_occurred.emit(f"Cannot set banner color: Slide at index {slide_index} has missing section or block ID.")
+            return
+
+        # Store color as hex string (e.g., "#RRGGBBAA" or "#RRGGBB")
+        color_hex = color.name(QColor.HexArgb) if color else None
+
+        # _execute_command for update_slide_block_in_section should be True for single updates (emit presentation_changed)
+        # and False for batch updates (rely on slide_visual_property_changed).
+        self.update_slide_block_in_section(section_id, block_id, {"ui_banner_color": color_hex}, _execute_command=not _suppress_signal)
+
     # Each modification should set self.is_dirty = True and emit presentation_changed
 
     def get_slides(self) -> List[SlideData]:
@@ -358,6 +363,9 @@ class PresentationManager(QObject):
                 bg_color = background_source if background_source and background_source.startswith('#') else None
                 notes = slide_block_data.get('notes')
                 is_enabled = arrangement_item.get('enabled', True)
+                
+                banner_color_hex = slide_block_data.get('ui_banner_color')
+                banner_qcolor = QColor(banner_color_hex) if banner_color_hex else None
 
                 # Determine if this slide block should be treated as a background-setter
                 is_background_setter_slide = False
@@ -396,6 +404,7 @@ class PresentationManager(QObject):
                     background_color=bg_color,
                     notes=notes,
                     is_enabled_in_arrangement=is_enabled,
+                    banner_color=banner_qcolor, # Pass the loaded banner color
                     # New fields:
                     section_id_in_manifest=section_id_in_manifest, # ID of section in manifest
                     slide_block_id=slide_id_ref,                   # ID of the slide_block in the section file                    

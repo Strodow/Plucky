@@ -139,8 +139,10 @@ class BackgroundRenderLayer(RenderLayerHandler):
                 if not source_image.isNull():
                     img_scale_start = time.perf_counter()
                     scaled_qimage = source_image # Default to original if no scaling needed
-                    if source_image.width() > target_width * 1.5 or source_image.height() > target_height * 1.5:
-                        scaled_qimage = source_image.scaled(target_width, target_height, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                    # Scale to fit within target_width, target_height, keeping aspect ratio
+                    scaled_qimage = source_image.scaled(target_width, target_height, 
+                                                        Qt.AspectRatioMode.KeepAspectRatio, # Changed from KeepAspectRatioByExpanding
+                                                        Qt.TransformationMode.SmoothTransformation)
                     time_img_scale = time.perf_counter() - img_scale_start
                     
                     img_from_image_start = time.perf_counter()
@@ -152,7 +154,16 @@ class BackgroundRenderLayer(RenderLayerHandler):
 
             if not loaded_bg_pixmap_for_drawing.isNull():
                 img_draw_start = time.perf_counter()
-                painter.drawPixmap(output_pixmap.rect(), loaded_bg_pixmap_for_drawing)
+                # Calculate position to center the aspect-ratio-preserved image
+                final_pixmap_to_draw = loaded_bg_pixmap_for_drawing # This is already scaled to fit
+                
+                x_offset = (target_width - final_pixmap_to_draw.width()) / 2
+                y_offset = (target_height - final_pixmap_to_draw.height()) / 2
+                
+                target_draw_rect = QRectF(x_offset, y_offset, 
+                                          final_pixmap_to_draw.width(), 
+                                          final_pixmap_to_draw.height())
+                painter.drawPixmap(target_draw_rect.toRect(), final_pixmap_to_draw) # Draw centered
                 time_img_draw = time.perf_counter() - img_draw_start
             else: # Failed to load or process image
                 effective_background_image_path = None # Fallback to color

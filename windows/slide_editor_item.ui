@@ -7,20 +7,22 @@
     <x>0</x>
     <y>0</y>
     <width>700</width>
-    <height>250</height> </rect>
+    <height>343</height>
+   </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+   <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
   </property>
-  <property name="minimumHeight">
-   <number>250</number> </property>
   <property name="windowTitle">
    <string>Form</string>
   </property>
   <layout class="QVBoxLayout" name="root_vertical_layout">
+   <property name="sizeConstraint">
+    <enum>QLayout::SetMinAndMaxSize</enum>
+   </property>
    <item>
     <widget class="QFrame" name="banner_content_frame">
      <property name="sizePolicy">
@@ -30,7 +32,7 @@
       </sizepolicy>
      </property>
      <property name="styleSheet">
-      <string notr="true">background-color: #e0e0e0; padding: 4px; font-weight: bold; border-bottom: 1px solid #c0c0c0;</string>
+      <string notr="true"> padding: 4px; font-weight: bold; border-bottom: 1px solid #c0c0c0;</string>
      </property>
      <property name="frameShape">
       <enum>QFrame::StyledPanel</enum>
@@ -53,14 +55,14 @@
       </property>
       <item>
        <widget class="QLabel" name="slide_name_banner_label">
+        <property name="styleSheet">
+         <string notr="true">font-weight: bold;</string>
+        </property>
         <property name="text">
          <string>Slide Name Banner</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignCenter</set>
-        </property>
-        <property name="styleSheet">
-         <string notr="true">font-weight: bold;</string>
         </property>
        </widget>
       </item>
@@ -108,215 +110,231 @@
    </item>
    <item>
     <layout class="QHBoxLayout" name="main_item_layout">
-    <item>
-    <layout class="QVBoxLayout" name="slide_template_and_preview_layout">
      <item>
-      <widget class="QComboBox" name="templates_combo_box_per_slide">
+      <layout class="QVBoxLayout" name="slide_template_and_preview_layout">
        <item>
-        <property name="text">
-         <string>Default (3 Text Boxes)</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Title Only</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>2 Text Boxes</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Image + Text</string>
-        </property>
-       </item>
-      </widget>
-     </item>
-     <item>
-      <widget class="QFrame" name="slide_preview_frame">
-       <property name="minimumSize">
-        <size>
-         <width>200</width>
-         <height>180</height>
-        </size>
-       </property>
-       <property name="maximumSize">
-        <size>
-         <width>200</width>
-         <height>180</height>
-        </size>
-       </property>
-       <property name="styleSheet">
-        <string notr="true">background-color: lightgray; border: 1px solid gray;</string>
-       </property>
-       <property name="frameShape">
-        <enum>QFrame::StyledPanel</enum>
-       </property>
-       <property name="frameShadow">
-        <enum>QFrame::Raised</enum>
-       </property>
-       <layout class="QVBoxLayout" name="gray_box_layout">
-        <item alignment="Qt::AlignCenter">
-         <widget class="QLabel" name="slide_preview_label">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
+        <widget class="QComboBox" name="templates_combo_box_per_slide">
+         <item>
           <property name="text">
-           <string>Slide Preview</string>
+           <string>Default (3 Text Boxes)</string>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
+         </item>
+         <item>
+          <property name="text">
+           <string>Title Only</string>
           </property>
-          <property name="wordWrap">
-           <bool>true</bool>
+         </item>
+         <item>
+          <property name="text">
+           <string>2 Text Boxes</string>
           </property>
-         </widget>
-        </item>
-       </layout>
-      </widget>
+         </item>
+         <item>
+          <property name="text">
+           <string>Image + Text</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="slide_preview_label">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch> <!-- Corrected: Fixed size policy should have 0 stretch -->
+          </sizepolicy>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>320</width>
+           <height>180</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">border: 1px solid gray;</string>
+         </property>
+         <property name="text">
+          <string>Slide Preview</string>
+         </property>
+         <property name="scaledContents">
+          <bool>false</bool>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="green_boxes_layout">
+       <item>
+        <layout class="QVBoxLayout" name="text_box_one_container_layout">
+         <item>
+          <widget class="QLabel" name="text_box_one_label">
+           <property name="text">
+            <string>Text Box One:</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="vertical_spacer_text_box_one">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="sizeType">
+            <enum>QSizePolicy::Fixed</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>5</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QTextEdit" name="text_box_one_edit">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>20</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true"/>
+           </property>
+           <property name="verticalScrollBarPolicy">
+            <enum>Qt::ScrollBarAlwaysOff</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="text_box_two_container_layout">
+         <item>
+          <widget class="QLabel" name="text_box_two_label">
+           <property name="text">
+            <string>Text Box Two:</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="vertical_spacer_text_box_two">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="sizeType">
+            <enum>QSizePolicy::Fixed</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>5</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QTextEdit" name="text_box_two_edit">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="styleSheet">
+            <string notr="true"/>
+           </property>
+           <property name="verticalScrollBarPolicy">
+            <enum>Qt::ScrollBarAlwaysOff</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="text_box_three_container_layout">
+         <item>
+          <widget class="QLabel" name="text_box_three_label">
+           <property name="text">
+            <string>Text Box Three:</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="vertical_spacer_text_box_three">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="sizeType">
+            <enum>QSizePolicy::Fixed</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>5</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QTextEdit" name="text_box_three_edit">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="styleSheet">
+            <string notr="true"/>
+           </property>
+           <property name="verticalScrollBarPolicy">
+            <enum>Qt::ScrollBarAlwaysOff</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <spacer name="green_boxes_bottom_spacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeType">
+          <enum>QSizePolicy::Expanding</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>0</height> <!-- Height hint for expanding spacer is often 0 or small -->
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
      </item>
     </layout>
    </item>
-   <item>
-    <layout class="QVBoxLayout" name="green_boxes_layout">
-     <item>
-      <layout class="QVBoxLayout" name="text_box_one_container_layout">
-       <item>
-        <widget class="QLabel" name="text_box_one_label">
-         <property name="text">
-          <string>Text Box One:</string>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <spacer name="vertical_spacer_text_box_one">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeType">
-          <enum>QSizePolicy::Fixed</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>5</height> <!-- Adjust height as needed -->
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item>
-        <widget class="QTextEdit" name="text_box_one_edit">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-           <horstretch>0</horstretch>
-           <verstretch>1</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="styleSheet">
-          <string notr="true">background-color: palegreen;</string>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </item>
-     <item>
-      <layout class="QVBoxLayout" name="text_box_two_container_layout">
-       <item>
-        <widget class="QLabel" name="text_box_two_label">
-         <property name="text">
-          <string>Text Box Two:</string>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <spacer name="vertical_spacer_text_box_two">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeType">
-          <enum>QSizePolicy::Fixed</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>5</height> <!-- Adjust height as needed -->
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item>
-        <widget class="QTextEdit" name="text_box_two_edit">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-           <horstretch>0</horstretch>
-           <verstretch>1</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="styleSheet">
-          <string notr="true">background-color: palegreen;</string>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </item>
-     <item>
-      <layout class="QVBoxLayout" name="text_box_three_container_layout">
-       <item>
-        <widget class="QLabel" name="text_box_three_label">
-         <property name="text">
-          <string>Text Box Three:</string>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <spacer name="vertical_spacer_text_box_three">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeType">
-          <enum>QSizePolicy::Fixed</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>5</height> <!-- Adjust height as needed -->
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item>
-        <widget class="QTextEdit" name="text_box_three_edit">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-           <horstretch>0</horstretch>
-           <verstretch>1</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="styleSheet">
-          <string notr="true">background-color: palegreen;</string>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </item>
-    </layout>
-   </item>
-  </layout>
-  </item>
   </layout>
  </widget>
  <resources/>

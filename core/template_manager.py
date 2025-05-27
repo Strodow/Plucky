@@ -25,7 +25,7 @@ DEFAULT_STYLE_PROPS: Dict[str, Any] = {
 
 DEFAULT_LAYOUT_PROPS: Dict[str, Any] = {
     "text_boxes": [
-        {"id": "main", "x_pc": 10, "y_pc": 10, "width_pc": 80, "height_pc": 80, "h_align": "center", "v_align": "center"}
+        {"id": "main", "label": "Main Text", "x_pc": 10, "y_pc": 10, "width_pc": 80, "height_pc": 80, "h_align": "center", "v_align": "center"}
     ],
     "background_color": "#000000" # Default background for the layout itself
 }
@@ -85,6 +85,11 @@ class TemplateManager(QObject):
         return list(self._template_collection.get("layouts", {}).keys())
 
     def get_layout_definition(self, name: str) -> Optional[Dict[str, Any]]:
+        layout_def = self._template_collection.get("layouts", {}).get(name)
+        return copy.deepcopy(layout_def) if layout_def else None
+
+    def get_layout_template_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a layout template definition by its name. Alias for get_layout_definition."""
         layout_def = self._template_collection.get("layouts", {}).get(name)
         return copy.deepcopy(layout_def) if layout_def else None
 
@@ -201,6 +206,7 @@ class TemplateManager(QObject):
                 "text_boxes": [
                     {
                         "id": "main_text_fallback", # Unique ID for this box
+                        "label": "Content", # Added label
                         "x_pc": 5.0, "y_pc": 5.0, "width_pc": 90.0, "height_pc": 90.0,
                         "h_align": "center", "v_align": "center",
                         "style_name": DEFAULT_STYLE_NAME # Reference the default style by name
