@@ -353,6 +353,7 @@ class MainWindow(QMainWindow):
         self.slide_ui_manager.active_slide_changed_signal.connect(self._handle_active_slide_changed_from_ui)
         self.slide_ui_manager.request_show_error_message_signal.connect(self.show_error_message)
         self.slide_ui_manager.request_set_status_message_signal.connect(self.set_status_message)
+        self.presentation_manager.section_title_changed.connect(self.slide_ui_manager.invalidate_cache_for_section) # Moved connection
 
         # Connect signals from SectionManagementPanel
         self._connect_section_management_panel_signals()

@@ -34,6 +34,7 @@ class PresentationManager(QObject):
     # Emits list of global indices of slides whose visual property changed
     slide_visual_property_changed = Signal(list) 
     presentation_changed = Signal() # Emitted when slides are loaded or significantly changed.
+    section_title_changed = Signal(str) # Emits section_id_in_manifest when a section's title is updated
     error_occurred = Signal(str) # Emitted when an error occurs.
 
     def __init__(self, template_manager: 'TemplateManager'): # Add template_manager parameter
@@ -1200,6 +1201,9 @@ class PresentationManager(QObject):
             # After successfully saving the section file, its in-memory state matches the disk.
             # So, for this specific section file, it's no longer "dirty".
             section_wrapper["is_dirty"] = False
+
+            # Emit signal that this section's title (metadata for its slides) has changed
+            self.section_title_changed.emit(section_id_in_manifest)
 
             self.presentation_changed.emit() # Notify UI to refresh (will rebuild SlideData objects with new title)
             print(f"PresentationManager: Section '{section_id_in_manifest}' title updated to '{new_title}' and saved to '{section_resolved_filepath}'.")
