@@ -170,7 +170,10 @@ class OutputTarget(QObject):
     def _recomposite_and_emit(self):
         """Composites the cached background and content pixmaps."""
         # print(f"OutputTarget '{self.name}': Recompositing...")
-        self.final_composited_pixmap.fill(Qt.GlobalColor.black) # Start fresh with black (or a default bg color)
+        # Start fresh with transparent. This ensures that if no opaque background is drawn,
+        # the transparency of the content layer is preserved in the final_composited_pixmap,
+        # allowing the key to be correctly derived from its alpha channel.
+        self.final_composited_pixmap.fill(Qt.GlobalColor.transparent)
         painter_start_time = time.perf_counter()
         painter = QPainter(self.final_composited_pixmap)
 
