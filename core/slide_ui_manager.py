@@ -46,6 +46,9 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
     request_show_error_message_signal = Signal(str)
     request_set_status_message_signal = Signal(str, int)
     request_open_section_editor = Signal(str) # section_id_in_manifest
+    
+    # New signal for requesting a section rename dialog
+    request_rename_section_dialog = Signal(str) # Emits section_id
 
     def __init__(self,
                  presentation_manager: PresentationManager,
@@ -162,10 +165,17 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
             if current_title != last_processed_title:
                 last_processed_title = current_title
                 if current_title is not None:
-                    song_header = SongHeaderWidget(current_title, current_button_width=current_dynamic_preview_width)
-                    song_header.edit_section_requested.connect(self._handle_edit_section_request_from_header) # New connection
-                    # The existing edit_song_requested signal from SongHeaderWidget is for title editing, usually handled by MainWindow directly.
-                    # song_header.edit_song_requested.connect(self.parent_main_window.handle_edit_song_title_requested)
+                    # Ensure we have a section_id for this header.
+                    # All slides from the same section share the same section_id_in_manifest.
+                    # We can get it from the current slide_data.
+                    section_id_for_header = slide_data.section_id_in_manifest
+                    if not section_id_for_header:
+                        print(f"SlideUIManager: Warning - Slide '{slide_data.id}' (title: {current_title}) is missing section_id_in_manifest. Cannot create fully functional header.")
+                        # Fallback or skip header if section_id is crucial for its functionality
+                    
+                    song_header = SongHeaderWidget(title=current_title, section_id=section_id_for_header, current_button_width=current_dynamic_preview_width)
+                    song_header.edit_title_requested.connect(self.request_rename_section_dialog) # Connect to rename dialog signal
+                    song_header.edit_properties_requested.connect(self.request_open_section_editor) # Connect to open full editor signal
                     self.slide_buttons_layout.addWidget(song_header)
 
                 song_slides_container = QWidget()
@@ -587,22 +597,6 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
                 invalidated_count += 1
         print(f"SlideUIManager: Invalidated {invalidated_count} cached previews for section '{section_id_to_invalidate}'.")
 
-    @Slot(str)
-    def _handle_edit_section_request_from_header(self, song_title: str):
-        """
-        Handles the request to edit a section, triggered from a SongHeaderWidget.
-        Finds the section_id_in_manifest associated with this song_title and emits
-        a signal for MainWindow to open the editor.
-        """
-        if not song_title:
-            return
-
-        all_slides = self.presentation_manager.get_slides()
-        for slide_data in all_slides:
-            if slide_data.song_title == song_title and slide_data.section_id_in_manifest:
-                self.request_open_section_editor.emit(slide_data.section_id_in_manifest)
-                return # Found the section, emitted signal
-        print(f"SlideUIManager: Could not find section_id_in_manifest for song title '{song_title}' to edit.")
 
     # --- Methods for ScaledSlideButton context menu actions (called from MainWindow) ---
     # These are slightly different from the panel background context menu actions

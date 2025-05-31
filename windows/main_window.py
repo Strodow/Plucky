@@ -344,6 +344,7 @@ class MainWindow(QMainWindow):
         self.edit_template_button.clicked.connect(self.handle_edit_template) # Connect Edit Templates button
         self.undo_button.clicked.connect(self.handle_undo) # New
         self.slide_ui_manager.request_open_section_editor.connect(self._open_section_editor_window) # New connection
+        self.slide_ui_manager.request_rename_section_dialog.connect(self.handle_rename_section_dialog) # New connection
         self.redo_button.clicked.connect(self.handle_redo) # New
         self.preview_size_spinbox.valueChanged.connect(self.handle_preview_size_change) # Connect spinbox signal
         self.decklink_output_toggle_button.clicked.connect(self.toggle_decklink_output_stream) # New connection
@@ -2107,3 +2108,38 @@ class MainWindow(QMainWindow):
         # The PresentationManager's data for this section was updated directly by the editor.
         # We just need to tell SlideUIManager to rebuild its view based on PM's current state.
         self.slide_ui_manager.refresh_slide_display()
+
+    @Slot(str)
+    def handle_rename_section_dialog(self, section_id_in_manifest: str):
+        """Handles the request to rename a section via a dialog."""
+        if not section_id_in_manifest or section_id_in_manifest not in self.presentation_manager.loaded_sections:
+            self.show_error_message(f"Cannot rename section: ID '{section_id_in_manifest}' not found or not loaded.")
+            return
+
+        section_wrapper = self.presentation_manager.loaded_sections.get(section_id_in_manifest)
+        if not section_wrapper: # Should be caught by above, but defensive
+            self.show_error_message(f"Internal error: Section wrapper not found for ID '{section_id_in_manifest}'.")
+            return
+        
+        current_title = section_wrapper.get("section_content_data", {}).get("title", "")
+
+        new_title, ok = QInputDialog.getText(
+            self,
+            "Rename Section",
+            f"Enter new title for section (current: \"{current_title}\"):",
+            text=current_title
+        )
+
+        if ok and new_title.strip():
+            cleaned_new_title = new_title.strip()
+            if cleaned_new_title != current_title:
+                # This method needs to be implemented in PresentationManager
+                success = self.presentation_manager.update_section_title(section_id_in_manifest, cleaned_new_title)
+                if success:
+                    self.set_status_message(f"Section '{current_title}' renamed to '{cleaned_new_title}'.", 3000)
+                    # PresentationManager.update_section_title should emit presentation_changed
+                    # which will trigger SlideUIManager.refresh_slide_display
+                else:
+                    self.show_error_message(f"Failed to rename section '{current_title}'.")
+        elif ok and not new_title.strip():
+            QMessageBox.warning(self, "Empty Title", "Section title cannot be empty.")

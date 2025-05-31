@@ -1152,3 +1152,61 @@ class PresentationManager(QObject):
         print(f"PM: Updated manifest section order based on drag-and-drop. New order has {len(reordered_manifest_sections)} sections.")
         return True
         return True # Placeholder
+
+    def update_section_title(self, section_id_in_manifest: str, new_title: str) -> bool:
+        """
+        Updates the title of a section in its file and in the loaded_sections cache.
+        Emits presentation_changed signal on success.
+        """
+        if not section_id_in_manifest or section_id_in_manifest not in self.loaded_sections:
+            self.error_occurred.emit(f"Cannot update title: Section ID '{section_id_in_manifest}' not found in loaded_sections.")
+            print(f"PM: Error - Section ID '{section_id_in_manifest}' not found in loaded_sections for title update.")
+            return False
+
+        section_wrapper = self.loaded_sections.get(section_id_in_manifest)
+        if not section_wrapper: # Should be caught by above, but defensive
+            self.error_occurred.emit(f"Internal error: Section wrapper missing for ID '{section_id_in_manifest}'.")
+            print(f"PM: Error - Section wrapper missing for ID '{section_id_in_manifest}' for title update.")
+            return False
+
+        # The 'resolved_filepath' stored in the wrapper is the absolute path to the section file.
+        section_resolved_filepath = section_wrapper.get("resolved_filepath")
+        if not section_resolved_filepath:
+            self.error_occurred.emit(f"Cannot update title: Section file path missing for ID '{section_id_in_manifest}'.")
+            print(f"PM: Error - Section file path missing for ID '{section_id_in_manifest}' for title update.")
+            return False
+
+        try:
+            # Load the full section data from its file using the resolved absolute path
+            section_content_data = self.io_handler.load_json_file(section_resolved_filepath)
+            if not section_content_data or not isinstance(section_content_data, dict):
+                self.error_occurred.emit(f"Failed to load or parse section file '{os.path.basename(section_resolved_filepath)}' for title update.")
+                return False
+
+            section_content_data["title"] = new_title # Update the title in the loaded data
+            print(f"DEBUG_PM: Attempting to save section file: {section_resolved_filepath}")
+
+            # Save the modified section file
+            io_save_successful = self.io_handler.save_json_file(section_content_data, section_resolved_filepath)
+            print(f"DEBUG_PM: io_handler.save_json_file returned: {io_save_successful} for {os.path.basename(section_resolved_filepath)}")
+
+            if not io_save_successful:
+                self.error_occurred.emit(f"Failed to save updated section file '{os.path.basename(section_resolved_filepath)}'.")
+                print(f"DEBUG_PM: update_section_title returning False because io_handler.save_json_file returned False.")
+                return False
+
+            # Update the title in the in-memory cache (loaded_sections)
+            section_wrapper["section_content_data"]["title"] = new_title
+            # After successfully saving the section file, its in-memory state matches the disk.
+            # So, for this specific section file, it's no longer "dirty".
+            section_wrapper["is_dirty"] = False
+
+            self.presentation_changed.emit() # Notify UI to refresh (will rebuild SlideData objects with new title)
+            print(f"PresentationManager: Section '{section_id_in_manifest}' title updated to '{new_title}' and saved to '{section_resolved_filepath}'.")
+            print(f"DEBUG_PM: update_section_title returning True.")
+            return True
+        except Exception as e:
+            self.error_occurred.emit(f"Error updating section title for '{section_id_in_manifest}': {e}")
+            print(f"PM: Exception during section title update for '{section_id_in_manifest}': {e}")
+            print(f"DEBUG_PM: update_section_title returning False due to an exception during the process.")
+            return False

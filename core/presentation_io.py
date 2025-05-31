@@ -8,9 +8,10 @@ class PresentationIO:
     Handles generic JSON serialization and deserialization for presentation manifest
     and section files.
     """
-    def save_json_file(self, data: Dict[str, Any], filepath: str) -> None:
+    def save_json_file(self, data: Dict[str, Any], filepath: str) -> bool:
         """
         Saves dictionary data to a JSON file.
+        Returns True on success, False on failure.
         """
         try:
             # Ensure the directory exists
@@ -21,12 +22,15 @@ class PresentationIO:
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4) # Use indent for readability
             print(f"IO Success: Saved JSON data to {filepath}")
+            return True # Indicate success
         except IOError as e: # More specific exception for file I/O issues
             print(f"IO Error: Could not write JSON to {filepath}: {e}")
-            raise # Re-raise for the caller to handle (e.g., PresentationManager or MainWindow)
+            # raise # Re-raise for the caller to handle (e.g., PresentationManager or MainWindow)
+            return False # Indicate failure
         except Exception as e:
             print(f"IO Error: An unexpected error occurred saving JSON to {filepath}: {e}")
-            raise
+            # raise
+            return False # Indicate failure
 
     def load_json_file(self, filepath: str) -> Dict[str, Any]: # Return type is now Dict
         """

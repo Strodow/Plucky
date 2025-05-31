@@ -6,10 +6,12 @@ from PySide6.QtGui import QFont, QPalette, QContextMenuEvent
 BASE_BUTTON_WIDTH = 160
 
 class SongHeaderWidget(QFrame): # Inherit from QFrame
-    # Signal to emit the current title of the song when edit is requested
-    edit_song_requested = Signal(str) # Define as a class attribute
-    edit_section_requested = Signal(str) # New signal for editing the whole section
-    def __init__(self, title: str, current_button_width: int = BASE_BUTTON_WIDTH, parent=None):
+    # Signal to emit the section_id when title edit is requested
+    edit_title_requested = Signal(str) # Emits section_id
+    # Signal to emit the section_id when full section properties edit is requested
+    edit_properties_requested = Signal(str) # Emits section_id
+
+    def __init__(self, title: str, section_id: str, current_button_width: int = BASE_BUTTON_WIDTH, parent=None):
         super().__init__(parent)
         self._current_button_width = current_button_width
         self.setAutoFillBackground(True) # Ensure the widget paints its background
@@ -18,6 +20,7 @@ class SongHeaderWidget(QFrame): # Inherit from QFrame
         self.setFrameShape(QFrame.Shape.StyledPanel) # This helps with styling
         self.setFrameShadow(QFrame.Shadow.Plain)
 
+        self.section_id = section_id
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(10, 5, 10, 5) # Left, Top, Right, Bottom
         self.main_layout.setSpacing(10)
@@ -81,6 +84,8 @@ class SongHeaderWidget(QFrame): # Inherit from QFrame
         action_selected = menu.exec(event.globalPos())
 
         if action_selected == edit_song_action:
-            self.edit_song_requested.emit(self.title_label.text())
+            print(f"DEBUG: Emitting edit_title_requested for section_id: {self.section_id}") # Diagnostic
+            self.edit_title_requested.emit(self.section_id)
         elif action_selected == edit_this_section_action:
-            self.edit_section_requested.emit(self.title_label.text())
+            print(f"DEBUG: Emitting edit_properties_requested for section_id: {self.section_id}") # Diagnostic
+            self.edit_properties_requested.emit(self.section_id)
