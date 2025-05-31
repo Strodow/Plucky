@@ -1,5 +1,6 @@
 import sys
 import os
+import re # For metadata placeholder replacement
 import logging
 import time # For benchmarking
 from PySide6.QtWidgets import QApplication # Needed for testing QPixmap/QPainter
@@ -33,7 +34,13 @@ class RenderLayerHandler(ABC):
         self.app_settings = app_settings
 
     @abstractmethod
-    def render(self, current_pixmap: QPixmap, slide_data: SlideData, target_width: int, target_height: int, is_final_output: bool) -> Tuple[QPixmap, bool, Dict[str, float]]:
+    def render(self,
+               current_pixmap: QPixmap,
+               slide_data: SlideData,
+               target_width: int, target_height: int,
+               is_final_output: bool,
+               section_metadata: Optional[List[Dict[str, str]]] = None,
+               section_title: Optional[str] = None) -> Tuple[QPixmap, bool, Dict[str, float]]:
         """
         Renders this layer's content onto/into the current_pixmap.
         
@@ -43,6 +50,8 @@ class RenderLayerHandler(ABC):
             target_width: The target width of the output.
             target_height: The target height of the output.
             is_final_output: True if for live output, False for previews.
+            section_metadata: Optional list of metadata dicts for placeholder replacement.
+            section_title: Optional title of the section.
 
         Returns:
             A tuple: (output_pixmap, font_error_occurred_in_this_layer, benchmark_data_for_this_layer)
@@ -79,7 +88,13 @@ class BackgroundRenderLayer(RenderLayerHandler):
                 painter.fillRect(x_start, y_start, cell_width, cell_height, current_color)
         painter.restore()
 
-    def render(self, current_pixmap: QPixmap, slide_data: SlideData, target_width: int, target_height: int, is_final_output: bool) -> Tuple[QPixmap, bool, Dict[str, float]]:
+    def render(self,
+               current_pixmap: QPixmap,
+               slide_data: SlideData,
+               target_width: int, target_height: int,
+               is_final_output: bool,
+               section_metadata: Optional[List[Dict[str, str]]] = None,
+               section_title: Optional[str] = None) -> Tuple[QPixmap, bool, Dict[str, float]]:
         start_time = time.perf_counter()
         # This layer draws the slide's own background onto the current_pixmap.
         # If current_pixmap was a base (e.g., live background), this draws over it.
@@ -194,7 +209,44 @@ class BackgroundRenderLayer(RenderLayerHandler):
         return output_pixmap, False, benchmarks
 
 class TextContentRenderLayer(RenderLayerHandler):
-    def render(self, current_pixmap: QPixmap, slide_data: SlideData, target_width: int, target_height: int, is_final_output: bool) -> Tuple[QPixmap, bool, Dict[str, float]]:
+
+    def _resolve_text_with_metadata(self, text: str, metadata_list: Optional[List[Dict[str, str]]], section_title: Optional[str]) -> str:
+        if (not metadata_list and not section_title) or not text or not isinstance(text, str):
+            return text
+
+        metadata_map = {}
+        # User-defined metadata (can be overridden by section_title if keys clash)
+        for item in reversed(metadata_list): # Last definition of a key wins
+            key = item.get('key')
+            value = item.get('value')
+            if isinstance(key, str) and isinstance(value, str):
+                 if key not in metadata_map:
+                    metadata_map[key] = value
+            elif isinstance(key, str) and value is None: # Handle None values as empty strings
+                 if key not in metadata_map:
+                    metadata_map[key] = ""
+        # Add section title with a predefined key (e.g., "SectionTitle")
+        if section_title:
+            metadata_map["SectionTitle"] = section_title # You can choose a different key like "SongTitle"
+
+
+        if not metadata_map: # No valid metadata to process
+            return text
+
+        def replace_match(match):
+            key = match.group(1)
+            return metadata_map.get(key, match.group(0)) # Return original placeholder if key not found
+
+        try:
+            resolved_text = re.sub(r"\{\{([\w_]+)\}\}", replace_match, text)
+        except Exception as e:
+            logging.error(f"Error during regex substitution for metadata: {e}")
+            return text # Return original text on error
+        return resolved_text
+
+    def render(self, current_pixmap: QPixmap, slide_data: SlideData, target_width: int, target_height: int,
+               is_final_output: bool, section_metadata: Optional[List[Dict[str, str]]] = None,
+               section_title: Optional[str] = None) -> Tuple[QPixmap, bool, Dict[str, float]]:
         start_time = time.perf_counter()
         output_pixmap = current_pixmap.copy()
         painter = QPainter(output_pixmap)
@@ -218,6 +270,10 @@ class TextContentRenderLayer(RenderLayerHandler):
         for tb_props in defined_text_boxes:
             tb_id = tb_props.get("id", "unknown_box")
             text_to_draw = slide_text_content_map.get(tb_id, "")
+
+            # Resolve metadata placeholders
+            text_to_draw = self._resolve_text_with_metadata(text_to_draw, section_metadata, section_title)
+
             if not text_to_draw.strip(): continue
 
             font_setup_start_time = time.perf_counter()
@@ -304,7 +360,14 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
             # Future layers can be added here
         ]
 
-    def render_slide(self, slide_data: SlideData, width: int, height: int, base_pixmap: QPixmap = None, is_final_output: bool = False) -> tuple[QPixmap, bool, dict]:
+    def render_slide(self,
+                     slide_data: SlideData,
+                     width: int, height: int,
+                     base_pixmap: Optional[QPixmap] = None, # Made Optional explicit
+                     is_final_output: bool = False,
+                     section_metadata: Optional[List[Dict[str, str]]] = None,
+                     section_title: Optional[str] = None) -> tuple[QPixmap, bool, dict]:
+
         """
         Renders the given slide data onto a QPixmap of the specified dimensions.
 
@@ -316,6 +379,8 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
                          The current slide's content will be rendered on top of it.
             is_final_output: bool. True if this render is for the live output window,
                                   False for previews (e.g., slide buttons).
+            section_metadata: Optional list of metadata dicts for placeholder replacement.
+            section_title: Optional title of the section.
 
         Returns:
             A tuple containing:
@@ -368,7 +433,7 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
 
         for layer_handler in self.render_layers:
             layer_output_pixmap, layer_font_error, layer_benchmarks = layer_handler.render(
-                current_canvas, slide_data, width, height, is_final_output
+                current_canvas, slide_data, width, height, is_final_output, section_metadata, section_title
             )
             current_canvas = layer_output_pixmap # Output of one layer is input to next
             
@@ -388,7 +453,12 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
         benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
         return current_canvas, overall_font_error, benchmark_data
 
-    def render_key_matte(self, slide_data: SlideData, width: int, height: int) -> QPixmap:
+    def render_key_matte(self,
+                         slide_data: SlideData,
+                         width: int, height: int,
+                         section_metadata: Optional[List[Dict[str, str]]] = None,
+                         section_title: Optional[str] = None) -> QPixmap:
+
         """
         Renders a key matte for the given slide data.
         The matte will have a black background, with all text elements
@@ -398,6 +468,8 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
             slide_data: An instance of SlideData containing the content and style.
             width: The target width of the output pixmap (e.g., DeckLink width).
             height: The target height of the output pixmap (e.g., DeckLink height).
+            section_metadata: Optional list of metadata dicts for placeholder replacement.
+            section_title: Optional title of the section.
 
         Returns:
             A QPixmap representing the key matte.
@@ -442,6 +514,12 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
         for tb_props in defined_text_boxes:
             tb_id = tb_props.get("id", "unknown_box_key")
             text_to_draw = slide_text_content_map.get(tb_id, "")
+
+            # Resolve metadata placeholders for key matte text as well
+            # Assuming TextContentRenderLayer is the one that has _resolve_text_with_metadata
+            # We need an instance of it or to move the helper to LayeredSlideRenderer
+            text_to_draw = self._get_text_content_render_layer()._resolve_text_with_metadata(text_to_draw, section_metadata, section_title)
+
 
             if not text_to_draw.strip():
                 continue
@@ -611,6 +689,13 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
     # _draw_checkerboard_pattern() -> BackgroundRenderLayer
     # _render_background() -> BackgroundRenderLayer (its logic is integrated into BackgroundRenderLayer.render)
     # _get_text_options_from_props() -> TextContentRenderLayer (or used internally by it)
+
+    def _get_text_content_render_layer(self) -> Optional[TextContentRenderLayer]:
+        """Helper to find the TextContentRenderLayer instance."""
+        for layer in self.render_layers:
+            if isinstance(layer, TextContentRenderLayer):
+                return layer
+        return None
 
 
 if __name__ == "__main__":

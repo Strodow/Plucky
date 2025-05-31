@@ -243,7 +243,10 @@ class PresentationManager(QObject):
             return
 
         # Store color as hex string (e.g., "#RRGGBBAA" or "#RRGGBB")
-        color_hex = color.name(QColor.HexArgb) if color else None
+        # If color is provided but invalid (e.g. default QColor()), treat as None
+        color_hex = None
+        if color and color.isValid():
+            color_hex = color.name(QColor.HexArgb)
 
         # _execute_command for update_slide_block_in_section should be True for single updates (emit presentation_changed)
         # and False for batch updates (rely on slide_visual_property_changed).
@@ -908,14 +911,13 @@ class PresentationManager(QObject):
         if affected_global_indices:
             print(f"PM: Emitting slide_visual_property_changed for indices: {affected_global_indices} (update_slide_block)")
             self.slide_visual_property_changed.emit(affected_global_indices)
-        elif _execute_command: 
-            # This fallback to generic presentation_changed should only happen if _execute_command is True
-            # (i.e., not called from a command that expects specific signals) AND no specific indices were found.
-            # This might occur if the updated fields don't directly map to visible instances or if it's a non-visual data change.
-            print(f"PM: Block '{slide_block_id}' updated, but no specific instances found or not a visual change handled by specific signal. Emitting full refresh due to _execute_command=True.")
+        
+        # If _execute_command is true, it means this change was a direct modification
+        # that should update the overall presentation state (like dirty status).
+        if _execute_command:
+            self.presentation_manifest_is_dirty = self.is_overall_dirty() # Ensure top-level dirty flag reflects section changes
+            print(f"PM: update_slide_block_in_section with _execute_command=True. Emitting presentation_changed. Overall dirty: {self.presentation_manifest_is_dirty}")
             self.presentation_changed.emit()
-
-        # self.get_slides() # This was called above to find affected_global_indices, no need to call again.
         return True
 
     def delete_slide_reference_from_arrangement(self, instance_slide_id: str, _execute_command: bool = True) -> Optional[tuple[Dict[str, Any], int, str, str]]:

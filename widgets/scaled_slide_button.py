@@ -148,7 +148,6 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         if self._is_arrangement_enabled != is_enabled:
             self._is_arrangement_enabled = is_enabled
             self.update() # Trigger a repaint to reflect the change
-        self.update()
 
     def set_banner_color(self, color: Optional[QColor]):
         """Sets a custom color for the banner widget."""

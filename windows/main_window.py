@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
         self.current_live_background_pixmap: QPixmap | None = None
         self.current_background_slide_id: Optional[str] = None # ID of the active background slide
         self.main_output_target: Optional[OutputTarget] = None
+        self._open_editor_windows = [] # To keep references to open editor windows
         self.decklink_output_target: Optional[OutputTarget] = None
 
 
@@ -342,6 +343,7 @@ class MainWindow(QMainWindow):
         # Connections for load, save, save_as, add_song are now handled by menu actions
         self.edit_template_button.clicked.connect(self.handle_edit_template) # Connect Edit Templates button
         self.undo_button.clicked.connect(self.handle_undo) # New
+        self.slide_ui_manager.request_open_section_editor.connect(self._open_section_editor_window) # New connection
         self.redo_button.clicked.connect(self.handle_redo) # New
         self.preview_size_spinbox.valueChanged.connect(self.handle_preview_size_change) # Connect spinbox signal
         self.decklink_output_toggle_button.clicked.connect(self.toggle_decklink_output_stream) # New connection
@@ -1257,17 +1259,38 @@ class MainWindow(QMainWindow):
         # The OutputTarget's update_slide will handle its own logic.
         # The main_output_target's pixmap_updated is connected to output_window.set_pixmap,
         # so if output_window is hidden, set_pixmap might do nothing or be optimized by Qt.
+        
+        current_section_metadata: Optional[List[Dict[str, str]]] = None
+        current_section_title: Optional[str] = None
+
+        if slide_data_to_display and slide_data_to_display.section_id_in_manifest:
+            section_id = slide_data_to_display.section_id_in_manifest
+            if self.presentation_manager and section_id in self.presentation_manager.loaded_sections:
+                section_wrapper = self.presentation_manager.loaded_sections[section_id]
+                section_content_data = section_wrapper.get("section_content_data", {})
+                current_section_metadata = section_content_data.get("metadata", [])
+                current_section_title = section_content_data.get("title")
+            else:
+                print(f"MainWindow: Warning - Section ID '{section_id}' for slide not found in loaded_sections.")
 
         print(f"MainWindow: _display_slide called for index {index}, slide_id: {slide_data_to_display.id if slide_data_to_display else 'None'}")
 
         # Update Main Output Target (if it exists and its window is visible)
         if self.main_output_target and self.output_window.isVisible():
-            self.main_output_target.update_slide(slide_data_to_display)
+            self.main_output_target.update_slide(
+                slide_data_to_display,
+                section_metadata=current_section_metadata,
+                section_title=current_section_title
+            )
             # Its pixmap_updated signal will call self.output_window.set_pixmap
 
         # Update DeckLink Output Target (if it exists and DeckLink is active)
         if self.decklink_output_target and self.is_decklink_output_active:
-            self.decklink_output_target.update_slide(slide_data_to_display)
+            self.decklink_output_target.update_slide(
+                slide_data_to_display,
+                section_metadata=current_section_metadata,
+                section_title=current_section_title
+            )
             # Its pixmap_updated signal will call self._handle_decklink_target_update
 
         # Update MainWindow's internal tracking of the "persistent" background
@@ -1286,7 +1309,11 @@ class MainWindow(QMainWindow):
             
             # Render standalone to get the background pixmap
             bg_pixmap, _, _ = self.slide_renderer.render_slide(
-                slide_data_to_display, width, height, base_pixmap=None, is_final_output=True
+                slide_data_to_display, width, height,
+                base_pixmap=None,
+                is_final_output=True,
+                section_metadata=current_section_metadata, # Pass metadata here too if background slide can use it
+                section_title=current_section_title      # Pass title here too
             )
             self.current_live_background_pixmap = bg_pixmap.copy() if bg_pixmap and not bg_pixmap.isNull() else None
             self.current_background_slide_id = slide_data_to_display.id
@@ -1297,11 +1324,11 @@ class MainWindow(QMainWindow):
         print("MainWindow: _show_blank_on_output called.")
         # Update Main Output Target to blank
         if self.main_output_target and self.output_window.isVisible():
-            self.main_output_target.update_slide(None)
+            self.main_output_target.update_slide(None, section_metadata=None, section_title=None)
 
         # Update DeckLink Output Target to blank
         if self.decklink_output_target and self.is_decklink_output_active:
-            self.decklink_output_target.update_slide(None)
+            self.decklink_output_target.update_slide(None, section_metadata=None, section_title=None)
 
         # Clear MainWindow's internal persistent background tracking
         self.current_live_background_pixmap = None
@@ -2048,3 +2075,35 @@ class MainWindow(QMainWindow):
         if full_filepath and section_filename:
             num_current_sections = len(self.presentation_manager.presentation_manifest_data.get("sections", [])) if self.presentation_manager.presentation_manifest_data else 0
             self.presentation_manager.add_section_to_presentation(section_filename, num_current_sections, desired_arrangement_name="Default")
+
+    @Slot(str)
+    def _open_section_editor_window(self, section_id_in_manifest: str):
+        """Opens the MainEditorWindow for the specified section."""
+        if not section_id_in_manifest or section_id_in_manifest not in self.presentation_manager.loaded_sections:
+            self.show_error_message(f"Cannot open editor: Section ID '{section_id_in_manifest}' not found or not loaded.")
+            return
+
+        # Import MainEditorWindow here to avoid circular dependency at module level if not already handled
+        from windows.main_editor_window import MainEditorWindow, _open_editor_windows as global_editor_windows_ref
+
+        editor_window = MainEditorWindow(
+            presentation_manager_ref=self.presentation_manager,
+            section_id_to_edit=section_id_in_manifest,
+            parent=self # Optional: set MainWindow as parent
+        )
+        editor_window.section_content_saved.connect(self._handle_section_content_saved_in_editor)
+        global_editor_windows_ref.append(editor_window) # Keep a reference
+        editor_window.show()
+        
+    @Slot(str)
+    def _handle_section_content_saved_in_editor(self, section_id: str):
+        """
+        Called when a MainEditorWindow signals that it has saved content for a section.
+        Refreshes the main UI to reflect potential changes.
+        """
+        print(f"MainWindow: Section '{section_id}' was saved in its editor. Refreshing main UI.")
+        # Invalidate the preview cache for this section in SlideUIManager
+        self.slide_ui_manager.invalidate_cache_for_section(section_id)
+        # The PresentationManager's data for this section was updated directly by the editor.
+        # We just need to tell SlideUIManager to rebuild its view based on PM's current state.
+        self.slide_ui_manager.refresh_slide_display()

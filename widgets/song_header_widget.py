@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QMenu
 from PySide6.QtCore import Qt, QSize, Signal
-from PySide6.QtGui import QFont, QPalette
+from PySide6.QtGui import QFont, QPalette, QContextMenuEvent
 
 # This will be the base width for calculations.
 BASE_BUTTON_WIDTH = 160
@@ -8,6 +8,7 @@ BASE_BUTTON_WIDTH = 160
 class SongHeaderWidget(QFrame): # Inherit from QFrame
     # Signal to emit the current title of the song when edit is requested
     edit_song_requested = Signal(str) # Define as a class attribute
+    edit_section_requested = Signal(str) # New signal for editing the whole section
     def __init__(self, title: str, current_button_width: int = BASE_BUTTON_WIDTH, parent=None):
         super().__init__(parent)
         self._current_button_width = current_button_width
@@ -70,11 +71,16 @@ class SongHeaderWidget(QFrame): # Inherit from QFrame
         menu = QMenu(self)
         
         edit_song_action = menu.addAction(f"Edit Song Title: \"{self.title_label.text()}\"")
+        menu.addSeparator()
+        edit_this_section_action = menu.addAction(f"Edit Section: \"{self.title_label.text()}\"")
         # Add more song-level actions here in the future if needed
         # menu.addSeparator()
         # delete_song_action = menu.addAction("Delete Entire Song")
 
-        action = menu.exec(event.globalPos())
+        # Show the menu once with all actions added
+        action_selected = menu.exec(event.globalPos())
 
-        if action == edit_song_action:
+        if action_selected == edit_song_action:
             self.edit_song_requested.emit(self.title_label.text())
+        elif action_selected == edit_this_section_action:
+            self.edit_section_requested.emit(self.title_label.text())

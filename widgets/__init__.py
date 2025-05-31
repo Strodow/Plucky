@@ -1,2 +1,1 @@
-# Makes 'widgets' a Python package
-pass
+# This file makes the 'widgets' directory a Python package.

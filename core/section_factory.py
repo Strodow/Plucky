@@ -33,9 +33,7 @@ class SectionFactory:
             "version": SectionFactory.DEFAULT_SECTION_VERSION,
             "id": section_file_id,
             "title": title,
-            "artist": None, # Could be set based on section_type
-            "ccli_number": None, # Could be set based on section_type
-            "tags": [],
+            "metadata": [], # New generic metadata field
             "slide_blocks": [
                 {
                     "slide_id": default_slide_block_id,
@@ -87,4 +85,3 @@ class SectionFactory:
         except Exception as e:
             print(f"Error in SectionFactory saving new section file: {e}")
             return None, None
-

@@ -1,6 +1,6 @@
 from PySide6.QtGui import QPixmap, QPainter, QColor, QImage
 from PySide6.QtCore import QObject, Signal, QSize, Qt, QRectF
-from typing import Optional, TYPE_CHECKING, Dict, Any
+from typing import Optional, TYPE_CHECKING, Dict, Any, List # Added List
 import time # For benchmarking
 import copy # For deepcopy if needed, though direct rendering is preferred
 
@@ -35,13 +35,20 @@ class OutputTarget(QObject):
         self._cached_key_matte_pixmap: Optional[QPixmap] = None
         self._key_matte_dirty: bool = True
         self.final_composited_pixmap.fill(Qt.GlobalColor.black) # Default to black
-
-    def update_slide(self, slide_data: Optional['SlideData']):
+    
+    def update_slide(self,
+                     slide_data: Optional['SlideData'],
+                     section_metadata: Optional[List[Dict[str, str]]] = None,
+                     section_title: Optional[str] = None):
         """
         Updates the output based on the provided slide_data.
         Determines if it's a background or content update.
+        Passes section_metadata and section_title to the renderer.
         """
         update_start_time = time.perf_counter()
+        # Store metadata and title for use in internal render calls
+        self._current_section_metadata = section_metadata
+        self._current_section_title = section_title
         # print(f"OutputTarget '{self.name}': Updating with slide_data (ID: {slide_data.id if slide_data else 'None'})")
 
         needs_recomposite = False
@@ -125,7 +132,9 @@ class OutputTarget(QObject):
         # base_pixmap=None ensures it's rendered standalone.
         rendered_pixmap, font_error, detailed_benchmarks = self.slide_renderer.render_slide(
             bg_slide_data, self.target_size.width(), self.target_size.height(),
-            base_pixmap=None, is_final_output=True # Assuming True for actual output targets
+            base_pixmap=None, is_final_output=True, # Assuming True for actual output targets
+            section_metadata=self._current_section_metadata,
+            section_title=self._current_section_title
         )
         self._cached_background_pixmap = rendered_pixmap
         print(f"    OutputTarget '{self.name}': _render_background_part - Detailed benchmarks: {detailed_benchmarks}")
@@ -151,7 +160,9 @@ class OutputTarget(QObject):
 
         rendered_pixmap, font_error, detailed_benchmarks = self.slide_renderer.render_slide(
             content_slide_data, self.target_size.width(), self.target_size.height(),
-            base_pixmap=transparent_base_for_content_layer, is_final_output=True
+            base_pixmap=transparent_base_for_content_layer, is_final_output=True,
+            section_metadata=self._current_section_metadata,
+            section_title=self._current_section_title
         )
         self._cached_content_pixmap = rendered_pixmap
         print(f"    OutputTarget '{self.name}': _render_content_part - Detailed benchmarks: {detailed_benchmarks}")

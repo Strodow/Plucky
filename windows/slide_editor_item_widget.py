@@ -1,11 +1,11 @@
 import sys
 import os
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QTextEdit, QPushButton, QApplication, QFrame, QComboBox
+    QWidget, QVBoxLayout, QLabel, QTextEdit, QPushButton, QApplication, QFrame, QComboBox, QColorDialog, QDialogButtonBox, QDialog # Added QColorDialog
 )
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import Qt, QFileInfo, QDir, Slot, QTimer, QRectF, QSize # Added QSize
-from PySide6.QtGui import QPixmap, QPainter, QShowEvent # For displaying rendered pixmaps, drawing, and showEvent
+from PySide6.QtCore import Qt, QFileInfo, QDir, Slot, QTimer, QRectF, QSize, Signal # Added Signal
+from PySide6.QtGui import QPixmap, QPainter, QShowEvent, QColor # Added QColor
 
 # Adjust path to import TemplateManager if necessary
 try:
@@ -27,11 +27,22 @@ TARGET_PREVIEW_DISPLAY_WIDTH = 320
 TARGET_PREVIEW_DISPLAY_HEIGHT = 180
 
 class SlideEditorItemWidget(QWidget):
-    def __init__(self, slide_data: SlideData, template_manager: TemplateManager, slide_renderer: LayeredSlideRenderer, parent: QWidget = None):
+    # Signal to emit the updated preview pixmap (the one displayed on the label)
+    preview_updated = Signal(str, QPixmap) # Emits slide_data.id and the pixmap
+    banner_color_change_requested = Signal(str, QColor) # Emits slide_id, new_color
+    add_slide_after_requested = Signal(str) # Emits instance_id of the current slide
+    remove_slide_requested = Signal(str)    # Emits instance_id of the current slide
+    content_changed = Signal() # New signal to indicate content (like text) has changed
+
+
+    def __init__(self, slide_data: SlideData, template_manager: TemplateManager, slide_renderer: LayeredSlideRenderer, main_editor_ref, parent: QWidget = None):
         super().__init__(parent)
         self.slide_data = slide_data
         self.template_manager = template_manager
         self.slide_renderer = slide_renderer
+        self.main_editor_ref = main_editor_ref # Store reference to MainEditorWindow
+        self._initial_preview_emitted = False # Flag to track initial signal emission
+
 
         # Load the UI file
         loader = QUiLoader()
@@ -60,6 +71,8 @@ class SlideEditorItemWidget(QWidget):
         self.slide_preview_label: QLabel = self.findChild(QLabel, "slide_preview_label")
         self.plus_button: QPushButton = self.findChild(QPushButton, "plus_button")
         self.minus_button: QPushButton = self.findChild(QPushButton, "minus_button")
+        self.banner_color_picker_button: QPushButton = self.findChild(QPushButton, "banner_color_picker_button")
+
 
         self.text_box_one_label: QLabel = self.findChild(QLabel, "text_box_one_label")
         self.text_box_one_edit: QTextEdit = self.findChild(QTextEdit, "text_box_one_edit")
@@ -70,7 +83,11 @@ class SlideEditorItemWidget(QWidget):
 
         # Example: Set initial text or connect signals
         if self.slide_name_banner_label:
-            self.slide_name_banner_label.setText(f"Editing: {self.slide_data.id} ({self.slide_data.overlay_label or 'No Label'})")
+            # self.slide_data.id is now the instance_id. For display, slide_block_id or overlay_label is better.
+            display_id_for_banner = self.slide_data.slide_block_id or self.slide_data.id # Fallback to instance_id if block_id is missing
+            self.slide_name_banner_label.setText(f"Editing: {display_id_for_banner} ({self.slide_data.overlay_label or 'No Label'})")
+
+            self.refresh_ui_appearance() # Initial call to set banner color etc.
 
         # Populate and set the template combo box
         self._populate_and_set_template_combobox()
@@ -79,6 +96,15 @@ class SlideEditorItemWidget(QWidget):
             self.templates_combo_box_per_slide.currentTextChanged.connect(self.on_template_selected)
             # Initialize text box visibility based on the default template
             # This is now called at the end of _populate_and_set_template_combobox
+        if self.banner_color_picker_button:
+            self.banner_color_picker_button.clicked.connect(self._handle_banner_color_button_clicked)
+
+        if self.plus_button:
+            self.plus_button.clicked.connect(self._handle_plus_button_clicked)
+        
+        if self.minus_button:
+            self.minus_button.clicked.connect(self._handle_minus_button_clicked)
+
 
         # Connect signals for dynamic text edit resizing and perform initial adjustment
         text_edits = [self.text_box_one_edit, self.text_box_two_edit, self.text_box_three_edit]
@@ -305,6 +331,7 @@ class SlideEditorItemWidget(QWidget):
                     if "text_content" not in self.slide_data.template_settings:
                         self.slide_data.template_settings["text_content"] = {}
                     self.slide_data.template_settings["text_content"][tb_id] = sender_edit.toPlainText()
+                    self.content_changed.emit() # Emit signal that content has changed
                     self.update_slide_preview()
 
     def update_slide_preview(self):
@@ -317,10 +344,22 @@ class SlideEditorItemWidget(QWidget):
         label_display_width = self.slide_preview_label.width()
         label_display_height = self.slide_preview_label.height()
 
+        print(f"DEBUG ({self.slide_data.id}): update_slide_preview called. Label size: {label_display_width}x{label_display_height}") # DEBUG
+
         if label_display_width < TARGET_PREVIEW_DISPLAY_WIDTH -1 or label_display_height < TARGET_PREVIEW_DISPLAY_HEIGHT -1: 
-            # self.slide_preview_label.setText("Sizing...") # Can be noisy
+            print(f"DEBUG ({self.slide_data.id}): Label too small, scheduling QTimer.") # DEBUG
             QTimer.singleShot(50, self.update_slide_preview) # Try again shortly
             return
+        print(f"DEBUG ({self.slide_data.id}): Proceeding with render. Target display: {TARGET_PREVIEW_DISPLAY_WIDTH}x{TARGET_PREVIEW_DISPLAY_HEIGHT}") # DEBUG
+        
+        # Fetch section metadata via the main_editor_ref
+        section_metadata = None
+        if self.main_editor_ref and hasattr(self.main_editor_ref, 'get_current_section_metadata'):
+            section_metadata = self.main_editor_ref.get_current_section_metadata()
+        
+        section_title = None
+        if self.main_editor_ref and hasattr(self.main_editor_ref, 'get_current_section_title'):
+            section_title = self.main_editor_ref.get_current_section_title()
 
         try:
             # 1. Render the slide at the defined high resolution
@@ -328,16 +367,22 @@ class SlideEditorItemWidget(QWidget):
                 slide_data=self.slide_data,
                 width=PREVIEW_RENDER_WIDTH,   # Render at fixed high-res width
                 height=PREVIEW_RENDER_HEIGHT, # Render at fixed high-res height
-                is_final_output=False 
+                is_final_output=False,
+                section_metadata=section_metadata, # Pass the fetched metadata
+                section_title=section_title # Pass the fetched section title
             )
+
+            print(f"DEBUG ({self.slide_data.id}): High-res render complete. Rendered pixmap size: {rendered_pixmap.size() if rendered_pixmap else 'None'}") # DEBUG
 
             if rendered_pixmap and not rendered_pixmap.isNull():
                 # 2. Create a new pixmap with the TARGET fixed display dimensions
                 final_display_pixmap = QPixmap(TARGET_PREVIEW_DISPLAY_WIDTH, TARGET_PREVIEW_DISPLAY_HEIGHT)
                 if final_display_pixmap.isNull(): # Should not happen if label size is valid
+                    print(f"DEBUG ({self.slide_data.id}): ERROR - final_display_pixmap is Null.") # DEBUG
                     self.slide_preview_label.setText("Preview Error (Pixmap)")
                     return
                 final_display_pixmap.fill(Qt.GlobalColor.transparent) # Start with a transparent background
+                print(f"DEBUG ({self.slide_data.id}): final_display_pixmap created. Size: {final_display_pixmap.size()}") # DEBUG
 
                 # 3. Scale the high-res rendered_pixmap to fit the TARGET fixed display dimensions, keeping aspect ratio
                 image_to_draw_on_label = rendered_pixmap.scaled(
@@ -345,6 +390,7 @@ class SlideEditorItemWidget(QWidget):
                     Qt.AspectRatioMode.KeepAspectRatio, # Added aspectMode argument
                     Qt.TransformationMode.SmoothTransformation
                 )
+                print(f"DEBUG ({self.slide_data.id}): image_to_draw_on_label (scaled from high-res). Size: {image_to_draw_on_label.size()}") # DEBUG
 
                 # 4. Draw the scaled image onto the center of final_display_pixmap
                 painter = QPainter(final_display_pixmap)
@@ -352,16 +398,116 @@ class SlideEditorItemWidget(QWidget):
                     x_offset = (final_display_pixmap.width() - image_to_draw_on_label.width()) / 2
                     y_offset = (final_display_pixmap.height() - image_to_draw_on_label.height()) / 2
                     draw_rect = QRectF(x_offset, y_offset, image_to_draw_on_label.width(), image_to_draw_on_label.height())
+                    print(f"DEBUG ({self.slide_data.id}): Drawing image_to_draw_on_label into rect: {draw_rect} on final_display_pixmap.") # DEBUG
                     painter.drawPixmap(draw_rect.toRect(), image_to_draw_on_label)
                     painter.end()
+                    self._initial_preview_emitted = True # Mark that we've successfully rendered and emitted at least once
+                    # Emit the final pixmap that is being displayed on the label
+                    self.preview_updated.emit(self.slide_data.id, final_display_pixmap.copy())
                     self.slide_preview_label.setPixmap(final_display_pixmap)
                 else:
                     self.slide_preview_label.setText("Preview Error (Painter)")
+                    print(f"DEBUG ({self.slide_data.id}): ERROR - QPainter not active for final_display_pixmap.") # DEBUG
             else:
                 self.slide_preview_label.setText("Render Failed")
+                print(f"DEBUG ({self.slide_data.id}): Render failed or high-res rendered_pixmap is Null.") # DEBUG
         except Exception as e:
             print(f"Error rendering slide preview for {self.slide_data.id}: {e}")
             self.slide_preview_label.setText(f"Render Err") # Keep it short
+            import traceback; traceback.print_exc() # Print full traceback for exceptions
+
+    def get_current_preview_pixmap(self) -> QPixmap | None:
+        """Returns the current pixmap displayed on the preview label, if any."""
+        if self.slide_preview_label:
+            return self.slide_preview_label.pixmap()
+        return None
+    
+    @Slot()
+    def _handle_banner_color_button_clicked(self):
+        if not self.slide_data:
+            return
+        
+        initial_color = self.slide_data.banner_color if self.slide_data.banner_color and self.slide_data.banner_color.isValid() else QColor(Qt.GlobalColor.white)
+        
+        dialog = QColorDialog(self)
+        dialog.setWindowTitle("Select Banner Color")
+        dialog.setCurrentColor(initial_color)
+        dialog.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True) # Allow alpha selection
+
+        # Add a "No Color" button
+        no_color_button = dialog.findChild(QDialogButtonBox).addButton("No Color", QDialogButtonBox.ResetRole)
+
+        # Revised logic for clarity with the custom button:
+        
+        # We need to know if "No Color" was clicked.
+        # One way is to connect the button's clicked signal to a slot that sets a flag.
+        
+        # Ensure _no_color_selected_flag is an instance variable if not already defined in __init__
+        if not hasattr(self, '_no_color_selected_flag'):
+            self._no_color_selected_flag = False
+        else:
+            self._no_color_selected_flag = False # Reset flag before each dialog
+            
+        def on_no_color_clicked():
+            self._no_color_selected_flag = True
+            dialog.accept() # Close the dialog as if "OK" was pressed, but we'll use the flag
+
+        no_color_button.clicked.connect(on_no_color_clicked)
+
+        result = dialog.exec() # Call exec() once and store the result
+
+        chosen_color: Optional[QColor] = None # Initialize chosen_color
+
+        if result == QDialog.DialogCode.Accepted:
+            if self._no_color_selected_flag:
+                chosen_color = None # Represent "no color" as None
+            else:
+                chosen_color = dialog.selectedColor()
+                if not chosen_color.isValid(): # If user clicked OK but didn't pick a valid color
+                    chosen_color = None # Treat as no color or keep initial? For now, treat as no change.
+                                        # Or, if OK means "use current selection", then it's dialog.selectedColor()
+                                        # Let's assume if OK is pressed, a valid color is expected unless "No Color" was used.
+                    # If OK is pressed and color is invalid, we probably shouldn't emit.
+                    # Let's only emit if chosen_color is a valid QColor or explicitly None (from "No Color" button)
+                    if not dialog.selectedColor().isValid(): # If OK was pressed but color is invalid
+                        return # Don't emit anything, effectively a cancel or no change
+
+
+            # Emit regardless of whether chosen_color is a QColor or None
+            # Emit the slide_block_id, as MainEditorWindow uses this to find the global index in PM
+            block_id_to_emit = self.slide_data.slide_block_id or self.slide_data.id # Fallback if slide_block_id is None
+            self.banner_color_change_requested.emit(block_id_to_emit, chosen_color) 
+            # MainEditorWindow._handle_slide_item_banner_color_changed needs to handle chosen_color being None
+
+    def refresh_ui_appearance(self):
+        """Updates visual elements like banner color based on current slide_data."""
+        # Update Banner Color
+        if self.slide_name_banner_label and self.slide_data:
+            # Get the base style from the UI file for the label (font-weight: bold;)
+            base_font_style = "font-weight: bold;" # From UI
+            current_banner_color = self.slide_data.banner_color
+            print(f"DEBUG_ITEM_WIDGET ({self.slide_data.id}): Refreshing banner. SlideData's banner_color: {current_banner_color.name() if current_banner_color and current_banner_color.isValid() else 'None'}") # DEBUG
+
+            if current_banner_color and current_banner_color.isValid():
+                self.slide_name_banner_label.setStyleSheet(f"{base_font_style} background-color: {current_banner_color.name()};")
+                self.slide_name_banner_label.setAutoFillBackground(True) # Ensure background is painted
+            else:
+                # Explicitly set background to transparent for "no color"
+                self.slide_name_banner_label.setStyleSheet(f"{base_font_style} background-color: transparent;")
+                self.slide_name_banner_label.setAutoFillBackground(True) # Needs to be true for transparent to work correctly with stylesheets
+
+    @Slot()
+    def _handle_plus_button_clicked(self):
+        if self.slide_data and self.slide_data.id:
+            self.add_slide_after_requested.emit(self.slide_data.id)
+
+    @Slot()
+    def _handle_minus_button_clicked(self):
+        if self.slide_data and self.slide_data.id:
+            # TODO: Add a confirmation dialog here?
+            # reply = QMessageBox.question(self, "Remove Slide", "Are you sure you want to remove this slide?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            # if reply == QMessageBox.Yes:
+            self.remove_slide_requested.emit(self.slide_data.id)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
@@ -402,8 +548,7 @@ if __name__ == '__main__':
     test_slide_data = SlideData(id="test_slide_01", template_settings=mock_tm.resolve_layout_template("TestTitle"))
     test_slide_data.template_settings["text_content"] = test_content_data_title
 
-    slide_item_widget = SlideEditorItemWidget(slide_id="test_slide_01", 
-                                            slide_data=test_slide_data,
+    slide_item_widget = SlideEditorItemWidget(slide_data=test_slide_data, # Pass SlideData, remove slide_id kwarg
                                             template_manager=mock_tm,
                                             slide_renderer=mock_renderer)
     slide_item_widget.setWindowTitle("Slide Editor Item Test")

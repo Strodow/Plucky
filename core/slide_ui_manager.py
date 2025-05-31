@@ -5,7 +5,7 @@ import copy
 from PySide6.QtWidgets import ( # QWidget removed from this direct import list for SlideUIManager base
     QWidget, QVBoxLayout, QScrollArea, QLabel, QMenu, QInputDialog, QMessageBox
 )
-from PySide6.QtCore import Qt, Signal, QEvent, QPoint, QObject # QObject added
+from PySide6.QtCore import Qt, Signal, QEvent, QPoint, QObject, Slot # QObject added, Slot added
 from PySide6.QtGui import QPixmap, QColor
 
 try:
@@ -45,6 +45,7 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
     active_slide_changed_signal = Signal(int) # Emits the global index of the new active slide
     request_show_error_message_signal = Signal(str)
     request_set_status_message_signal = Signal(str, int)
+    request_open_section_editor = Signal(str) # section_id_in_manifest
 
     def __init__(self,
                  presentation_manager: PresentationManager,
@@ -162,7 +163,8 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
                 last_processed_title = current_title
                 if current_title is not None:
                     song_header = SongHeaderWidget(current_title, current_button_width=current_dynamic_preview_width)
-                    # Connect song_header signals if needed (e.g., to MainWindow or PresentationManager via signals)
+                    song_header.edit_section_requested.connect(self._handle_edit_section_request_from_header) # New connection
+                    # The existing edit_song_requested signal from SongHeaderWidget is for title editing, usually handled by MainWindow directly.
                     # song_header.edit_song_requested.connect(self.parent_main_window.handle_edit_song_title_requested)
                     self.slide_buttons_layout.addWidget(song_header)
 
@@ -187,9 +189,23 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
                 preview_pixmap = None
 
             if preview_pixmap is None:
+                # --- Fetch section metadata and title for rendering placeholders ---
+                current_section_metadata_for_preview: Optional[List[Dict[str, str]]] = None
+                current_section_title_for_preview: Optional[str] = None
+                if slide_data.section_id_in_manifest and self.presentation_manager.loaded_sections:
+                    section_wrapper = self.presentation_manager.loaded_sections.get(slide_data.section_id_in_manifest)
+                    if section_wrapper:
+                        section_content_data = section_wrapper.get("section_content_data", {})
+                        current_section_metadata_for_preview = section_content_data.get("metadata", [])
+                        current_section_title_for_preview = section_content_data.get("title")
+                # --- End fetch section metadata ---
+
                 try:
                     full_res_pixmap, has_font_error, _ = self.slide_renderer.render_slide(
-                        slide_data, preview_render_width, preview_render_height, is_final_output=False
+                        slide_data, preview_render_width, preview_render_height,
+                        is_final_output=False,
+                        section_metadata=current_section_metadata_for_preview,
+                        section_title=current_section_title_for_preview
                     )
                     preview_pixmap = full_res_pixmap.scaled(current_dynamic_preview_width, current_dynamic_preview_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                     self.preview_pixmap_cache[slide_id_str] = preview_pixmap
@@ -327,10 +343,20 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
             if slide_data.id in self.preview_pixmap_cache:
                 del self.preview_pixmap_cache[slide_data.id]
                 print(f"SlideUIManager: Invalidated cache for slide instance {slide_data.id} (global index {index})")
+            
+            # --- Fetch section metadata and title for re-rendering placeholders ---
+            current_section_metadata_for_preview_update: Optional[List[Dict[str, str]]] = None
+            current_section_title_for_preview_update: Optional[str] = None
+            if slide_data.section_id_in_manifest and self.presentation_manager.loaded_sections:
+                section_wrapper = self.presentation_manager.loaded_sections.get(slide_data.section_id_in_manifest)
+                if section_wrapper:
+                    section_content_data = section_wrapper.get("section_content_data", {})
+                    current_section_metadata_for_preview_update = section_content_data.get("metadata", [])
+                    current_section_title_for_preview_update = section_content_data.get("title")
+            # --- End fetch section metadata ---
 
                 try:
-                    full_res_pixmap, has_font_error, _ = self.slide_renderer.render_slide(
-                        slide_data, preview_render_width, preview_render_height, is_final_output=False
+                    full_res_pixmap, has_font_error, _ = self.slide_renderer.render_slide(slide_data, preview_render_width, preview_render_height, is_final_output=False, section_metadata=current_section_metadata_for_preview_update, section_title=current_section_title_for_preview_update
                     )
                     preview_pixmap = full_res_pixmap.scaled(
                         current_dynamic_preview_width, current_dynamic_preview_height,
@@ -540,6 +566,43 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
         # and SectionFactory. For simplicity, we'll call MainWindow's existing method.
         # A more decoupled way would be to emit a signal that MainWindow connects to.
         self.parent_main_window._prompt_and_insert_new_section(manifest_insertion_index)
+
+    def invalidate_cache_for_section(self, section_id_to_invalidate: str):
+        """
+        Removes cached preview pixmaps for all slides belonging to the specified section_id.
+        """
+        if not section_id_to_invalidate:
+            return
+
+        slides_to_check = self.presentation_manager.get_slides() # Get current state
+        instance_ids_to_invalidate = []
+        for slide_data in slides_to_check:
+            if slide_data.section_id_in_manifest == section_id_to_invalidate:
+                instance_ids_to_invalidate.append(slide_data.id)
+
+        invalidated_count = 0
+        for instance_id in instance_ids_to_invalidate:
+            if instance_id in self.preview_pixmap_cache:
+                del self.preview_pixmap_cache[instance_id]
+                invalidated_count += 1
+        print(f"SlideUIManager: Invalidated {invalidated_count} cached previews for section '{section_id_to_invalidate}'.")
+
+    @Slot(str)
+    def _handle_edit_section_request_from_header(self, song_title: str):
+        """
+        Handles the request to edit a section, triggered from a SongHeaderWidget.
+        Finds the section_id_in_manifest associated with this song_title and emits
+        a signal for MainWindow to open the editor.
+        """
+        if not song_title:
+            return
+
+        all_slides = self.presentation_manager.get_slides()
+        for slide_data in all_slides:
+            if slide_data.song_title == song_title and slide_data.section_id_in_manifest:
+                self.request_open_section_editor.emit(slide_data.section_id_in_manifest)
+                return # Found the section, emitted signal
+        print(f"SlideUIManager: Could not find section_id_in_manifest for song title '{song_title}' to edit.")
 
     # --- Methods for ScaledSlideButton context menu actions (called from MainWindow) ---
     # These are slightly different from the panel background context menu actions
