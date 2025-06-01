@@ -935,7 +935,7 @@ class MainEditorWindow(QMainWindow):
         self._mark_section_dirty()
 
     def _handle_add_custom_metadata_field(self):
-        self._add_metadata_row_widget("NewCustomKey", "", is_predefined=False, connect_signals=True)
+        self._add_metadata_row_widget("NewCustomKey", "", is_predefined_key=False, connect_signals=True)
         self._mark_section_dirty()
 
     def _add_metadata_row_widget(self,
