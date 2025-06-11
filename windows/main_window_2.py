@@ -45,7 +45,7 @@ from core.app_config_manager import ApplicationConfigManager
 from core.slide_edit_handler import SlideEditHandler
 from core.image_cache_manager import ImageCacheManager
 from widgets.section_management_panel import SectionManagementPanel
-from dialogs.template_remapping_dialog import TemplateRemappingDialog
+# from dialogs.template_remapping_dialog import TemplateRemappingDialog # Not used in main_window_2.py directly yet
 from windows.settings_window import SettingsWindow
 from windows.template_editor_window import TemplateEditorWindow
 from windows.resource_manager_window import ResourceManagerWindow
@@ -54,7 +54,7 @@ from commands.slide_commands import (
     ChangeOverlayLabelCommand, EditLyricsCommand, AddSlideCommand, DeleteSlideCommand, ApplyTemplateCommand,
     AddSlideBlockToSectionCommand
 )
-import decklink_handler
+import decklink_handler # type: ignore
 
 # --- Configuration & Constants ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -325,6 +325,46 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.output_manager.clear_all()
         self.slide_ui_manager.clear_selection()
         self.setWindowTitle("Plucky Presentation - New Presentation")
+
+    def _prompt_and_insert_new_section(self, manifest_insertion_index: int):
+        """
+        Prompts for a new section title, creates a new section file using SectionFactory,
+        and adds it to the presentation manifest at the specified index.
+        (Adapted from original main_window.py)
+        """
+        new_section_title_str, ok = QInputDialog.getText(
+            self,
+            "Create New Section",
+            "Enter title for the new section (leave blank for an untitled section):",
+            text=""
+        )
+
+        if ok:
+            cleaned_section_title = new_section_title_str.strip()
+            if not cleaned_section_title:
+                cleaned_section_title = f"Untitled Section {uuid.uuid4().hex[:4]}"
+
+            section_file_id = f"section_{uuid.uuid4().hex}"
+            
+            new_section_data = SectionFactory.create_new_section_data(
+                title=cleaned_section_title,
+                section_file_id=section_file_id,
+                section_type="Generic" # Context menu is generic
+            )
+            # PluckyStandards is already imported
+            central_sections_dir = PluckyStandards.get_sections_dir()
+            
+            full_filepath, section_filename = SectionFactory.save_new_section_file(
+                new_section_data, cleaned_section_title, self.presentation_manager.io_handler, central_sections_dir
+            )
+
+            if full_filepath and section_filename:
+                self.presentation_manager.add_section_to_presentation(
+                    section_filename, manifest_insertion_index, desired_arrangement_name="Default"
+                )
+                self.statusBar().showMessage(f"New section '{cleaned_section_title}' created and added.", 3000)
+            else:
+                self.show_error_message(f"Failed to create and save new section '{cleaned_section_title}'.")
 
     def handle_load(self, filepath: Optional[str] = None):
         if self.presentation_manager.is_overall_dirty():
