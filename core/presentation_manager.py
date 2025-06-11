@@ -1035,6 +1035,22 @@ class PresentationManager(QObject):
                 self.loaded_sections[section_id_in_manifest]["is_dirty"] = True
             self.presentation_changed.emit()
         return True # Placeholder
+    
+    def set_section_dirty_status(self, section_id_in_manifest: str, is_dirty: bool):
+        """
+        Sets the dirty status for a specific section and emits presentation_changed.
+        """
+        if section_id_in_manifest in self.loaded_sections:
+            section_wrapper = self.loaded_sections[section_id_in_manifest]
+            if section_wrapper.get("is_dirty") != is_dirty:
+                section_wrapper["is_dirty"] = is_dirty
+                print(f"PresentationManager: Section '{section_id_in_manifest}' dirty status set to {is_dirty}.")
+                # Emitting presentation_changed ensures that MainWindow's dirty indicator,
+                # and other UI elements like SectionManagementPanel, can update.
+                self.presentation_changed.emit()
+        else:
+            print(f"PresentationManager: Warning - Cannot set dirty status for unknown section ID '{section_id_in_manifest}'.")
+
 
     def is_overall_dirty(self) -> bool:
         """Checks if the manifest or any loaded section is dirty."""

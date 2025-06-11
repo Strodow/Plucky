@@ -28,6 +28,7 @@ class SlideData:
     """Holds all necessary data to render a single presentation slide."""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     lyrics: str = ""
+    video_path: Optional[str] = None # New field for video files
     background_image_path: Optional[str] = None
     song_title: Optional[str] = None # New field for the song's title
     overlay_label: str = "" # New field for the overlay label set via context menu
@@ -73,6 +74,7 @@ class SlideData:
         return cls(
             id=data_dict.get("id", str(uuid.uuid4())), # Default to new UUID if missing
             lyrics=data_dict.get("lyrics", ""),
+            video_path=data_dict.get("video_path"),
             background_image_path=data_dict.get("background_image_path"),
             song_title=data_dict.get("song_title"),
             overlay_label=data_dict.get("overlay_label", ""),
@@ -92,6 +94,7 @@ class SlideData:
 if __name__ == "__main__":
     # Example Usage
     slide1 = SlideData(lyrics="This is the first line\nAnd the second line.")
+    video_slide = SlideData(video_path="path/to/video.mp4", overlay_label="Video Test")
     slide2 = SlideData(lyrics="Single line.", background_color="#FF0000", template_settings={"color": "#FFFF00"}) # Red bg, yellow text
     slide3 = SlideData(lyrics="With Background", background_image_path="c:/path/to/your/image.png")
     slide4 = SlideData(lyrics="With Notes", notes="This is an important note.")
@@ -99,6 +102,7 @@ if __name__ == "__main__":
     print("Slide 1:", slide1)
     print("Slide 1 ID:", slide1.id)
     print("\nSlide 2:", slide2)
+    print("\nVideo Slide:", video_slide)
     print("\nSlide 3:", slide3)
     print("\nSlide 4:", slide4)
     print("\nSlide 1 Font Size:", slide1.template_settings.get("font", {}).get("size"))

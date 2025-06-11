@@ -13,8 +13,8 @@ from PySide6.QtWidgets import QApplication, QMenuBar # Added QMenuBar for native
 from PySide6.QtGui import QIcon, QImage, QColor, QCursor # Import QIcon, QImage, QColor, QCursor
 from PySide6.QtCore import QObject, QEvent # Added QObject, QEvent for debugger
 
-# Import the main window class
-from windows.main_window import MainWindow
+# Import the main window class from the new file
+from windows.main_window_2 import MainWindow
 
 
 

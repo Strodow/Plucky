@@ -32,6 +32,9 @@ except ImportError:
 class SettingsWindow(QDialog):
     production_mode_changed_signal = Signal(str) # Emits the new mode string
 
+    # Signals to notify MainWindow of accepted changes
+    decklink_config_updated = Signal(int, int, dict) # fill_idx, key_idx, video_mode_dict
+    output_monitor_config_updated = Signal(QScreen) # screen
 
     # Signal to indicate the selected output monitor has changed
     output_monitor_changed = Signal(QScreen)  # Emits the selected QScreen object
@@ -163,6 +166,8 @@ class SettingsWindow(QDialog):
             self.decklink_fill_device_combo.currentIndexChanged.connect(self._handle_decklink_fill_device_selection_changed)
         if self.decklink_key_device_combo:
             self.decklink_key_device_combo.currentIndexChanged.connect(self._handle_decklink_key_device_selection_changed)
+        if self.decklink_video_mode_combo: # Connect video mode combo
+            self.decklink_video_mode_combo.currentIndexChanged.connect(self._handle_decklink_video_mode_selection_changed)
         
         self.populate_decklink_devices_combo() # Initial population
 
@@ -490,6 +495,17 @@ class SettingsWindow(QDialog):
     # No need to emit signal here, the device selection handler already emits the fill/key signal
         # which implies the video mode might have changed and should be re-read by MainWindow.
 
+    @Slot(int)
+    def _handle_decklink_video_mode_selection_changed(self, index: int):
+        if not self.decklink_video_mode_combo or index < 0:
+            self._current_decklink_video_mode = None
+            return
+        selected_mode_data = self.decklink_video_mode_combo.itemData(index)
+        if selected_mode_data:
+            self._current_decklink_video_mode = selected_mode_data
+            print(f"SettingsWindow: DeckLink Video Mode selection changed to {selected_mode_data.get('name', 'Unknown')}")
+        else:
+            self._current_decklink_video_mode = None
 
     def closeEvent(self, event):
         if self._decklink_api_initialized_by_settings:
@@ -581,6 +597,45 @@ class SettingsWindow(QDialog):
         if self.config_manager:
             self.config_manager.set_app_setting("new_slide_default_template_id", value_to_save)
             print(f"SettingsWindow: New slide default template set to '{selected_template_id}' (saved as '{value_to_save}').")
+
+    def accept(self):
+        """
+        Called when the OK button is pressed.
+        Saves all relevant settings to the config_manager and emits signals.
+        """
+        if not self.config_manager:
+            QMessageBox.warning(self, "Error", "Configuration manager not available. Settings cannot be saved.")
+            super().reject()
+            return
+
+        # 1. Save Output Monitor
+        if self._current_output_screen:
+            self.config_manager.set_target_output_screen(self._current_output_screen)
+            print(f"SettingsWindow: Saved target output screen '{self._current_output_screen.name()}' on accept.")
+            self.output_monitor_config_updated.emit(self._current_output_screen)
+
+        # 2. Save DeckLink Devices
+        if self._current_decklink_fill_index is not None:
+            self.config_manager.set_app_setting("decklink_fill_device_index", self._current_decklink_fill_index)
+            print(f"SettingsWindow: Saved DeckLink Fill Index {self._current_decklink_fill_index} on accept.")
+        if self._current_decklink_key_index is not None:
+            self.config_manager.set_app_setting("decklink_key_device_index", self._current_decklink_key_index)
+            print(f"SettingsWindow: Saved DeckLink Key Index {self._current_decklink_key_index} on accept.")
+
+        # 3. Save DeckLink Video Mode
+        if self._current_decklink_video_mode:
+            self.config_manager.set_app_setting("decklink_video_mode_details", self._current_decklink_video_mode)
+            print(f"SettingsWindow: Saved DeckLink Video Mode '{self._current_decklink_video_mode.get('name', 'Unknown')}' on accept.")
+        else:
+            self.config_manager.set_app_setting("decklink_video_mode_details", None)
+            print("SettingsWindow: Saved DeckLink Video Mode as None on accept.")
+
+        # Emit DeckLink config updated signal (even if video mode is None)
+        if self._current_decklink_fill_index is not None and self._current_decklink_key_index is not None:
+            self.decklink_config_updated.emit(
+                self._current_decklink_fill_index, self._current_decklink_key_index, self._current_decklink_video_mode
+            )
+        super().accept()
 
     # --- Backup & Sharing Methods ---
 

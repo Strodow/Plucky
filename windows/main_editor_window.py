@@ -1022,14 +1022,9 @@ class MainEditorWindow(QMainWindow):
         if self._test_section_id and self.presentation_manager and \
            self._test_section_id in self.presentation_manager.loaded_sections:
             
-            # Check if the section is already marked dirty to avoid redundant prints/updates
-            # if not self.presentation_manager.loaded_sections[self._test_section_id].get("is_dirty", False):
-            #     print(f"MainEditorWindow: Section '{self._test_section_id}' marked as dirty due to metadata change.")
-            
-            self.presentation_manager.loaded_sections[self._test_section_id]["is_dirty"] = True
-            # The PresentationManager's is_overall_dirty() method will determine if the
-            # manifest file needs saving based on this section's dirty state and its own
-            # manifest_is_dirty flag (for structural changes).
+            # Call PresentationManager's method to set dirty status, which will also emit presentation_changed
+            self.presentation_manager.set_section_dirty_status(self._test_section_id, True)
+
             self._update_save_button_visibility()
         else:
             print("MainEditorWindow: Could not mark section dirty (no test_section_id or PM).")

@@ -1,5 +1,5 @@
 from PySide6.QtGui import QPixmap, QPainter, QColor, QImage
-from PySide6.QtCore import QObject, Signal, QSize, Qt, QRectF
+from PySide6.QtCore import QObject, Signal, QSize, Qt, QRectF, Slot
 from typing import Optional, TYPE_CHECKING, Dict, Any, List # Added List
 import time # For benchmarking
 import copy # For deepcopy if needed, though direct rendering is preferred
@@ -31,6 +31,14 @@ class OutputTarget(QObject):
         if self.final_composited_pixmap.isNull():
             print(f"OutputTarget '{self.name}': Failed to create final_composited_pixmap of size {target_size}. Using 1x1.")
             self.final_composited_pixmap = QPixmap(1,1) # Fallback
+
+        # Connect to VideoRenderLayer's new_frame_ready signal if available
+        if self.slide_renderer and hasattr(self.slide_renderer, 'get_video_render_layer'):
+            video_layer = self.slide_renderer.get_video_render_layer()
+            if video_layer:
+                video_layer.new_frame_ready.connect(self._on_video_frame_ready)
+                print(f"OutputTarget '{self.name}': Connected to VideoRenderLayer.new_frame_ready.")
+
         
         self._cached_key_matte_pixmap: Optional[QPixmap] = None
         self._key_matte_dirty: bool = True
@@ -95,16 +103,24 @@ class OutputTarget(QObject):
             # The background (_cached_background_pixmap) remains from the last background-setting slide.
             # We only need to update/render the content part if this content slide is different.
             if self._active_background_slide_data is None: # Check if a background was ever set
-                print(f"  OutputTarget '{self.name}': No active background, ensuring default for content slide '{slide_data.id}'.")
+                # print(f"  OutputTarget '{self.name}': No active background, ensuring default for content slide '{slide_data.id}'.")
+                # If no background is active, the content slide will render on a transparent base,
+                # which is then composited onto the OutputTarget's black default or transparent fill.
                 needs_recomposite = True
 
             # This slide provides the new content.
             # Store what was the active content slide *before* this update for comparison
             previous_content_slide_for_cache_check = self._active_content_slide_data
-            # Now, set the current slide as the active content slide
+
+            # Always set the current slide as the active content slide.
+            # The decision to re-render the content part should be based on whether
+            # the slide_data object itself has changed or if the cache is invalid.
             self._active_content_slide_data = slide_data
 
-            if self._active_content_slide_data != slide_data or not self._cached_content_pixmap:
+            # Re-render content if the slide_data object is different, or if there's no cached content pixmap.
+            # This ensures that even if a slide has no explicit background_image_path (e.g., text-only, video),
+            # _render_content_part is still called to allow LayeredSlideRenderer to process it.
+            if previous_content_slide_for_cache_check != slide_data or not self._cached_content_pixmap:
                 render_content_start_time = time.perf_counter()
                 self._render_content_part(slide_data)
                 print(f"  OutputTarget '{self.name}': _render_content_part for '{slide_data.id}' (content slide) took: {(time.perf_counter() - render_content_start_time):.4f}s")
@@ -193,6 +209,24 @@ class OutputTarget(QObject):
         self.pixmap_updated.emit(self.final_composited_pixmap)
         self._key_matte_dirty = True # Mark key as dirty whenever fill is updated
         # print(f"OutputTarget '{self.name}': Emitted pixmap_updated.")
+
+    @Slot()
+    def _on_video_frame_ready(self):
+        """
+        Called when the VideoRenderLayer signals that a new video frame is available.
+        If the currently active content slide is a video, this triggers a re-render.
+        """
+        logging.info(f"OutputTarget '{self.name}': _on_video_frame_ready called.")
+        if self._active_content_slide_data and self._active_content_slide_data.video_path:
+            # The active slide is a video slide. Re-render its content part and recomposite.
+            logging.info(f"  OutputTarget '{self.name}': Active slide is video ('{self._active_content_slide_data.id}'). Re-rendering content for new frame.")
+            # No need to store current_section_metadata or title here, as they are already
+            # set by update_slide and will be used by _render_content_part.
+            render_content_start_time = time.perf_counter()
+            self._render_content_part(self._active_content_slide_data) # This will use the new frame from VideoRenderLayer
+            logging.info(f"  OutputTarget '{self.name}': _render_content_part (for video frame) for '{self._active_content_slide_data.id}' took: {(time.perf_counter() - render_content_start_time):.4f}s")
+            self._recomposite_and_emit()
+            logging.info(f"  OutputTarget '{self.name}': Recomposited and emitted for new video frame.")
 
 
     def get_current_pixmap(self) -> QPixmap:

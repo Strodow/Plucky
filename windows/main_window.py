@@ -118,6 +118,10 @@ class MouseHoverDebugger(QObject):
 # --- End Mouse Hover Debug Event Filter Class ---
 
 
+# Minimal template definitions for the compositing test
+MINIMAL_TEXT_TEMPLATE = {"layout_name": "MinimalText", "text_boxes": [{"id": "test_text", "x_pc": 5, "y_pc": 45, "width_pc": 90, "height_pc": 10, "h_align": "center", "v_align": "center"}]}
+MINIMAL_IMAGE_TEMPLATE = {"layout_name": "MinimalImage", "text_boxes": []}
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -211,6 +215,12 @@ class MainWindow(QMainWindow):
         self.go_live_button.setCheckable(True) # To manage its state
         self._decklink_keyer_state = "off" # "off", "on", "error"
         self._update_go_live_button_appearance() # Initial appearance
+        
+        # Dirty indicator label
+        self.dirty_indicator_label = QLabel()
+        self.dirty_indicator_label.setFixedSize(16, 16) # Small circle
+        self.dirty_indicator_label.setToolTip("Presentation dirty status")
+        self.dirty_indicator_label.hide() # Hide by default
 
         # Top controls: Undo/Redo (File ops moved to menu)
         self.undo_button = QPushButton("Undo") # New
@@ -274,6 +284,9 @@ class MainWindow(QMainWindow):
         file_ops_layout.addWidget(QLabel("Preview Size:"))
         file_ops_layout.addWidget(self.preview_size_spinbox)
         file_ops_layout.addSpacing(10) # Space after preview size
+        file_ops_layout.addSpacing(10) # Space after preview size
+        file_ops_layout.addWidget(self.dirty_indicator_label) # Add dirty indicator
+
 
         # Add middle buttons
         file_ops_layout.addWidget(self.edit_template_button) # Add Edit Templates button back
@@ -353,6 +366,7 @@ class MainWindow(QMainWindow):
         self.slide_ui_manager.active_slide_changed_signal.connect(self._handle_active_slide_changed_from_ui)
         self.slide_ui_manager.request_show_error_message_signal.connect(self.show_error_message)
         self.slide_ui_manager.request_set_status_message_signal.connect(self.set_status_message)
+        self.presentation_manager.presentation_changed.connect(self._update_dirty_indicator) # Connect dirty indicator update
         self.presentation_manager.section_title_changed.connect(self.slide_ui_manager.invalidate_cache_for_section) # Moved connection
 
         # Connect signals from SectionManagementPanel
@@ -401,6 +415,7 @@ class MainWindow(QMainWindow):
                 print("MainWindow: Restored window state.")
             except Exception as e:
                 print(f"MainWindow: Error restoring window state: {e}")
+        self._update_dirty_indicator() # Initial update for dirty indicator
 
 
     def _connect_section_management_panel_signals(self):
@@ -417,6 +432,21 @@ class MainWindow(QMainWindow):
         until cleared or replaced.
         """
         self.statusBar().showMessage(message, timeout)
+    
+    def _update_dirty_indicator(self):
+        """Updates the visual state of the dirty indicator label."""
+        if not hasattr(self, 'dirty_indicator_label'): # Should not happen if init is correct
+            return
+
+        is_dirty = self.presentation_manager.is_overall_dirty()
+        if is_dirty:
+            self.dirty_indicator_label.setStyleSheet("background-color: red; border-radius: 8px; border: 1px solid darkred;")
+            self.dirty_indicator_label.setToolTip("Presentation has unsaved changes.")
+        else:
+            self.dirty_indicator_label.setStyleSheet("background-color: #4CAF50; border-radius: 8px; border: 1px solid darkgreen;") # Green
+            self.dirty_indicator_label.setToolTip("No unsaved changes.")
+        self.dirty_indicator_label.update() # Ensure repaint
+
 
     #Main Window Effects 
     def _update_go_live_button_appearance(self):
@@ -644,6 +674,7 @@ class MainWindow(QMainWindow):
                 if not self.handle_save(): # If save fails or is cancelled
                     return
             elif reply == QMessageBox.Cancel:
+                self._update_dirty_indicator() # Ensure indicator is correct if save was cancelled
                 return
         
         if filepath is None: # If no filepath was provided, open the dialog
@@ -679,7 +710,8 @@ class MainWindow(QMainWindow):
                     self.setWindowTitle(f"Plucky Presentation - {presentation_title}")
                 else:
                     self.setWindowTitle(f"Plucky Presentation - {os.path.basename(filepath)}")
-                
+                    
+                self._update_dirty_indicator() # Update after loading
                 self.config_manager.add_recent_file(filepath) # Add to recents list on successful load
             # Error messages are handled by PresentationManager's error_occurred signal
 
@@ -701,9 +733,11 @@ class MainWindow(QMainWindow):
                 
                 if self.presentation_manager.current_manifest_filepath: # Ensure path exists before adding
                     self.config_manager.add_recent_file(self.presentation_manager.current_manifest_filepath)
+                self._update_dirty_indicator() # Update after successful save
                 return True
             # Error message handled by show_error_message via signal
             self.set_status_message(f"Error saving presentation to {self.presentation_manager.current_manifest_filepath}", 5000)
+            self._update_dirty_indicator() # Update after successful save
             return False
 
     #Main Window Controls
@@ -727,10 +761,12 @@ class MainWindow(QMainWindow):
                     self.setWindowTitle(f"Plucky Presentation - {presentation_title}")
                 else: # Fallback to filename if title is somehow missing after save_as
                     self.setWindowTitle(f"Plucky Presentation - {os.path.basename(new_manifest_filepath)}")
+                self._update_dirty_indicator() # Update after successful save as
                 
                 self.config_manager.add_recent_file(new_manifest_filepath)
                 return True
             self.set_status_message(f"Error saving presentation as {os.path.basename(new_manifest_filepath)}", 5000)
+            self._update_dirty_indicator() # Update even if save as failed
             return False
         return False # User cancelled dialog
 
@@ -759,6 +795,7 @@ class MainWindow(QMainWindow):
             # or if we want to be absolutely sure that closing the editor with "OK"
             # refreshes the main window's view of templates, we can manually call the slot.
             # This ensures at least one refresh reflecting the editor's final state.
+            self._update_dirty_indicator() # Changes to templates might make presentation dirty
             print("MainWindow: Template editor was accepted. Manually triggering UI refresh for templates.")
             self.on_template_collection_changed() # Manually call the slot that handles the refresh
         else:
@@ -767,6 +804,7 @@ class MainWindow(QMainWindow):
             # This depends on how "dirty" state is managed within TemplateEditorWindow itself.
             # For now, we'll assume TemplateManager holds the last saved state.
             # If the editor was complex and had its own dirty tracking, you might reload here.
+            self._update_dirty_indicator() # Changes to templates might make presentation dirty
             print("Template editor was cancelled.")
 
     #Main Window Controls
@@ -779,7 +817,9 @@ class MainWindow(QMainWindow):
         This method can be kept for any MainWindow specific updates needed on presentation change,
         or removed if SlideUIManager handles everything. For now, it's a pass-through.
         """
-        # print("MainWindow: presentation_changed signal received. SlideUIManager will handle UI refresh.")
+        self._update_dirty_indicator() # Ensure dirty indicator is updated on any presentation change
+
+        
         pass # SlideUIManager.refresh_slide_display is already connected and will handle it.
     
     #Main window controls
@@ -1396,6 +1436,11 @@ class MainWindow(QMainWindow):
             decklink_handler.shutdown_selected_devices()
             decklink_handler.shutdown_sdk()
             self.is_decklink_output_active = False
+        
+        # Clean up renderer resources (e.g., FFmpeg threads)
+        if self.slide_renderer and hasattr(self.slide_renderer, 'cleanup_resources'):
+            self.slide_renderer.cleanup_resources()
+
         # Clean up OutputTargets
         if self.main_output_target:
             self.main_output_target.deleteLater()
@@ -1581,6 +1626,11 @@ class MainWindow(QMainWindow):
             dev_menu.addSeparator()
             self.enable_hover_debug_action = dev_menu.addAction("Enable Hover Debug")
             self.enable_hover_debug_action.setCheckable(True)
+            
+            debug_dirty_toggle_action = dev_menu.addAction("Toggle Dirty State (Debug)")
+            debug_dirty_toggle_action.triggered.connect(self._debug_toggle_dirty_state)
+
+
             # Set checked state based on whether debugger is already active
             # Tools Menu (New or existing)
             
@@ -1589,6 +1639,10 @@ class MainWindow(QMainWindow):
         # Add "Show Environment Variables" to the Developer menu
         show_env_vars_action = dev_menu.addAction("Show Environment Variables")
         show_env_vars_action.triggered.connect(self._show_environment_variables)
+        dev_menu.addSeparator()
+        run_compositing_test_action = dev_menu.addAction("Run Compositing Test")
+        run_compositing_test_action.triggered.connect(self._run_compositing_pipeline_test)
+
 
         self.enable_hover_debug_action.setChecked(self.hover_debugger_instance is not None)
         self.enable_hover_debug_action.toggled.connect(self._toggle_hover_debugger)
@@ -1609,6 +1663,22 @@ class MainWindow(QMainWindow):
         msg_box.setIcon(QMessageBox.Icon.Information)
         msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg_box.exec()
+        
+    def _debug_toggle_dirty_state(self):
+        """Toggles the presentation's dirty state for debugging."""
+        if not hasattr(self, 'dirty_indicator_label'):
+            QMessageBox.warning(self, "Debug Action", "Dirty indicator label not found.")
+            return
+
+        # Toggle the visibility of the dirty indicator label
+        is_now_visible = not self.dirty_indicator_label.isVisible()
+        self.dirty_indicator_label.setVisible(is_now_visible)
+
+        if is_now_visible: # If we just made it visible, ensure its color is up-to-date
+            self._update_dirty_indicator()
+        self.set_status_message(f"Debug: Dirty indicator visibility toggled. Now: {'Shown' if is_now_visible else 'Hidden'}", 3000)
+        print(f"MainWindow: Debug toggled dirty indicator visibility. Now: {'Shown' if is_now_visible else 'Hidden'}")
+
 
     #Main Window Utility (add function to clear recents)
     def _update_recent_files_menu(self):
@@ -1652,6 +1722,7 @@ class MainWindow(QMainWindow):
         self.presentation_manager.clear_presentation()
         # Reset the window title to reflect a new, unsaved presentation
         self.setWindowTitle("Plucky Presentation - New Presentation")
+        self._update_dirty_indicator() # Update after clearing
         # If you wish to force a save immediately to a new file you could do the following (uncomment).
         # But I do not recommend forcing it. Let the user decide when to save:
 
@@ -1662,8 +1733,9 @@ class MainWindow(QMainWindow):
         Handles changes to visual properties of specific slides without a full UI rebuild.
         'updated_indices' is a list of slide indices that were modified.
         """
-        # This is now handled by SlideUIManager's own slot connected to this signal.
-        # print(f"MainWindow: _handle_slide_visual_property_change for indices: {updated_indices} - (Delegated to SlideUIManager)")
+        # Even if SlideUIManager handles visual updates, MainWindow needs to know
+        # if these changes affect the dirty state.
+        self._update_dirty_indicator()
         pass
 
         # if not self.handle_save_as():
@@ -2144,3 +2216,100 @@ class MainWindow(QMainWindow):
                     self.show_error_message(f"Failed to rename section '{current_title}'.")
         elif ok and not new_title.strip():
             QMessageBox.warning(self, "Empty Title", "Section title cannot be empty.")
+
+    def _run_compositing_pipeline_test(self):
+        """
+        Runs a test sequence to demonstrate the compositing render pipeline.
+        """
+        if not self.output_window.isVisible() and not self.is_decklink_output_active:
+            QMessageBox.information(self, "Output Not Active",
+                                    "Please activate an output (Screen or DeckLink) before running the compositing test.")
+            return
+
+        # --- Instructions and Placeholder for Image Paths ---
+        # You'll need to replace these with actual paths to your transparent images.
+        transparent_image_path1 = "temp/LogoTransparent.png"  # Replace with actual path if different
+        transparent_image_path2 = "temp/ExtraTestTransparent.png" # Replace with actual path if different
+        video_path = "temp/TestVideo.mp4" # Add path for the video
+
+        if not os.path.exists(transparent_image_path1) or \
+           not os.path.exists(transparent_image_path2) or \
+           not os.path.exists(video_path): # Check if all files actually exist
+            QMessageBox.warning(self, "Image Paths Needed",
+                                f"Please ensure your asset files are correctly placed or update the paths in `_run_compositing_pipeline_test` method in `main_window.py`.\n\nAttempting to use:\n1. {transparent_image_path1}\n2. {transparent_image_path2}\n3. {video_path}")
+            # You might choose to return here or proceed with potentially broken image rendering.
+
+        self._test_slide_sequence = [
+            (SlideData(id="comp_test_1", template_settings={}, background_color="#0000FF", is_background_slide=True), 1000), # Solid Blue Background
+            (SlideData(id="comp_test_2",
+                       template_settings=MINIMAL_IMAGE_TEMPLATE,
+                       background_image_path=transparent_image_path1,
+                       is_background_slide=False), 1000), # Transparent Image 1 over Blue
+            (SlideData(id="comp_test_3",
+                       template_settings={**MINIMAL_TEXT_TEMPLATE, "text_content": {"test_text": "Text Over Blue & Image 1"}},
+                       is_background_slide=False), 1000), # Text over Blue & Image 1
+            (SlideData(id="comp_test_video", # New slide for video
+                       template_settings=MINIMAL_IMAGE_TEMPLATE, # Using image template for simplicity
+                       video_path=video_path, # Use video_path argument for SlideData
+                       is_background_slide=False), 1000), # Video (or first frame) over Blue & Image 1 & Text
+            (SlideData(id="comp_test_4", template_settings={}, background_color="#00FF00", is_background_slide=True), 1000), # Solid Green Background (replaces blue)
+            (SlideData(id="comp_test_5",
+                       template_settings=MINIMAL_IMAGE_TEMPLATE,
+                       background_image_path=transparent_image_path2,
+                       is_background_slide=False), 1000), # Transparent Image 2 over Green
+            (SlideData(id="comp_test_6",
+                       template_settings={**MINIMAL_TEXT_TEMPLATE, "text_content": {"test_text": "Text Over Green & Image 2"}},
+                       is_background_slide=False), 1000), # Text over Green & Image 2
+            (None, 1000) # Clear to Blank
+        ]
+        self._current_test_slide_idx = 0
+        self._execute_next_test_slide()
+
+    def _execute_next_test_slide(self):
+        if self._current_test_slide_idx < len(self._test_slide_sequence):
+            slide_data, duration_ms = self._test_slide_sequence[self._current_test_slide_idx]
+
+            # Update Main Output Target
+            if self.main_output_target and self.output_window.isVisible():
+                print(f"Compositing Test: Displaying main target - {'Slide ' + slide_data.id if slide_data else 'Blank'}")
+                self.main_output_target.update_slide(slide_data, section_metadata=None, section_title=None)
+
+            # Update DeckLink Output Target
+            if self.decklink_output_target and self.is_decklink_output_active:
+                print(f"Compositing Test: Displaying DeckLink target - {'Slide ' + slide_data.id if slide_data else 'Blank'}")
+                self.decklink_output_target.update_slide(slide_data, section_metadata=None, section_title=None)
+
+            # Update MainWindow's internal persistent background tracking (simplified for test)
+            if slide_data and slide_data.is_background_slide:
+                # For the test, we'll just set a conceptual background color if defined
+                if slide_data.background_color:
+                    # Create a minimal pixmap for current_live_background_pixmap
+                    res = self.output_resolution # Use main output window's resolution
+                    if self.main_output_target: res = self.main_output_target.target_size
+
+                    temp_pixmap = QPixmap(res)
+                    temp_pixmap.fill(QColor(slide_data.background_color))
+                    self.current_live_background_pixmap = temp_pixmap
+                else: # If background slide has no color (e.g. image only), clear conceptual background
+                    self.current_live_background_pixmap = None
+                self.current_background_slide_id = slide_data.id
+            elif not slide_data: # Blanking
+                 self.current_live_background_pixmap = None
+                 self.current_background_slide_id = None
+
+
+            self._current_test_slide_idx += 1
+            QTimer.singleShot(duration_ms, self._execute_next_test_slide)
+        else:
+            QMessageBox.information(self, "Compositing Test Complete", "The compositing test sequence has finished.")
+            # Ensure the last state (blank) is properly rendered if it was the last step
+            if self.main_output_target and self.output_window.isVisible():
+                self.main_output_target.update_slide(None)
+            if self.decklink_output_target and self.is_decklink_output_active:
+                self.decklink_output_target.update_slide(None)
+
+            # Optionally, clear the persistent background tracking in MainWindow after test
+            self.current_live_background_pixmap = None
+            self.current_background_slide_id = None
+
+            print("Compositing Test: Sequence finished.")
