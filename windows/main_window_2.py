@@ -487,7 +487,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.go_live_button.setStyleSheet("QPushButton { background-color: red; color: white; font-weight: bold; border-radius: 4px; } QPushButton:hover { background-color: #FF4C4C; }")
         else:
             self.go_live_button.setToolTip("Screen Output is OFF. Click to TAKE Preview to Program and turn ON.")
-            self.go_live_button.setStyleSheet("QPushButton { background-color: #ffd1d1; color: white; font-weight: bold; border-radius: 4px; } QPushButton:hover { background-color: ##ffd1d1; }") # Original "TAKE" style
+            self.go_live_button.setStyleSheet("QPushButton { background-color: #ffd1d1; color: white; font-weight: bold; border-radius: 4px; } QPushButton:hover { background-color: #ffd1d1; }") # Original "TAKE" style
 
     def show_error_message(self, msg: str): QMessageBox.critical(self, "Error", msg)
 

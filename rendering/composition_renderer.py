@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod, ABCMeta
 from typing import Optional, List, Tuple, Dict, Any
 
 # Third-party libraries
-import ffmpeg
+import pyffmpeg as ffmpeg
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QFont, QTextOption, QFontInfo, QImage, QPen, QBrush

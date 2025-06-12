@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, Signal, QSize, Qt, Slot, QTimer
 
 # Assume composition_renderer.py is in the same directory or a reachable path
 try:
-    from composition_renderer import CompositionRenderer
+    from rendering.composition_renderer import CompositionRenderer
 except ImportError:
     # A fallback mock for standalone testing if the main renderer isn't available
     print("Warning: Could not import CompositionRenderer. Using a mock class for testing.", file=sys.stderr)

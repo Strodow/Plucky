@@ -44,7 +44,7 @@ class PluckyStandards:
     @staticmethod
     def get_templates_dir() -> str:
         """Returns the directory for storing user-defined template files."""
-        return os.path.join(PluckyStandards.get_templates_dir(), "Templates")
+        return os.path.join(PluckyStandards.get_user_store_root(), "Templates")
 
     @staticmethod
     def get_templates_styles_dir() -> str:
@@ -200,4 +200,3 @@ class PluckyStandards:
     # --- 12. Application Limits ---
 
     MAX_RECENT_FILES = 10
-
