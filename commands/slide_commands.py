@@ -442,3 +442,47 @@ class MoveSlideInstanceCommand(Command):
             
         # self._presentation_manager.presentation_changed.emit() # PM.do_command will handle this
         return True
+
+class ChangeBannerColorCommand(Command):
+    def __init__(self, manager: 'PresentationManager', instance_slide_id: str, old_color_hex: Optional[str], new_color_hex: Optional[str]):
+        super().__init__(manager)
+        self.instance_slide_id = instance_slide_id
+        self.old_color_hex = old_color_hex
+        self.new_color_hex = new_color_hex
+        self._section_id_in_manifest: Optional[str] = None
+        self._slide_block_id: Optional[str] = None
+
+    def _resolve_ids(self) -> bool:
+        if self._section_id_in_manifest and self._slide_block_id:
+            return True
+        arrangement_info = self._presentation_manager._get_arrangement_info_from_instance_id(self.instance_slide_id)
+        if not arrangement_info:
+            print(f"ChangeBannerColorCommand Error: Could not resolve instance_id '{self.instance_slide_id}'")
+            return False
+        self._section_id_in_manifest = arrangement_info["section_id_in_manifest"]
+        self._slide_block_id = arrangement_info["slide_block_id"]
+        return True
+
+    def execute(self):
+        if not self._resolve_ids() or not self._section_id_in_manifest or not self._slide_block_id:
+            print("ChangeBannerColorCommand: Could not resolve IDs for execution.")
+            return
+        print(f"Executing ChangeBannerColorCommand for instance '{self.instance_slide_id}' to color '{self.new_color_hex}'")
+        self._presentation_manager.update_slide_block_in_section(
+            self._section_id_in_manifest,
+            self._slide_block_id,
+            {"ui_banner_color": self.new_color_hex},
+            _execute_command=False
+        )
+
+    def undo(self):
+        if not self._resolve_ids() or not self._section_id_in_manifest or not self._slide_block_id:
+            print("ChangeBannerColorCommand: Could not resolve IDs for undo.")
+            return
+        print(f"Undoing ChangeBannerColorCommand for instance '{self.instance_slide_id}' to color '{self.old_color_hex}'")
+        self._presentation_manager.update_slide_block_in_section(
+            self._section_id_in_manifest,
+            self._slide_block_id,
+            {"ui_banner_color": self.old_color_hex},
+            _execute_command=False
+        )

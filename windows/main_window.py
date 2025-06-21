@@ -783,7 +783,11 @@ class MainWindow(QMainWindow):
 
         # Pass all current named templates to the editor
         current_templates_snapshot = self.template_manager.get_all_templates()
-        editor = TemplateEditorWindow(all_templates=current_templates_snapshot, parent=self)
+        editor = TemplateEditorWindow(
+            all_templates=current_templates_snapshot,
+            template_manager_ref=self.template_manager, # Pass the reference
+            parent=self
+        )
         # Connect the editor's save request signal to a handler in MainWindow
         editor.templates_save_requested.connect(self._handle_editor_save_request)
         

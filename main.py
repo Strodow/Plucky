@@ -10,6 +10,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from PySide6.QtWidgets import QApplication, QMenuBar # Added QMenuBar for native setting
+import logging # Import logging
 from PySide6.QtGui import QIcon, QImage, QColor, QCursor # Import QIcon, QImage, QColor, QCursor
 from PySide6.QtCore import QObject, QEvent # Added QObject, QEvent for debugger
 
@@ -26,6 +27,7 @@ if __name__ == "__main__":
     # --- END CRITICAL macOS SETUP ---
 
     app_start_time = time.perf_counter()
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s') # Set logging level to DEBUG
     app = QApplication(sys.argv)
     app.setOrganizationName("SwiftShot") # Replace if you have one
     app.setApplicationName("Plucky")

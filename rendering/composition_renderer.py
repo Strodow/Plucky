@@ -8,15 +8,23 @@ from abc import ABC, abstractmethod, ABCMeta
 from typing import Optional, List, Tuple, Dict, Any
 
 # Third-party libraries
-import pyffmpeg as ffmpeg
+import ffmpeg as ffmpeg
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QFont, QTextOption, QFontInfo, QImage, QPen, QBrush
 )
 from PySide6.QtCore import Qt, QRectF, QPointF, QSize, QThread, Signal, Slot, QObject
 
+project_root = os.path.dirname(os.path.abspath(__file__))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from core.logging_config import setup_logging # Import the logging setup function
+
+
 # --- Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+setup_logging()
 
 # --- Helper Functions ---
 
@@ -80,6 +88,7 @@ class RenderLayerHandler(metaclass=QObjectABCMeta):
 class SolidColorLayerHandler(RenderLayerHandler):
     """Renders a solid color rectangle."""
     def render(self, painter: QPainter, layer_data: Dict[str, Any], target_width: int, target_height: int) -> None:
+        logging.debug(f"Rendering SolidColorLayer. ID: {layer_data.get('id')}")
         self._setup_painter_hints(painter)
         props = layer_data.get('properties', {})
         color_hex = props.get('color', '#00000000') # Default to transparent
@@ -92,6 +101,7 @@ class SolidColorLayerHandler(RenderLayerHandler):
 class ShapeLayerHandler(RenderLayerHandler):
     """Renders a basic geometric shape like an ellipse or rectangle."""
     def render(self, painter: QPainter, layer_data: Dict[str, Any], target_width: int, target_height: int) -> None:
+        logging.debug(f"Rendering ShapeLayer. ID: {layer_data.get('id')}, Type: {layer_data.get('properties', {}).get('shape_type')}")
         self._setup_painter_hints(painter)
         props = layer_data.get('properties', {})
         shape_type = props.get('shape_type', 'rectangle')
@@ -128,6 +138,7 @@ class ShapeLayerHandler(RenderLayerHandler):
 class ImageLayerHandler(RenderLayerHandler):
     """Renders a static image, handling scaling."""
     def render(self, painter: QPainter, layer_data: Dict[str, Any], target_width: int, target_height: int) -> None:
+        logging.debug(f"Rendering ImageLayer. ID: {layer_data.get('id')}, Path: {layer_data.get('properties', {}).get('path')}")
         self._setup_painter_hints(painter)
         props = layer_data.get('properties', {})
         path = props.get('path')
@@ -163,8 +174,9 @@ class TextLayerHandler(RenderLayerHandler):
     """Renders a block of text with styling."""
     def render(self, painter: QPainter, layer_data: Dict[str, Any], target_width: int, target_height: int) -> None:
         self._setup_painter_hints(painter)
-        props = layer_data.get('properties', {})
+        props = layer_data.get('properties', {}) # type: ignore
         content = props.get('content', '')
+        logging.debug(f"TextLayerHandler: Rendering text. Content: '{content[:50]}...', Font: {props.get('font_family')}, Size: {props.get('font_size')}, Color: {props.get('font_color')}")
         if not content.strip():
             return
             
@@ -221,11 +233,6 @@ class TextLayerHandler(RenderLayerHandler):
                     for dy in range(-width, width + 1, width):
                         if dx != 0 or dy != 0:
                             painter.drawText(draw_rect.translated(dx, dy), content, text_option)
-
-        # Main Text
-        main_color = QColor(props.get('font_color', '#FFFFFFFF'))
-        painter.setPen(main_color)
-        painter.drawText(draw_rect, content, text_option)
 
 
 # =============================================================================
@@ -404,16 +411,18 @@ class CompositionRenderer(QObject):
         height = scene_data.get('height', 1080)
         layers = scene_data.get('layers', [])
 
-        # Create the base canvas
-        canvas = QPixmap(width, height)
-        if canvas.isNull():
+        # Create the base canvas as a QImage with ARGB32_Premultiplied format,
+        # then convert it to QPixmap. This ensures proper alpha channel handling.
+        canvas_image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
+        if canvas_image.isNull():
             logging.error(f"Failed to create QPixmap of size {width}x{height}.")
             # Return a small magenta pixmap to indicate error
             error_pixmap = QPixmap(100, 100)
             error_pixmap.fill(Qt.GlobalColor.magenta)
             return error_pixmap
             
-        canvas.fill(Qt.GlobalColor.transparent)
+        canvas_image.fill(Qt.GlobalColor.transparent) # Fill the QImage with transparency
+        canvas = QPixmap.fromImage(canvas_image) # Convert to QPixmap
 
         # Set up the painter for the entire scene
         painter = QPainter(canvas)
@@ -599,4 +608,3 @@ if __name__ == "__main__":
     finally:
         renderer.cleanup() # Important to stop the video thread
         logging.info("Application finished.")
-

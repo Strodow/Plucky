@@ -1,17 +1,23 @@
 import sys
 import os
 import logging
+import json
 from typing import Optional, Dict, Any
-
+from typing import List # Added List for type hinting
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPixmap, QPainter, QColor, QImage
-from PySide6.QtCore import QObject, Signal, QSize, Qt, Slot, QTimer
+from PySide6.QtCore import QObject, Signal, QSize, Qt, Slot, QTimer, QRect
 
 # Assume composition_renderer.py is in the same directory or a reachable path
 try:
     from rendering.composition_renderer import CompositionRenderer
 except ImportError:
     # A fallback mock for standalone testing if the main renderer isn't available
+    # Attempt to import decklink_handler for the DeckLinkTarget mock
+    try:
+        from .. import decklink_handler # type: ignore
+    except ImportError:
+        import decklink_handler # type: ignore
     print("Warning: Could not import CompositionRenderer. Using a mock class for testing.", file=sys.stderr)
     class CompositionRenderer(QObject):
         needs_update = Signal()
@@ -23,6 +29,23 @@ except ImportError:
             return pixmap
         def cleanup(self): pass
 
+# Import SlideData for type hinting in the new methods
+try:
+    from data_models.slide_data import SlideData
+    # For set_screen_output_target_visibility, we might need OutputWindow type hint
+    # This creates a potential circular dependency if OutputWindow imports OutputManager.
+    # We can use a forward declaration string for type hinting if needed, or pass QWidget.
+    # For now, let's assume MainWindow passes its OutputWindow instance.
+    from windows.output_window import OutputWindow # Assuming this path is correct
+
+except ImportError:
+    SlideData = None # Fallback for type hinting if running standalone
+
+# Attempt to import decklink_handler for the DeckLinkTarget
+try:
+    from .. import decklink_handler # type: ignore
+except ImportError:
+    import decklink_handler # type: ignore
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -47,14 +70,14 @@ class OutputChannel(QObject):
         self._last_pixmap: Optional[QPixmap] = None
 
         self._create_blank_pixmap()
-
+    
     def _create_blank_pixmap(self):
         """Creates an empty, black pixmap to ensure there's always a valid output."""
         self._last_pixmap = QPixmap(self._default_size)
         if self._last_pixmap.isNull():
             logging.error(f"Channel '{self._name}': Failed to create blank pixmap.")
             self._last_pixmap = QPixmap(1, 1) # Fallback
-        self._last_pixmap.fill(Qt.GlobalColor.black)
+        self._last_pixmap.fill(Qt.GlobalColor.transparent) # Initialize with transparency
 
     def update_scene(self, scene: Optional[Dict[str, Any]]):
         """Assigns a new scene to this channel and triggers an immediate re-render."""
@@ -71,11 +94,11 @@ class OutputChannel(QObject):
         if self._current_scene:
             self._last_pixmap = self._renderer.render_scene(self._current_scene)
         else:
-            # If scene is None, just create a blank pixmap
+            # If scene is None, just create a blank transparent pixmap
             if self._last_pixmap is None or self._last_pixmap.size() != self._default_size:
                  self._create_blank_pixmap()
             else:
-                 self._last_pixmap.fill(Qt.GlobalColor.black)
+                 self._last_pixmap.fill(Qt.GlobalColor.transparent) # Ensure transparency when clearing
         
         if self._last_pixmap is None or self._last_pixmap.isNull():
             logging.error(f"Channel '{self._name}': Render result is null. Creating fallback.")
@@ -132,6 +155,67 @@ class OutputChannel(QObject):
         return key_matte
 
 # =============================================================================
+# DECKLINK OUTPUT TARGET
+# =============================================================================
+class DeckLinkTarget(QObject):
+    """Handles a single DeckLink output device."""
+    error_occurred = Signal(str)
+
+    def __init__(self, fill_device_idx: int, key_device_idx: int, video_mode_details: Dict[str, Any], parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self.fill_idx = fill_device_idx
+        self.key_idx = key_device_idx
+        self.mode_details = video_mode_details
+        self.is_active = False
+        logging.info(f"DeckLinkTarget created for Fill:{fill_device_idx}, Key:{key_device_idx}, Mode:{video_mode_details.get('name', 'N/A') if video_mode_details else 'N/A'}")
+
+    def initialize(self) -> bool:
+        if not decklink_handler.decklink_dll and not decklink_handler.load_dll():
+            self.error_occurred.emit("Failed to load DeckLink DLL.")
+            return False
+        if decklink_handler.decklink_dll.InitializeDLL() != decklink_handler.S_OK: # type: ignore
+            self.error_occurred.emit("Failed to initialize DeckLink API (InitializeDLL).")
+            return False
+        if not decklink_handler.initialize_selected_devices(self.fill_idx, self.key_idx, self.mode_details):
+            self.error_occurred.emit(f"Failed to initialize DeckLink devices (Fill:{self.fill_idx}, Key:{self.key_idx}).")
+            decklink_handler.decklink_dll.ShutdownDLL() # type: ignore
+            return False
+        self.is_active = True
+        logging.info("DeckLinkTarget initialized successfully.")
+        return True
+
+    def send_frame(self, fill_pixmap: QPixmap, key_matte_pixmap: QPixmap):
+        if not self.is_active or fill_pixmap.isNull() or key_matte_pixmap.isNull():
+            logging.debug(f"DeckLinkTarget: Send frame skipped. Active: {self.is_active}, FillNull: {fill_pixmap.isNull()}, KeyNull: {key_matte_pixmap.isNull()}")
+            return
+
+        # Convert QPixmaps to QImages, then to bytes
+        fill_image = fill_pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        key_image = key_matte_pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+
+        fill_bytes = decklink_handler.get_image_bytes_from_qimage(fill_image)
+        key_bytes = decklink_handler.get_image_bytes_from_qimage(key_image)
+
+        if not (fill_bytes and key_bytes):
+            logging.error("DeckLinkTarget: Failed to convert pixmaps to bytes for sending.")
+            return
+
+        if not decklink_handler.send_external_keying_frames(fill_bytes, key_bytes):
+            logging.error("DeckLinkTarget: decklink_handler.send_external_keying_frames reported failure.")
+
+    def shutdown(self):
+        if self.is_active:
+            logging.info("DeckLinkTarget: Shutting down devices and SDK.")
+            decklink_handler.shutdown_selected_devices()
+            if decklink_handler.decklink_dll: # Check if DLL is still loaded
+                 hr_shutdown = decklink_handler.decklink_dll.ShutdownDLL() # type: ignore
+                 if hr_shutdown != decklink_handler.S_OK:
+                     logging.warning(f"DeckLinkTarget: ShutdownDLL returned HRESULT {hr_shutdown:#010x}")
+            self.is_active = False
+        else:
+            logging.info("DeckLinkTarget: Shutdown called but not active.")
+
+# =============================================================================
 # OUTPUT MANAGER
 # =============================================================================
 
@@ -140,6 +224,11 @@ class OutputManager(QObject):
     Manages all output channels (e.g., Program, Preview) and orchestrates
     the flow of scenes between them using a central renderer.
     """
+    # Signal to notify MainWindow of DeckLink errors
+    decklink_error_occurred = Signal(str)
+    # Signal to directly notify MainWindow about program output changes
+    program_pixmap_updated = Signal(QPixmap)
+
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         
@@ -147,8 +236,14 @@ class OutputManager(QObject):
         self.renderer = CompositionRenderer()
         self.program = OutputChannel("Program", self.renderer)
         self.preview = OutputChannel("Preview", self.renderer)
+        self.decklink_target: Optional[DeckLinkTarget] = None
+        self._screen_output_window: Optional['OutputWindow'] = None # Reference to the screen output window
         
         # Connect signals
+        # Connect program channel's pixmap_updated to our own program_pixmap_updated
+        self.program.pixmap_updated.connect(self._forward_program_pixmap)
+        # Also connect program channel's pixmap_updated to update DeckLink if active
+        self.program.pixmap_updated.connect(self._update_decklink_target_frame)
         self.renderer.needs_update.connect(self._on_renderer_update)
         logging.info("OutputManager initialized with Program and Preview channels.")
 
@@ -156,7 +251,21 @@ class OutputManager(QObject):
         """Sets or updates the scene for the Preview channel."""
         logging.info("OutputManager: Updating Preview.")
         self.preview.update_scene(scene)
+
+    def register_screen_output_window(self, window: 'OutputWindow'):
+        """Allows MainWindow to register its OutputWindow instance with the OutputManager."""
+        self._screen_output_window = window
         
+    def update_preview_slides(self, background_slide: Optional[SlideData], content_slide: Optional[SlideData]):
+        """
+        Builds a scene from SlideData objects and updates the Preview channel.
+        (This method will need the scene building logic from MainWindow)
+        """
+        logging.info(f"OutputManager: Updating Preview with slides. BG: {background_slide.id if background_slide else 'None'}, Content: {content_slide.id if content_slide else 'None'}")
+        # Placeholder for scene building logic (to be moved from MainWindow)
+        scene = self._build_scene_from_slides(background_slide, content_slide)
+        self.preview.update_scene(scene)
+
     def take(self):
         """
         Takes the scene currently in Preview and makes it live in Program.
@@ -165,12 +274,20 @@ class OutputManager(QObject):
         logging.info("OutputManager: TAKE command received. Moving Preview to Program.")
         preview_scene = self.preview._current_scene
         self.program.update_scene(preview_scene)
+        # The program.pixmap_updated signal will trigger _update_decklink_target_frame
 
     def clear_all(self):
         """Clears both the Program and Preview channels to a blank state."""
         logging.info("OutputManager: Clearing all channels.")
         self.program.update_scene(None)
         self.preview.update_scene(None)
+
+    def clear_program(self):
+        """Clears only the Program channel to a blank state."""
+        logging.info("OutputManager: Clearing Program channel.")
+        self.program.update_scene(None)
+        # The program.pixmap_updated signal will trigger _update_decklink_target_frame
+        # and _forward_program_pixmap
 
     @Slot()
     def _on_renderer_update(self):
@@ -188,9 +305,136 @@ class OutputManager(QObject):
             logging.info("--> Preview channel has video. Re-rendering.")
             self.preview.render()
 
+    @Slot(QPixmap)
+    def _forward_program_pixmap(self, pixmap: QPixmap):
+        """Forwards the program channel's pixmap_updated signal."""
+        self.program_pixmap_updated.emit(pixmap)
+
+    @Slot(QPixmap)
+    def _update_decklink_target_frame(self, program_fill_pixmap: QPixmap):
+        """Sends the current program frame to the active DeckLink target."""
+        if self.decklink_target and self.decklink_target.is_active:
+            program_key_matte = self.program._generate_key_matte()
+            logging.debug("OutputManager: Sending frame to active DeckLinkTarget.")
+            self.decklink_target.send_frame(program_fill_pixmap, program_key_matte)
+
+    def enable_decklink_output(self, fill_idx: int, key_idx: int, mode_details: Optional[Dict[str, Any]]) -> bool:
+        logging.info(f"OutputManager: Enabling DeckLink output. Fill:{fill_idx}, Key:{key_idx}, Mode:{mode_details.get('name', 'N/A') if mode_details else 'N/A'}")
+        if self.decklink_target and self.decklink_target.is_active:
+            logging.info("OutputManager: DeckLink already active, shutting down existing target first.")
+            self.decklink_target.shutdown()
+            self.decklink_target = None
+
+        if mode_details is None:
+            logging.error("OutputManager: Cannot enable DeckLink output, video mode details are missing.")
+            return False
+
+        self.decklink_target = DeckLinkTarget(fill_idx, key_idx, mode_details, parent=self)
+        self.decklink_target.error_occurred.connect(self.decklink_error_occurred) # Connect error signal
+        if self.decklink_target.initialize():
+            logging.info("OutputManager: DeckLink target initialized. Sending current program frame.")
+            # Send current program frame if available
+            current_program_pixmap = self.program.get_current_pixmap()
+            if not current_program_pixmap.isNull():
+                self._update_decklink_target_frame(current_program_pixmap)
+            return True
+        else:
+            logging.error("OutputManager: Failed to initialize DeckLink target.")
+            self.decklink_target = None # Clear if initialization failed
+            return False
+
+    def disable_decklink_output(self):
+        logging.info("OutputManager: Disabling DeckLink output.")
+        if self.decklink_target:
+            self.decklink_target.shutdown()
+            try:
+                self.decklink_target.error_occurred.disconnect(self.decklink_error_occurred)
+            except RuntimeError: # Already disconnected or target deleted
+                pass
+            self.decklink_target = None
+        logging.info("OutputManager: DeckLink output disabled.")
+
+    def set_screen_output_target_visibility(self, visible: bool, screen_geometry: Optional[QRect] = None):
+        """Manages the visibility of the screen output window."""
+        if not self._screen_output_window:
+            logging.warning("OutputManager: Screen output window not registered. Cannot set visibility.")
+            return
+
+        if visible and screen_geometry:
+            self._screen_output_window.setGeometry(screen_geometry)
+            self._screen_output_window.showFullScreen()
+            logging.info(f"OutputManager: Screen output window shown fullscreen on geometry: {screen_geometry}")
+        elif not visible:
+            self._screen_output_window.hide()
+            logging.info("OutputManager: Screen output window hidden.")
+
+    def _build_scene_from_slides(self, background_slide: Optional[SlideData], content_slide: Optional[SlideData]) -> Dict[str, Any]:
+        """
+        Creates a 'Scene' dictionary for the renderer from SlideData objects.
+        (This logic will be moved from MainWindow._build_scene_from_active_slides)
+        """
+        # Use the OutputManager's default size or a configured scene size
+        scene_width, scene_height = self.program._default_size.width(), self.program._default_size.height()
+        scene = {"width": scene_width, "height": scene_height, "layers": []}
+
+        if background_slide:
+            scene['layers'].extend(self._convert_slidedata_to_layers(background_slide))
+
+        if content_slide and content_slide != background_slide: # Avoid duplicate layers if BG is also content
+            scene['layers'].extend(self._convert_slidedata_to_layers(content_slide))
+        try:
+            logging.debug(f"OutputManager: Built scene data: {json.dumps(scene, indent=2)}")
+        except TypeError:
+            logging.debug(f"OutputManager: Built scene data (non-serializable): {scene}")
+        return scene
+
+    def _convert_slidedata_to_layers(self, slide: SlideData) -> List[Dict[str, Any]]:
+        """
+        Translates a single SlideData object into a list of Layer dictionaries.
+        (Copied from MainWindow._convert_slidedata_to_layers)
+        """
+        layers = []
+        if not slide: # Should not happen if called from _build_scene_from_slides with valid SlideData
+            return layers
+
+        if slide.background_color and slide.background_color != "#00000000": # Check for actual color, not just transparent
+            layers.append({"id": f"{slide.id}_bgcolor", "type": "solid_color", "properties": {"color": slide.background_color}})
+        if slide.background_image_path and os.path.exists(slide.background_image_path):
+            layers.append({"id": f"{slide.id}_bgimage", "type": "image", "position": {"x_pc": 0, "y_pc": 0, "width_pc": 100, "height_pc": 100}, "properties": {"path": slide.background_image_path, "scaling_mode": "fill"}})
+        if slide.video_path and os.path.exists(slide.video_path):
+            layers.append({"id": f"{slide.id}_video", "type": "video", "position": {"x_pc": 0, "y_pc": 0, "width_pc": 100, "height_pc": 100}, "properties": {"path": slide.video_path, "loop": True, "scaling_mode": "fit"}})
+        
+        template = slide.template_settings or {}
+        text_boxes = template.get("text_boxes", [])
+        text_content = template.get("text_content", {})
+        
+        for box in text_boxes:
+            box_id = box.get("id")
+            content = text_content.get(box_id, "") # Get content for this box_id
+            if box_id: # Create layer even if content is empty. Renderer will handle not drawing empty text.
+                layers.append({
+                    "id": f"{slide.id}_{box_id}", "type": "text",
+                    "position": {"x_pc": box.get("x_pc", 0), "y_pc": box.get("y_pc", 0), "width_pc": box.get("width_pc", 100), "height_pc": box.get("height_pc", 100)},
+                    "properties": {
+                        "content": content,
+                        "font_family": box.get("font_family", "Arial"),
+                        "font_size": box.get("font_size", 48),
+                        "font_color": box.get("font_color", "#FFFFFF"),
+                        "h_align": box.get("h_align", "center"),
+                        "v_align": box.get("v_align", "center"),
+                        "shadow": box.get("shadow", {}), # Pass shadow dict
+                        "outline": box.get("outline", {}) # Pass outline dict
+                    }
+                })
+        return layers
+
     def cleanup(self):
         """Cleans up resources, particularly the renderer's threads."""
         logging.info("OutputManager: Cleaning up resources.")
+        if self.decklink_target:
+            self.decklink_target.shutdown()
+            # No need to disconnect here as decklink_target will be deleted if parent is self
+            self.decklink_target = None
         self.renderer.cleanup()
 
 
@@ -286,4 +530,3 @@ if __name__ == "__main__":
     finally:
         manager.cleanup()
         logging.info("Test finished.")
-

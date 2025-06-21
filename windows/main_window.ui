@@ -98,16 +98,6 @@
            </widget>
           </item>
           <item>
-           <widget class="QPushButton" name="edit_template_button">
-            <property name="toolTip">
-             <string>Open the template editor.</string>
-            </property>
-            <property name="text">
-             <string>Edit Templates</string>
-            </property>
-           </widget>
-          </item>
-          <item>
            <widget class="QPushButton" name="undo_button">
             <property name="text">
              <string>Undo</string>
@@ -338,6 +328,13 @@
     </property>
     <addaction name="actionResource_Manager"/>
    </widget>
+   <widget class="QMenu" name="menu_Templates">
+    <property name="title">
+     <string>&amp;Templates</string>
+    </property>
+    <addaction name="actionEdit_Templates"/>
+    <addaction name="actionTemplate_Pairing"/>
+   </widget>
    <widget class="QMenu" name="menu_Developer">
     <property name="title">
      <string>&amp;Developer</string>
@@ -345,6 +342,7 @@
     <addaction name="separator"/>
     <addaction name="actionEnable_Hover_Debug"/>
     <addaction name="actionToggle_Dirty_State_Debug"/>
+    <addaction name="separator"/>
     <addaction name="actionShow_Environment_Variables"/>
     <addaction name="separator"/>
     <addaction name="actionRun_Compositing_Test"/>
@@ -355,6 +353,7 @@
    <addaction name="menu_View"/>
    <addaction name="menu_Settings"/>
    <addaction name="menu_Tools"/>
+   <addaction name="menu_Templates"/>
    <addaction name="menu_Developer"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
@@ -466,6 +465,16 @@
   <action name="actionRun_Compositing_Test">
    <property name="text">
     <string>Run Compositing Test</string>
+   </property>
+  </action>
+  <action name="actionEdit_Templates">
+   <property name="text">
+    <string>Edit Templates</string>
+   </property>
+  </action>
+  <action name="actionTemplate_Pairing">
+   <property name="text">
+    <string>Pairing</string>
    </property>
   </action>
  </widget>

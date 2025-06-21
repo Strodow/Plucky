@@ -223,7 +223,7 @@ class SlideUIManager(QObject): # Changed base class from QWidget to QObject
                     print(f"SlideUIManager: ERROR rendering preview for slide {index} (ID {slide_data.id}): {e}")
                     has_font_error = True
                     preview_pixmap = QPixmap(current_dynamic_preview_width, current_dynamic_preview_height)
-                    preview_pixmap.fill(Qt.GlobalColor.darkGray)
+                    preview_pixmap.fill(Qt.GlobalColor.magenta)
 
             button = ScaledSlideButton(
                 slide_id=index, # Global index for UI list management

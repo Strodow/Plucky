@@ -6,7 +6,7 @@
    <rect>
     <x>0</x> <!-- You might adjust x later if you want to center it or position it differently -->
     <y>0</y> <!-- You might adjust y later -->
-    <width>950</width> <!-- Increased width -->
+    <width>1300</width> <!-- Increased width -->
     <height>600</height>
    </rect>
   </property>
@@ -159,6 +159,13 @@
                 </widget>
                </item>
                <item>
+                <widget class="QPushButton" name="add_shape_button">
+                 <property name="text">
+                  <string>Add Shape</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
                 <widget class="QPushButton" name="remove_selected_textbox_button">
                  <property name="text">
                   <string>Remove Selected Text Box</string>
@@ -228,6 +235,136 @@
                   </size>
                  </property>
                 </spacer>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="layout_elements_group">
+              <property name="title">
+               <string>Layout Elements</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_elements_group">
+               <item>
+                <widget class="QScrollArea" name="layout_elements_scroll_area">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>100</height> <!-- Minimum height for the scroll area -->
+                  </size>
+                 </property>
+                 <property name="widgetResizable">
+                  <bool>true</bool>
+                 </property>
+                 <widget class="QWidget" name="layout_elements_scroll_content">
+                  <property name="geometry">
+                   <rect>
+                    <x>0</x>
+                    <y>0</y>
+                    <width>301</width> <!-- Width will adapt -->
+                    <height>96</height> <!-- Height will adapt -->
+                   </rect>
+                  </property>
+                  <layout class="QVBoxLayout" name="layout_elements_list_layout"/>
+                 </widget>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="shape_properties_group">
+              <property name="title">
+               <string>Selected Shape Properties</string>
+              </property>
+              <property name="enabled">
+               <bool>false</bool> <!-- Initially disabled -->
+              </property>
+              <layout class="QFormLayout" name="shape_properties_form_layout">
+               <item row="0" column="0">
+                <widget class="QLabel" name="shape_id_label">
+                 <property name="text">
+                  <string>ID/Name:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="1">
+                <widget class="QLineEdit" name="selected_shape_id_edit"/>
+               </item>
+               <item row="1" column="0">
+                <widget class="QLabel" name="shape_fill_color_label">
+                 <property name="text">
+                  <string>Fill Color:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <layout class="QHBoxLayout" name="shape_fill_color_layout">
+                 <item>
+                  <widget class="QPushButton" name="selected_shape_fill_color_button">
+                   <property name="text">
+                    <string>Choose...</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="selected_shape_fill_color_swatch">
+                   <property name="minimumSize">
+                    <size>
+                     <width>24</width>
+                     <height>24</height>
+                    </size>
+                   </property>
+                   <property name="autoFillBackground"><bool>true</bool></property>
+                   <property name="frameShape"><enum>QFrame::StyledPanel</enum></property>
+                  </widget>
+                 </item>
+                 <item><spacer name="shape_fill_color_spacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+                </layout>
+               </item>
+               <item row="2" column="0">
+                <widget class="QLabel" name="shape_stroke_color_label">
+                 <property name="text">
+                  <string>Stroke Color:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="1">
+                <layout class="QHBoxLayout" name="shape_stroke_color_layout">
+                 <item>
+                  <widget class="QPushButton" name="selected_shape_stroke_color_button">
+                   <property name="text">
+                    <string>Choose...</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="selected_shape_stroke_color_swatch">
+                   <property name="minimumSize">
+                    <size>
+                     <width>24</width>
+                     <height>24</height>
+                    </size>
+                   </property>
+                   <property name="autoFillBackground"><bool>true</bool></property>
+                   <property name="frameShape"><enum>QFrame::StyledPanel</enum></property>
+                  </widget>
+                 </item>
+                 <item><spacer name="shape_stroke_color_spacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+                </layout>
+               </item>
+               <item row="3" column="0">
+                <widget class="QLabel" name="shape_stroke_width_label">
+                 <property name="text">
+                  <string>Stroke Width:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <widget class="QSpinBox" name="selected_shape_stroke_width_spinbox">
+                 <property name="minimum">0</property> <!-- Allow 0 for no stroke -->
+                 <property name="maximum">20</property>
+                </widget>
                </item>
               </layout>
              </widget>

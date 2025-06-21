@@ -11,23 +11,24 @@ from PySide6.QtCore import QSize, Qt, QTimer
 # Attempt to import TemplateManager from the core directory
 try:
     from ..core.template_manager import TemplateManager
-    from ..data_models.slide_data import SlideData
-    from ..rendering.slide_renderer import LayeredSlideRenderer
-    from ..core.image_cache_manager import ImageCacheManager
+    # from ..data_models.slide_data import SlideData # SlideData might not be directly needed for CompositionRenderer previews
+    from ..rendering.composition_renderer import CompositionRenderer # Changed
+    # from ..core.image_cache_manager import ImageCacheManager # Not used by CompositionRenderer directly
 except ImportError:
     # Fallback for running the script directly for testing
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from core.template_manager import TemplateManager
-    from data_models.slide_data import SlideData
-    from rendering.slide_renderer import LayeredSlideRenderer
-    from core.image_cache_manager import ImageCacheManager
+    # from data_models.slide_data import SlideData
+    from rendering.composition_renderer import CompositionRenderer # Changed
+    # from core.image_cache_manager import ImageCacheManager
 
 # --- Dynamically load the UI file ---
 # Construct the path to the UI file relative to this script's location
 # IMPORTANT: Make sure this path points to the corrected .ui file I provided earlier.
 _UI_FILE_RELATIVE_PATH = "template_pair_window.ui"
 _UI_FILE_ABSOLUTE_FALLBACK = r"c:\Users\Logan\Documents\Plucky\Plucky\windows\template_pair_window.ui"
-LOREM_IPSUM_SHORT = "Lorem ipsum dolor sit amet, consectetur adipiscing elit."
+LOREM_IPSUM_LONG = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
+
 PREVIEW_RENDER_WIDTH = 640  # Intermediate render width for 16:9 aspect
 PREVIEW_RENDER_HEIGHT = 360 # Intermediate render height
 
@@ -93,8 +94,8 @@ class TemplatePairingWindow(QWidget): # Inherit directly from QWidget
         # --- END FIX ---
 
         self.template_manager = template_manager
-        self.image_cache_manager = ImageCacheManager()
-        self.slide_renderer = LayeredSlideRenderer(app_settings=self, image_cache_manager=self.image_cache_manager)
+        # self.image_cache_manager = ImageCacheManager() # Not directly used by CompositionRenderer
+        self.slide_renderer = CompositionRenderer() # Use new renderer
         
         # Find original labels and their layouts to replace them
         original_template1_preview_label = self.findChild(QLabel, "template1PreviewLabel")
@@ -211,12 +212,6 @@ class TemplatePairingWindow(QWidget): # Inherit directly from QWidget
         self.template1ComboBox.blockSignals(False)
         self.template2ComboBox.blockSignals(False)
 
-    def get_setting(self, key: str, default=None):
-        """Provides settings for LayeredSlideRenderer."""
-        if key == "display_checkerboard_for_transparency":
-            return True 
-        return default
-
     def _on_template1_selection_changed(self, template_name: str):
         self._update_preview(template_name, self.template1PreviewLabel)
         self._update_output1_text_fields(template_name)
@@ -254,57 +249,99 @@ class TemplatePairingWindow(QWidget): # Inherit directly from QWidget
             preview_label.setText(f"Template '{template_name}' not found.")
             return
 
-        sample_slide_data = SlideData(id="preview_slide", template_settings=copy.deepcopy(template_definition_for_preview))
-        
-        if "text_content" not in sample_slide_data.template_settings:
-            sample_slide_data.template_settings["text_content"] = {}
+        # --- Construct scene_data for CompositionRenderer ---
+        scene_data = {
+            "width": PREVIEW_RENDER_WIDTH,
+            "height": PREVIEW_RENDER_HEIGHT,
+            "layers": []
+        }
 
+        # 1. Background Layer (from template)
+        bg_color_hex = template_definition_for_preview.get("background_color")
+        bg_image_path = template_definition_for_preview.get("background_image_path") 
+
+        if bg_image_path and os.path.exists(bg_image_path):
+            scene_data["layers"].append({
+                "id": "template_bg_image",
+                "type": "image",
+                "position": {"x_pc": 0, "y_pc": 0, "width_pc": 100, "height_pc": 100},
+                "properties": {"path": bg_image_path, "scaling_mode": "fill"}
+            })
+        elif bg_color_hex and bg_color_hex != "#00000000": # Only add if not fully transparent
+            scene_data["layers"].append({
+                "id": "template_bg_color",
+                "type": "solid_color",
+                "position": {"x_pc": 0, "y_pc": 0, "width_pc": 100, "height_pc": 100},
+                "properties": {"color": bg_color_hex}
+            })
+
+        # 2. Text Layers
+        defined_text_boxes = template_definition_for_preview.get("text_boxes", [])
+        text_content_map = {}
+
+        # Determine text content based on which preview label is being updated
         if preview_label is self.template1PreviewLabel:
-            if "text_boxes" in sample_slide_data.template_settings:
-                for tb_def in sample_slide_data.template_settings["text_boxes"]:
+            for tb_def in defined_text_boxes:
+                tb_id = tb_def.get("id")
+                if tb_id:
+                    line_edit_widget = self.output1_text_edits.get(tb_id)
+                    text_content_map[tb_id] = line_edit_widget.text() if line_edit_widget else LOREM_IPSUM_LONG
+        elif preview_label is self.template2PreviewLabel:
+            if self.template2ComboBox.currentData() is None:
+                # defined_text_boxes are from Output 1's template (passed as template_name)
+                for tb_def in defined_text_boxes:
                     tb_id = tb_def.get("id")
                     if tb_id:
                         line_edit_widget = self.output1_text_edits.get(tb_id)
-                        if line_edit_widget:
-                            sample_slide_data.template_settings["text_content"][tb_id] = line_edit_widget.text()
-                        else:
-                            sample_slide_data.template_settings["text_content"][tb_id] = LOREM_IPSUM_SHORT
-        
-        elif preview_label is self.template2PreviewLabel:
-            if self.template2ComboBox.currentData() is None:
-                if "text_boxes" in sample_slide_data.template_settings:
-                    for tb_def in sample_slide_data.template_settings["text_boxes"]:
-                        tb_id = tb_def.get("id")
-                        if tb_id:
-                            line_edit_widget = self.output1_text_edits.get(tb_id)
-                            if line_edit_widget:
-                                sample_slide_data.template_settings["text_content"][tb_id] = line_edit_widget.text()
-                            else:
-                                sample_slide_data.template_settings["text_content"][tb_id] = LOREM_IPSUM_SHORT
-            else:
-                if "text_boxes" in sample_slide_data.template_settings:
-                    for tb_def_out2 in sample_slide_data.template_settings["text_boxes"]:
-                        out2_tb_id = tb_def_out2.get("id")
-                        if out2_tb_id:
-                            mapping_combo = self.output2_mapping_combos.get(out2_tb_id)
-                            mapped_out1_tb_id = mapping_combo.currentData() if mapping_combo else None
-                            if mapped_out1_tb_id:
-                                line_edit_widget_out1 = self.output1_text_edits.get(mapped_out1_tb_id)
-                                if line_edit_widget_out1:
-                                    sample_slide_data.template_settings["text_content"][out2_tb_id] = line_edit_widget_out1.text()
-                                else:
-                                    sample_slide_data.template_settings["text_content"][out2_tb_id] = LOREM_IPSUM_SHORT
-                            else:
-                                sample_slide_data.template_settings["text_content"][out2_tb_id] = f"O2: {out2_tb_id}"
-        
-        rendered_pixmap, _, _ = self.slide_renderer.render_slide(
-            slide_data=sample_slide_data,
-            width=PREVIEW_RENDER_WIDTH,
-            height=PREVIEW_RENDER_HEIGHT,
-            is_final_output=False, 
-            section_metadata=None,
-            section_title=None
-        )
+                        text_content_map[tb_id] = line_edit_widget.text() if line_edit_widget else LOREM_IPSUM_LONG
+            else: # Output 2 showing its own selected template
+                # defined_text_boxes are from Output 2's template
+                for tb_def_out2 in defined_text_boxes:
+                    out2_tb_id = tb_def_out2.get("id")
+                    if out2_tb_id:
+                        mapping_combo = self.output2_mapping_combos.get(out2_tb_id)
+                        mapped_out1_tb_id = mapping_combo.currentData() if mapping_combo else None
+                        if mapped_out1_tb_id:
+                            line_edit_widget_out1 = self.output1_text_edits.get(mapped_out1_tb_id)
+                            text_content_map[out2_tb_id] = line_edit_widget_out1.text() if line_edit_widget_out1 else LOREM_IPSUM_LONG
+                        else: # Not mapped or no source
+                            text_content_map[out2_tb_id] = LOREM_IPSUM_LONG # Fallback to Lorem Ipsum
+
+        for tb_def in defined_text_boxes:
+            tb_id = tb_def.get("id")
+            text_to_draw = text_content_map.get(tb_id, LOREM_IPSUM_LONG)
+
+            style_name = tb_def.get("style_name")
+            style_props = self.template_manager.get_style_definition(style_name) if style_name else {}
+            style_props = style_props or {} # Ensure style_props is a dict
+
+            text_layer_properties = {
+                "content": text_to_draw,
+                "font_family": tb_def.get("font_family", style_props.get("font_family", "Arial")),
+                "font_size": tb_def.get("font_size", style_props.get("font_size", 32)),
+                "font_color": tb_def.get("font_color", style_props.get("font_color", "#FFFFFFFF")),
+                "h_align": tb_def.get("h_align", style_props.get("h_align", "center")),
+                "v_align": tb_def.get("v_align", style_props.get("v_align", "center")),
+                "force_all_caps": tb_def.get("force_all_caps", style_props.get("force_all_caps", False)),
+                "shadow": {
+                    "enabled": tb_def.get("shadow_enabled", style_props.get("text_shadow", False)),
+                    "color": tb_def.get("shadow_color", style_props.get("shadow_color", "#00000080")),
+                    "offset_x": tb_def.get("shadow_offset_x", style_props.get("shadow_x", 2)),
+                    "offset_y": tb_def.get("shadow_offset_y", style_props.get("shadow_y", 2))
+                },
+                "outline": {
+                    "enabled": tb_def.get("outline_enabled", style_props.get("text_outline", False)),
+                    "color": tb_def.get("outline_color", style_props.get("outline_color", "#000000FF")),
+                    "width": tb_def.get("outline_width", style_props.get("outline_thickness", 1))
+                }
+            }
+            scene_data["layers"].append({
+                "id": f"text_{tb_id}", "type": "text",
+                "position": {"x_pc": tb_def.get("x_pc",0), "y_pc": tb_def.get("y_pc",0), "width_pc": tb_def.get("width_pc",100), "height_pc": tb_def.get("height_pc",100)},
+                "properties": text_layer_properties
+            })
+
+        rendered_pixmap = self.slide_renderer.render_scene(scene_data)
 
         if rendered_pixmap and not rendered_pixmap.isNull():
             preview_label.setPixmap(rendered_pixmap)
@@ -343,7 +380,7 @@ class TemplatePairingWindow(QWidget): # Inherit directly from QWidget
             tb_display_label = tb_def.get("label", tb_id) 
 
             label_widget = QLabel(f"{tb_display_label}:")
-            edit_widget = QLineEdit(LOREM_IPSUM_SHORT) 
+            edit_widget = QLineEdit(LOREM_IPSUM_LONG) 
             edit_widget.setReadOnly(False)
             self.output1_text_edits[tb_id] = edit_widget
             edit_widget.textChanged.connect(self._on_output1_text_edit_changed)

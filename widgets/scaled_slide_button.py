@@ -9,7 +9,7 @@ from PySide6.QtGui import (
 
 )
 from PySide6.QtCore import (
-    Qt, QSize, Signal, Slot, QRectF, QPoint, QEvent, QMimeData, QByteArray
+    Qt, QSize, Signal, Slot, QRectF, QPoint, QEvent, QMimeData, QByteArray, QPointF
 )
 from typing import Optional, List, cast
 
@@ -36,41 +36,52 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
     # New signal for inserting slide from layout
     insert_slide_from_layout_requested = Signal(int, str) # slide_id (to insert after), layout_name
     insert_new_section_requested = Signal(int) # slide_id (to insert section AFTER this one)
-    def __init__(self, slide_id: int, instance_id: str, plucky_slide_mime_type: str, parent=None): # Added instance_id
-        super().__init__(parent)
-        self._pixmap_to_display = QPixmap() # Stores the pixmap (already scaled by MainWindow)
+
+    def __init__(self, **kwargs):
+        # Pop our custom arguments from the kwargs dictionary.
+        # This removes them, so they won't be passed to the superclass.
+        slide_id = kwargs.pop('slide_id')
+        instance_id = kwargs.pop('instance_id')
+        plucky_slide_mime_type = kwargs.pop('plucky_slide_mime_type')
+
+        # Now, call the parent constructor with the REMAINING kwargs.
+        # If 'parent' was in the original call, it's still in kwargs and will be handled correctly.
+        # If not, it's fine. 'slide_id' and the others are guaranteed to be gone.
+        super().__init__(**kwargs)
+
+        # --- The rest of your original __init__ method continues from here ---
+        self._pixmap_to_display = QPixmap()
         self._slide_id = slide_id
-        self._instance_id = instance_id # Store the unique instance ID
-        self._center_overlay_label: Optional[str] = "" # New: For the prominent centered label
-        self._available_template_names: List[str] = [] # Will be set by MainWindow
-        self._is_background_slide: bool = False # New property
-        self._is_arrangement_enabled: bool = True # New: For enabled/disabled state in arrangement
+        self._instance_id = instance_id
+        self.plucky_slide_mime_type = plucky_slide_mime_type
+
+        self._center_overlay_label: Optional[str] = ""
+        self._available_template_names: List[str] = []
+        self._is_background_slide: bool = False
+        self._is_arrangement_enabled: bool = True
+
+        self._is_template_missing: bool = False # New: Track if the template is missing
+        self._original_template_name: Optional[str] = None # New: Store original name if missing
 
         self._banner_height = 25
         self._is_checked = False
-        self._is_hovered = False 
-        self._is_pressed = False 
-        self._drag_start_position: Optional[QPoint] = None # For drag initiation
-        self.plucky_slide_mime_type = plucky_slide_mime_type # Store the MIME type
+        self._is_hovered = False
+        self._is_pressed = False
+        self._drag_start_position: Optional[QPoint] = None
 
         self.banner_widget = InfoBannerWidget(banner_height=self._banner_height, parent=self)
 
-        # Main layout for this QWidget
+        # ... and so on for the rest of the method (layouts, stylesheet, etc.) ...
         main_layout = QVBoxLayout(self)
-        # Add a margin to the layout so child widgets (like the banner)
-        # don't draw over the border painted by ScaledSlideButton's paintEvent.
-        # The border width can be up to 2px (or 3px if fixed_inset_for_content is 3).
-        main_layout.setContentsMargins(2,2,2,2) # A 2px margin should be enough
+        main_layout.setContentsMargins(2, 2, 2, 2)
         main_layout.setSpacing(0)
-        # The image will be drawn in the space managed by ScaledSlideButton's paintEvent,
-        # above the banner_widget. We add a stretch item that the banner will push down.
-        main_layout.addStretch(1) # This represents the image area
+        main_layout.addStretch(1)
         main_layout.addWidget(self.banner_widget)
         self.setLayout(main_layout)
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True) 
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self.setStyleSheet("""
             ScaledSlideButton { /* Style the class itself */
@@ -129,6 +140,12 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         self.banner_widget.update() # Explicitly tell the banner to repaint
         self.update() # Also tell the ScaledSlideButton to repaint
 
+    def set_template_missing_error(self, is_missing: bool, original_template_name: Optional[str] = None):
+        self._is_template_missing = is_missing
+        self._original_template_name = original_template_name
+        # The banner text might also need updating depending on how it's used
+        self.update() # Also tell the ScaledSlideButton to repaint
+
     def set_center_overlay_label(self, text: Optional[str], emit_signal_on_change: bool = True):
         new_label_value = text if text is not None else ""
         # The ScaledSlideButton still "owns" the concept of this label for data purposes
@@ -177,18 +194,23 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
         image_area_total_rect.setHeight(max(0, self.height() - self.banner_widget.height()))
 
         # Determine border properties based on state
-        # current_border_color = QColor(self.style().styleHint(QStyle.StyleHint.SH_Button_DefaultBorder, opt, self)) # Fallback - REMOVE THIS
-        # Default border from stylesheet if not overridden by state
-        if self.isChecked(): # Using our internal state
-            current_border_color = QColor("#0078D7") # Checked color
+        current_border_color: QColor
+        current_border_width: float
+
+        if self._is_template_missing:
+            current_border_color = QColor("red") # Distinct red border for error
+            current_border_width = 3.0 # Thicker border
+            # Error state overrides other states for border color
+        elif self.isChecked(): # Using our internal state
+            current_border_color = QColor("#0078D7") # Checked color (blue)
             current_border_width = 2.0
             if self._is_hovered:
-                current_border_color = QColor("#50AFEF") # Checked + Hover
+                current_border_color = QColor("#50AFEF") # Checked + Hover (brighter blue)
         elif self._is_hovered: # Not checked, but hovered
-            current_border_color = QColor("#00A0F0") # Hover color
+            current_border_color = QColor("#00A0F0") # Hover color (light blue)
             current_border_width = 2.0
-        else: # Default unckecked, not hovered
-            current_border_color = QColor("#555")
+        else: # Default unchecked, not hovered
+            current_border_color = QColor("#555") # Default gray
             current_border_width = 1.0
         
         if self._is_pressed: # Overrides other border colors for visual feedback
@@ -218,20 +240,33 @@ class ScaledSlideButton(QWidget): # Changed from QPushButton
 
         actual_pixmap_rect = QRectF()
         if not self._pixmap_to_display.isNull() and drawable_image_content_area.width() > 0 and drawable_image_content_area.height() > 0:
-            target_w = min(self._pixmap_to_display.width(), drawable_image_content_area.width())
-            target_h = min(self._pixmap_to_display.height(), drawable_image_content_area.height())
-            actual_pixmap_rect = QRectF(
-                drawable_image_content_area.left() + (drawable_image_content_area.width() - target_w) / 2,
-                drawable_image_content_area.top() + (drawable_image_content_area.height() - target_h) / 2,
-                target_w, target_h
-            )
-            painter.drawPixmap(actual_pixmap_rect, self._pixmap_to_display, self._pixmap_to_display.rect())
+            # _pixmap_to_display is already scaled by SlideUIManager. Center it.
+            px = drawable_image_content_area.left() + (drawable_image_content_area.width() - self._pixmap_to_display.width()) / 2
+            py = drawable_image_content_area.top() + (drawable_image_content_area.height() - self._pixmap_to_display.height()) / 2
+            painter.drawPixmap(QPointF(px, py), self._pixmap_to_display)
         elif drawable_image_content_area.isValid(): 
-            actual_pixmap_rect = QRectF(
-                drawable_image_content_area.left(), drawable_image_content_area.top(),
-                drawable_image_content_area.width(), max(0, drawable_image_content_area.height())
-            )
-            painter.fillRect(actual_pixmap_rect, QColor(Qt.GlobalColor.darkGray).lighter(150))
+            # Fallback drawing if pixmap is null or area is invalid
+            # actual_pixmap_rect = QRectF( # This variable is no longer used after the change
+            #     drawable_image_content_area.left(), drawable_image_content_area.top(),
+            #     drawable_image_content_area.width(), max(0, drawable_image_content_area.height())
+            # ) # Removed this line as actual_pixmap_rect is not used here
+            
+            # Draw a fallback background if pixmap is null
+            painter.fillRect(drawable_image_content_area, QColor(Qt.GlobalColor.darkGray).lighter(150))
+
+        # --- Draw Error Overlay if Template is Missing ---
+        if self._is_template_missing:
+            painter.setOpacity(1.0) # Ensure overlay is fully opaque
+            painter.fillRect(drawable_image_content_area, QColor(255, 0, 0, 80)) # Semi-transparent red overlay
+            
+            # Draw error text on the overlay
+            painter.setPen(QColor(Qt.GlobalColor.white))
+            error_font = QFont("Arial", 10 * (drawable_image_content_area.height() / BASE_TEST_PREVIEW_CONTENT_HEIGHT)) # Scale font
+            painter.setFont(error_font)
+            text_option = QTextOption(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
+            error_text = f"Template Missing:\n'{self._original_template_name or 'Unknown'}'"
+            painter.drawText(drawable_image_content_area, error_text, text_option)
 
         # Center overlay label drawing on the image is now removed. It's handled by InfoBannerWidget.
         
@@ -520,7 +555,11 @@ if __name__ == "__main__":  # pragma: no cover
     window.get_selected_slide_indices = get_selected_slide_indices_test # Monkey patch for testing
 
     for i in range(num_buttons):
-        button = ScaledSlideButton(slide_id=i)
+        button = ScaledSlideButton(
+            slide_id=i,
+            instance_id=f"test_instance_{i}", # Provide a dummy instance_id
+            plucky_slide_mime_type="application/x-plucky-slide-test" # Provide a dummy mime type
+        )
         button.set_available_templates(["Template Alpha", "Template Beta", "Default Master"])
 
         test_image_path = f"c:/Users/Logan/Documents/Plucky/Plucky/rendering/test_renders/test_render_{i + 1}.png"

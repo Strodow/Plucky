@@ -1,5 +1,6 @@
 import copy
 from typing import Dict, Any, List, Optional
+import logging # Import logging
 import json # Import the json module
 import os # For file path operations
 
@@ -41,6 +42,9 @@ class TemplateManager(QObject):
     # Emitted when the collection of templates changes (add, remove, rename)
     # or when a specific template's content is updated.
     templates_changed = Signal()
+    # Emitted when a specific template's definition is modified and saved.
+    template_modified = Signal(str)  # Argument is the template name (style or layout)
+    template_deleted = Signal(str)   # Argument is the template name (style or layout)
 
     # File extensions for template types
     STYLE_EXT = ".style.json"
@@ -70,7 +74,7 @@ class TemplateManager(QObject):
         """
         self._template_collection = copy.deepcopy(new_collection)
         self._save_templates_to_files() # Save to individual files after updating
-        self.templates_changed.emit()
+        # self.templates_changed.emit() # _save_templates_to_files will emit for individual changes
         print("TemplateManager: Entire template collection updated.")
 
     # --- Category-Specific Getters (Optional, but good for other parts of the app) ---
@@ -269,12 +273,14 @@ class TemplateManager(QObject):
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(template_data, f, indent=2, ensure_ascii=False)
-            print(f"TemplateManager: Saved {category} '{template_name}' to {filepath}")
+            logging.info(f"TemplateManager: Saved {category} '{template_name}' to {filepath}")
+            self.template_modified.emit(template_name) # Emit specific signal
+            self.templates_changed.emit() # Emit general signal for UI refresh
         except Exception as e:
-            print(f"TemplateManager: Error saving {filepath}: {e}")
+            logging.error(f"TemplateManager: Error saving {filepath}: {e}")
 
-    def _save_templates_to_files(self):
-        """Saves all in-memory templates to their individual files and deletes orphaned files."""
+    def _delete_single_template_file(self, category: str, template_name: str) -> bool:
+        """Deletes a single template file from disk and emits template_deleted signal."""
         categories = ["styles", "layouts"] # Removed "master_templates"
 
         for category in categories:
@@ -284,29 +290,60 @@ class TemplateManager(QObject):
 
             PluckyStandards.ensure_directory_exists(template_dir)
 
-            # Save current templates
-            current_templates_in_memory = self._template_collection.get(category, {})
-            expected_filenames = set()
-            for template_name, template_data in current_templates_in_memory.items():
-                filename = f"{template_name}{ext}"
-                expected_filenames.add(filename)
-                filepath = os.path.join(template_dir, filename)
-                try:
-                    with open(filepath, 'w', encoding='utf-8') as f:
-                        json.dump(template_data, f, indent=2, ensure_ascii=False)
-                except Exception as e:
-                    print(f"TemplateManager: Error saving {filepath}: {e}")
+        filename = f"{template_name}{ext}"
+        filepath = os.path.join(template_dir, filename)
+        deleted_from_disk = False
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+                logging.info(f"TemplateManager: Deleted {category} file '{filepath}'.")
+                deleted_from_disk = True
+            except Exception as e:
+                logging.error(f"TemplateManager: Error deleting {category} file '{filepath}': {e}")
+                return False # Indicate failure
+        else:
+            logging.warning(f"TemplateManager: File for {category} '{template_name}' not found on disk for deletion.")
+            deleted_from_disk = True # Consider it "deleted" if it wasn't there to begin with for signaling purposes
 
-            # Delete orphaned files
+        if deleted_from_disk:
+            self.template_deleted.emit(template_name)
+            self.templates_changed.emit()
+        return deleted_from_disk
+
+    def _save_templates_to_files(self):
+        """
+        Saves all in-memory templates to their individual files.
+        This method is now primarily for ensuring all current state is on disk,
+        and for deleting orphaned files if the internal collection was modified
+        without using the specific add/delete methods.
+        Individual add/delete methods now handle their own file operations and signal emissions.
+        """
+        categories = ["styles", "layouts"]
+
+        for category in categories:
+            template_dir, ext = self._get_template_dir_and_ext(category)
+            if not template_dir or not ext:
+                continue
+
+            PluckyStandards.ensure_directory_exists(template_dir)
+
+            current_templates_in_memory = self._template_collection.get(category, {})
+            expected_filenames_on_disk = set()
+
+            for template_name, template_data in current_templates_in_memory.items():
+                # This will call _save_single_template_to_file which emits template_modified
+                # This might be too broad if _save_templates_to_files is called after minor changes.
+                # However, if update_from_collection uses diffing, this method's role changes.
+                # For now, let's assume _save_single_template_to_file is the source of truth for "modified".
+                self._save_single_template_to_file(category, template_name, template_data)
+                expected_filenames_on_disk.add(f"{template_name}{ext}")
+
+            # Delete orphaned files (files on disk not in memory)
             if os.path.isdir(template_dir):
-                for existing_filename in os.listdir(template_dir):
-                    if existing_filename.endswith(ext) and existing_filename not in expected_filenames:
-                        filepath_to_delete = os.path.join(template_dir, existing_filename)
-                        try:
-                            os.remove(filepath_to_delete)
-                            print(f"TemplateManager: Deleted orphaned template file {filepath_to_delete}")
-                        except Exception as e:
-                            print(f"TemplateManager: Error deleting orphaned file {filepath_to_delete}: {e}")
+                for existing_filename_on_disk in os.listdir(template_dir):
+                    if existing_filename_on_disk.endswith(ext) and existing_filename_on_disk not in expected_filenames_on_disk:
+                        template_name_from_orphan = existing_filename_on_disk[:-len(ext)]
+                        self._delete_single_template_file(category, template_name_from_orphan) # This will emit template_deleted
         
         print(f"TemplateManager: All templates saved to individual files.")
 
@@ -315,25 +352,50 @@ class TemplateManager(QObject):
         """Adds or updates a style definition and saves it."""
         if "styles" not in self._template_collection: self._template_collection["styles"] = {}
         self._template_collection["styles"][name] = definition
+        # _save_single_template_to_file will emit template_modified and templates_changed
         self._save_single_template_to_file("styles", name, definition)
-        self.templates_changed.emit()
 
     def delete_style(self, name: str):
         """Deletes a style definition and its file."""
         if "styles" in self._template_collection and name in self._template_collection["styles"]:
             del self._template_collection["styles"][name]
-            template_dir, ext = self._get_template_dir_and_ext("styles")
-            if template_dir and ext:
-                filepath = os.path.join(template_dir, f"{name}{ext}")
-                if os.path.exists(filepath):
-                    try:
-                        os.remove(filepath)
-                        print(f"TemplateManager: Deleted style file {filepath}")
-                    except Exception as e:
-                        print(f"TemplateManager: Error deleting style file {filepath}: {e}")
-            self.templates_changed.emit()
-        # The 'except' block was misplaced and its message was incorrect for a delete operation.
-        # It's removed from this level. Specific exceptions are handled around os.remove.
+            # _delete_single_template_file will emit template_deleted and templates_changed
+            self._delete_single_template_file("styles", name)
+
+    def add_layout(self, name: str, definition: Dict[str, Any]): # New method
+        """Adds or updates a layout definition and saves it."""
+        if "layouts" not in self._template_collection: self._template_collection["layouts"] = {}
+        self._template_collection["layouts"][name] = definition
+        self._save_single_template_to_file("layouts", name, definition)
+
+    def delete_layout(self, name: str): # New method
+        """Deletes a layout definition and its file."""
+        if "layouts" in self._template_collection and name in self._template_collection["layouts"]:
+            del self._template_collection["layouts"][name]
+            self._delete_single_template_file("layouts", name)
+
+    def update_from_collection(self, new_collection: Dict[str, Dict[str, Any]]):
+        """
+        Replaces the internal collection by diffing against the new_collection
+        and calling specific add/delete methods, which will emit signals.
+        """
+        old_styles_coll = copy.deepcopy(self._template_collection.get("styles", {}))
+        new_styles_coll = copy.deepcopy(new_collection.get("styles", {}))
+
+        for name in list(old_styles_coll.keys()):
+            if name not in new_styles_coll: self.delete_style(name)
+        for name, definition in new_styles_coll.items():
+            if name not in old_styles_coll or old_styles_coll[name] != definition: self.add_style(name, definition)
+
+        old_layouts_coll = copy.deepcopy(self._template_collection.get("layouts", {}))
+        new_layouts_coll = copy.deepcopy(new_collection.get("layouts", {}))
+        for name in list(old_layouts_coll.keys()):
+            if name not in new_layouts_coll: self.delete_layout(name)
+        for name, definition in new_layouts_coll.items():
+            if name not in old_layouts_coll or old_layouts_coll[name] != definition: self.add_layout(name, definition)
+
+        self._ensure_default_entries() # Ensure defaults are still present or re-added
+        logging.info("TemplateManager: Template collection updated by diffing.")
 
     def resolve_slide_template_for_block(self, slide_block_data: dict, section_data: dict) -> Optional[dict]:
         """

@@ -774,6 +774,36 @@ class LayeredSlideRenderer: # Renamed from SlideRenderer
 
         overall_font_error = False
 
+        # --- Step 6: Handle "Template Missing" Error State ---
+        if slide_data and slide_data.template_settings and \
+           slide_data.template_settings.get('layout_name') == "MISSING_LAYOUT_ERROR":
+            
+            original_template_name = slide_data.template_settings.get('original_template_name', 'Unknown')
+            error_message = f"Error: Template Missing!\nOriginal: '{original_template_name}'"
+            
+            painter = QPainter(current_canvas)
+            if painter.isActive():
+                # Fill with a noticeable error background
+                painter.fillRect(current_canvas.rect(), QColor(255, 200, 200, 200)) # Light red, semi-transparent
+                
+                # Draw error text
+                error_font = QFont("Arial", 40 * (height / 1080.0)) # Scale font size
+                painter.setFont(error_font)
+                painter.setPen(QColor(Qt.GlobalColor.black))
+                
+                text_option = QTextOption(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
+                
+                painter.drawText(QRectF(current_canvas.rect()), error_message, text_option)
+                painter.end()
+            else:
+                logging.error(f"LayeredSlideRenderer: QPainter failed to activate for error message on slide {slide_id_for_log}")
+
+            benchmark_data["total_render"] = time.perf_counter() - total_render_start_time
+            # Return the canvas with the error message, True for font_error to be safe, and current benchmarks
+            return current_canvas, True, benchmark_data
+        # --- End Step 6 ---
+
         for layer_handler in self.render_layers:
             layer_output_pixmap, layer_font_error, layer_benchmarks = layer_handler.render(
                 current_canvas,

@@ -2,13 +2,14 @@ import copy # For deep copying templates
 from PySide6.QtWidgets import (
     QGroupBox, # Added QGroupBox
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDialogButtonBox, # QFormLayout removed
-    QComboBox, QWidget, QScrollArea, QInputDialog, QMessageBox, QCheckBox, # QFormLayout removed
-    QTabWidget, QFontComboBox, QSpinBox, QColorDialog, QLineEdit, 
+    QComboBox, QWidget, QScrollArea, QInputDialog, QMessageBox, QCheckBox, QMenu, # QFormLayout removed, Added QMenu
+    QTabWidget, QFontComboBox, QSpinBox, QColorDialog, QLineEdit, QSpacerItem, QSlider, # Added QSpacerItem, QSlider
+    QSizePolicy, QGraphicsRectItem, # Added QSizePolicy, QGraphicsRectItem
     QGraphicsObject, # Changed from QGraphicsRectItem
     QGraphicsView, QGraphicsScene, QGraphicsTextItem, QGraphicsDropShadowEffect, QGraphicsItem, QApplication # Added QGraphicsItem, QApplication
 ) # Added QCursor
 from PySide6.QtGui import QFont, QColor, QPalette, QPainter, QPen, QTextCharFormat, QTextCursor, QBrush # For font and color manipulation, and QPainter, Added QPen, QTextCharFormat, QTextCursor, QBrush
-from PySide6.QtCore import Qt, Slot, QDir, QFileInfo, Signal # Added Signal
+from PySide6.QtCore import Qt, Slot, QDir, QFileInfo, Signal, QPoint # Added Signal, QPoint
 from PySide6.QtUiTools import QUiLoader
 # from data_models.slide_data import DEFAULT_TEMPLATE # To access initial defaults - Unused
 from PySide6.QtCore import QRectF # For QGraphicsObject bounding rect
@@ -16,6 +17,13 @@ from typing import Optional # Import Optional for type hinting
 from PySide6.QtGui import QCursor
 # Default properties for a new layout definition (used in TemplateEditorWindow)
 from PySide6.QtGui import QFontMetrics, QTextOption # For text width calculation, Added QTextOption
+from PySide6.QtGui import QAction # Added QAction
+
+# Attempt to import TemplateManager for type hinting and direct calls
+try:
+    from core.template_manager import TemplateManager
+except ImportError:
+    TemplateManager = None # Fallback if running standalone or path issues
 from PySide6.QtCore import QPointF # Import QPointF
 # from PySide6.QtWidgets import QStyle # For QStyle.State_Selected - Unused
 
@@ -69,6 +77,8 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
         self.scene_width = scene_w # Scene dimensions for percentage calculations
         self.scene_height = scene_h
         
+        self._initial_z_value = 0.0 # Default Z value
+        self.is_locked = False # New property for locking
         # Snap initial geometry
         initial_x_pc = (x / self.scene_width) * 100.0
         initial_y_pc = (y / self.scene_height) * 100.0
@@ -88,6 +98,7 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
         # Allow moving and selecting
         self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setAcceptHoverEvents(True) # Explicitly accept hover events
         self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemSendsGeometryChanges, True) # Important for itemChange
         
         self._resize_mode = None # None, 'top', 'bottom', 'left', 'right', 'top-left', etc.
@@ -222,22 +233,40 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
     
     def hoverMoveEvent(self, event):
         # Change cursor based on hover position for resizing
-        pos = event.pos() # Position in item coordinates
-        handle_size = RESIZE_HANDLE_SIZE # This is 8 pixels by default
+        pos = event.pos() # event.pos() is in item's local coordinates
+        half_handle = RESIZE_HANDLE_SIZE / 2.0
+
+        # Define QRectF for each handle's sensitive area
+        tl_rect = QRectF(self._rect.left() - half_handle, self._rect.top() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        tr_rect = QRectF(self._rect.right() - half_handle, self._rect.top() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        bl_rect = QRectF(self._rect.left() - half_handle, self._rect.bottom() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        br_rect = QRectF(self._rect.right() - half_handle, self._rect.bottom() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        tm_rect = QRectF(self._rect.center().x() - half_handle, self._rect.top() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        bm_rect = QRectF(self._rect.center().x() - half_handle, self._rect.bottom() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        lm_rect = QRectF(self._rect.left() - half_handle, self._rect.center().y() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        rm_rect = QRectF(self._rect.right() - half_handle, self._rect.center().y() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+
         
         determined_cursor_shape = None # None means unset/defer to view
         
-        left_edge = abs(pos.x() - self._rect.left()) < handle_size
-        right_edge = abs(pos.x() - self._rect.right()) < handle_size
-        top_edge = abs(pos.y() - self._rect.top()) < handle_size
-        bottom_edge = abs(pos.y() - self._rect.bottom()) < handle_size
-        
-        if left_edge and top_edge: determined_cursor_shape = Qt.CursorShape.SizeFDiagCursor
-        elif right_edge and bottom_edge: determined_cursor_shape = Qt.CursorShape.SizeFDiagCursor
-        elif left_edge and bottom_edge: determined_cursor_shape = Qt.CursorShape.SizeBDiagCursor
-        elif right_edge and top_edge: determined_cursor_shape = Qt.CursorShape.SizeBDiagCursor
-        elif left_edge or right_edge: determined_cursor_shape = Qt.CursorShape.SizeHorCursor
-        elif top_edge or bottom_edge: determined_cursor_shape = Qt.CursorShape.SizeVerCursor
+        if tl_rect.contains(pos) or br_rect.contains(pos):
+            determined_cursor_shape = Qt.CursorShape.SizeFDiagCursor
+        elif tr_rect.contains(pos) or bl_rect.contains(pos):
+            determined_cursor_shape = Qt.CursorShape.SizeBDiagCursor
+        elif tm_rect.contains(pos) or bm_rect.contains(pos):
+            determined_cursor_shape = Qt.CursorShape.SizeVerCursor
+        elif lm_rect.contains(pos) or rm_rect.contains(pos):
+            determined_cursor_shape = Qt.CursorShape.SizeHorCursor
+        # The old broader check (can be removed if the precise check above is preferred):
+        # else:
+        #     handle_detect_margin = RESIZE_HANDLE_SIZE # Original broader detection margin
+        #     left_edge = abs(pos.x() - self._rect.left()) < handle_detect_margin
+        #     right_edge = abs(pos.x() - self._rect.right()) < handle_detect_margin
+        #     top_edge = abs(pos.y() - self._rect.top()) < handle_detect_margin
+        #     bottom_edge = abs(pos.y() - self._rect.bottom()) < handle_detect_margin
+        #     if (left_edge or right_edge) and not (top_edge or bottom_edge): determined_cursor_shape = Qt.CursorShape.SizeHorCursor
+        #     elif (top_edge or bottom_edge) and not (left_edge or right_edge): determined_cursor_shape = Qt.CursorShape.SizeVerCursor
+
         
         if determined_cursor_shape is not None:
             # If a specific resize cursor is determined, set it
@@ -256,7 +285,7 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and not self.is_locked: # Check lock state
             pos = event.pos() # Position in item coordinates
             handle_size = RESIZE_HANDLE_SIZE
             
@@ -287,7 +316,7 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
                 super().mousePressEvent(event) # Not resizing, pass to base class for moving
 
     def mouseMoveEvent(self, event):
-        if self._resize_mode and self._mouse_press_pos is not None:
+        if self._resize_mode and self._mouse_press_pos is not None and not self.is_locked: # Check lock state
             # Calculate how much the mouse has moved IN SCENE COORDINATES from its initial press position
             mouse_delta_scene = event.scenePos() - self._mouse_press_pos
 
@@ -359,7 +388,7 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
             super().mouseMoveEvent(event) # Not resizing, pass to base class for moving
 
     def mouseReleaseEvent(self, event):
-        if self._resize_mode:
+        if self._resize_mode and not self.is_locked: # Check lock state
             self._resize_mode = None
             self._mouse_press_pos = None
             self._item_initial_pos_at_drag = None
@@ -380,7 +409,8 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
 
 
     def itemChange(self, change, value):
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene() and not self._resize_mode:
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene() \
+           and not self._resize_mode and not self.is_locked: # Check lock state for moving
             # 'value' is the new proposed QPointF position in scene coordinates
             new_pos_pixels = value
             
@@ -400,7 +430,8 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
                     value = snapped_pos_pixels # Modify the proposed position to the snapped one
             # If Ctrl not held, value remains the raw proposed position
 
-        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged and self.scene() and not self._resize_mode:
+        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged and self.scene() \
+             and not self._resize_mode and not self.is_locked: # Check lock state
             # Item has finished moving. 'value' is the new position (which should be the snapped one).
             # Use self.pos() for definitive current position.
             current_pos_pixels = self.pos() 
@@ -419,6 +450,19 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
             # Selection state has changed, trigger an update to redraw with/without handles/text
             self.update()
 
+        elif change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged and self.scene():
+            # Value is the new selection state (True if selected, False if not)
+            # This is preferred over ItemSelectedChange for reacting after the state is set.
+            if self.isSelected(): # Item is now selected
+                max_z = 0.0
+                for item in self.scene().items():
+                    if item is not self: # Consider all other items
+                        max_z = max(max_z, item.zValue())
+                self.setZValue(max_z + 1.0)
+            else: # Item is no longer selected
+                self.setZValue(self._initial_z_value) # Reset to its original z-depth
+            # No explicit self.update() needed here, selection change usually triggers repaint.
+
         return super().itemChange(change, value)
 
     def assign_style(self, style_name: Optional[str]):
@@ -432,6 +476,12 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
     def assign_vertical_alignment(self, v_align: str):
         self.assigned_v_align = v_align
         self._update_text_item_appearance()
+        
+    def setLocked(self, locked: bool):
+        self.is_locked = locked
+        self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, not locked)
+        # Resizing is handled by checking self.is_locked in mouse events
+
 
     def _snap_value(self, value: float, increment: float) -> float:
         """Snaps a value to the nearest multiple of the increment."""
@@ -509,6 +559,282 @@ class LayoutRectItem(QGraphicsObject): # Inherit from QGraphicsObject
         self.text_item.setPos(self._rect.left() + h_padding, text_y_pos)
         self.update() # Request repaint of the LayoutRectItem
 
+# --- Custom QGraphicsObject for Layout Shapes ---
+class LayoutShapeItem(QGraphicsObject):
+    geometry_changed_pc = Signal(str, float, float, float, float) # shape_id, x_pc, y_pc, w_pc, h_pc
+    properties_changed = Signal(str) # shape_id, to indicate fill/stroke/opacity changed
+    SNAP_INCREMENT_PC = 1.0
+
+    def __init__(self, shape_id: str, shape_type: str,
+                 x: float, y: float, w: float, h: float,
+                 scene_w: float, scene_h: float,
+                 fill_color_hex: str, stroke_color_hex: str, stroke_width: int,
+                 opacity: float = 1.0, # Opacity 0.0 (transparent) to 1.0 (opaque)
+                 z_order: int = 0, parent=None): # Added z_order
+        super().__init__(parent)
+        self.shape_id = shape_id
+        self.shape_type = shape_type # "rectangle", "ellipse", etc.
+        self.scene_width = scene_w
+        self.scene_height = scene_h
+
+        self._fill_color = QColor(fill_color_hex)
+        self._stroke_color = QColor(stroke_color_hex)
+        self._stroke_width = stroke_width
+        self.setOpacity(opacity) # QGraphicsObject has opacity property
+
+        self._initial_z_value = float(z_order) # Set initial Z from z_order
+        self.is_locked = False
+
+        # Initial geometry snapping (similar to LayoutRectItem)
+        initial_x_pc = (x / self.scene_width) * 100.0
+        initial_y_pc = (y / self.scene_height) * 100.0
+        initial_w_pc = (w / self.scene_width) * 100.0
+        initial_h_pc = (h / self.scene_height) * 100.0
+        snapped_x_pc = self._snap_value(initial_x_pc, self.SNAP_INCREMENT_PC)
+        snapped_y_pc = self._snap_value(initial_y_pc, self.SNAP_INCREMENT_PC)
+        snapped_w_pc = self._snap_value(initial_w_pc, self.SNAP_INCREMENT_PC)
+        snapped_h_pc = self._snap_value(initial_h_pc, self.SNAP_INCREMENT_PC)
+        final_x_pixels = (snapped_x_pc / 100.0) * self.scene_width
+        final_y_pixels = (snapped_y_pc / 100.0) * self.scene_height
+        final_w_pixels = (snapped_w_pc / 100.0) * self.scene_width
+        final_h_pixels = (snapped_h_pc / 100.0) * self.scene_height
+
+        self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setAcceptHoverEvents(True)
+        self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+
+        self._resize_mode = None
+        self._mouse_press_pos = None
+        self._item_initial_pos_at_drag = None
+        self._item_initial_rect_at_drag = None
+
+        self._rect = QRectF(0, 0, final_w_pixels, final_h_pixels)
+        self.setPos(final_x_pixels, final_y_pixels)
+
+    def boundingRect(self) -> QRectF:
+        # Similar to LayoutRectItem, adjust for handles and stroke
+        # and percentage text
+        handle_margin = RESIZE_HANDLE_SIZE / 2.0
+        stroke_margin = self._stroke_width / 2.0
+
+        # Estimate space for percentage text (similar to LayoutRectItem)
+        text_offset_from_rect_edge = RESIZE_HANDLE_SIZE * 1.5
+        measurement_font_approx = QFont()
+        measurement_font_approx.setPointSize(max(6, int(RESIZE_HANDLE_SIZE * 1.2)))
+        fm = QFontMetrics(measurement_font_approx)
+        percent_text_width_approx = fm.horizontalAdvance("100.0%") + 10
+        measurement_text_height_approx = fm.height()
+        text_vertical_clearance = text_offset_from_rect_edge + measurement_text_height_approx
+        text_horizontal_clearance = text_offset_from_rect_edge + percent_text_width_approx
+
+        margin = max(handle_margin, stroke_margin, text_vertical_clearance, text_horizontal_clearance) + 2 # Extra padding
+        return self._rect.adjusted(-margin, -margin, margin, margin)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        pen = QPen(self._stroke_color, self._stroke_width)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(self._fill_color))
+
+        if self.isSelected(): # Draw percentage measurements if selected
+            painter.setPen(QColor(Qt.GlobalColor.cyan)) # Measurement text color
+            measurement_font = painter.font()
+            measurement_font.setPointSize(max(6, int(RESIZE_HANDLE_SIZE * 1.2)))
+            painter.setFont(measurement_font)
+
+            item_scene_pos = self.pos()
+            item_rect_width_scene = self._rect.width()
+            item_rect_height_scene = self._rect.height()
+
+            percent_from_left = (item_scene_pos.x() / self.scene_width) * 100.0
+            percent_from_top = (item_scene_pos.y() / self.scene_height) * 100.0
+            item_right_edge_scene = item_scene_pos.x() + item_rect_width_scene
+            percent_to_right = ((self.scene_width - item_right_edge_scene) / self.scene_width) * 100.0
+            item_bottom_edge_scene = item_scene_pos.y() + item_rect_height_scene
+            percent_to_bottom = ((self.scene_height - item_bottom_edge_scene) / self.scene_height) * 100.0
+
+            text_offset = RESIZE_HANDLE_SIZE * 1.5
+            text_box_height = painter.fontMetrics().height()
+            text_box_width_for_top_bottom_text = painter.fontMetrics().horizontalAdvance("100.0%") + 10
+            text_box_width_for_side_text = painter.fontMetrics().horizontalAdvance("100.0%") + 10
+
+            painter.drawText(QRectF(self._rect.center().x() - text_box_width_for_top_bottom_text / 2, self._rect.top() - text_offset - text_box_height, text_box_width_for_top_bottom_text, text_box_height), Qt.AlignmentFlag.AlignCenter, f"{percent_from_top:.1f}%")
+            painter.drawText(QRectF(self._rect.left() - text_offset - text_box_width_for_side_text, self._rect.center().y() - (text_box_height/2), text_box_width_for_side_text, text_box_height), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, f"{percent_from_left:.1f}%")
+            painter.drawText(QRectF(self._rect.right() + text_offset, self._rect.center().y() - (text_box_height/2), text_box_width_for_side_text, text_box_height), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"{percent_to_right:.1f}%")
+            painter.drawText(QRectF(self._rect.center().x() - text_box_width_for_top_bottom_text / 2, self._rect.bottom() + text_offset, text_box_width_for_top_bottom_text, text_box_height), Qt.AlignmentFlag.AlignCenter, f"{percent_to_bottom:.1f}%")
+
+        # Restore pen and brush for shape drawing if changed by percentage text
+        painter.setPen(pen) # Re-set the shape's pen
+        painter.setBrush(QBrush(self._fill_color)) # Re-set the shape's brush
+
+        if self.shape_type == "rectangle":
+            painter.drawRect(self._rect)
+        # Add other shapes like ellipse later
+        # elif self.shape_type == "ellipse":
+        #     painter.drawEllipse(self._rect)
+
+        if self.isSelected(): # Draw resize handles
+            painter.setPen(QPen(Qt.GlobalColor.white, 1))
+            painter.setBrush(QBrush(Qt.GlobalColor.black))
+            handle_size = RESIZE_HANDLE_SIZE
+            half_handle = handle_size / 2.0
+            # Corners
+            painter.drawRect(self._rect.topLeft().x() - half_handle, self._rect.topLeft().y() - half_handle, handle_size, handle_size)
+            painter.drawRect(self._rect.topRight().x() - half_handle, self._rect.topRight().y() - half_handle, handle_size, handle_size)
+            painter.drawRect(self._rect.bottomLeft().x() - half_handle, self._rect.bottomLeft().y() - half_handle, handle_size, handle_size)
+            painter.drawRect(self._rect.bottomRight().x() - half_handle, self._rect.bottomRight().y() - half_handle, handle_size, handle_size)
+            # Mid-points
+            painter.drawRect(self._rect.center().x() - half_handle, self._rect.top() - half_handle, handle_size, handle_size)
+            painter.drawRect(self._rect.center().x() - half_handle, self._rect.bottom() - half_handle, handle_size, handle_size)
+            painter.drawRect(self._rect.left() - half_handle, self._rect.center().y() - half_handle, handle_size, handle_size)
+            painter.drawRect(self._rect.right() - half_handle, self._rect.center().y() - half_handle, handle_size, handle_size)
+
+    def hoverShape(self) -> QPainterPath:
+        path = QPainterPath()
+        path.addRect(self._rect.adjusted(-RESIZE_HANDLE_SIZE/2, -RESIZE_HANDLE_SIZE/2, RESIZE_HANDLE_SIZE/2, RESIZE_HANDLE_SIZE/2))
+        return path
+
+    def hoverMoveEvent(self, event): # Identical to LayoutRectItem for now
+        pos = event.pos()
+        half_handle = RESIZE_HANDLE_SIZE / 2.0
+        tl_rect = QRectF(self._rect.left() - half_handle, self._rect.top() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        tr_rect = QRectF(self._rect.right() - half_handle, self._rect.top() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        bl_rect = QRectF(self._rect.left() - half_handle, self._rect.bottom() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        br_rect = QRectF(self._rect.right() - half_handle, self._rect.bottom() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        tm_rect = QRectF(self._rect.center().x() - half_handle, self._rect.top() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        bm_rect = QRectF(self._rect.center().x() - half_handle, self._rect.bottom() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        lm_rect = QRectF(self._rect.left() - half_handle, self._rect.center().y() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        rm_rect = QRectF(self._rect.right() - half_handle, self._rect.center().y() - half_handle, RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE)
+        determined_cursor_shape = None
+        if tl_rect.contains(pos) or br_rect.contains(pos): determined_cursor_shape = Qt.CursorShape.SizeFDiagCursor
+        elif tr_rect.contains(pos) or bl_rect.contains(pos): determined_cursor_shape = Qt.CursorShape.SizeBDiagCursor
+        elif tm_rect.contains(pos) or bm_rect.contains(pos): determined_cursor_shape = Qt.CursorShape.SizeVerCursor
+        elif lm_rect.contains(pos) or rm_rect.contains(pos): determined_cursor_shape = Qt.CursorShape.SizeHorCursor
+        if determined_cursor_shape is not None:
+            if self.cursor().shape() != determined_cursor_shape: self.setCursor(QCursor(determined_cursor_shape))
+        else:
+            if self.hasCursor(): self.unsetCursor()
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event): # Identical
+        self.unsetCursor()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event): # Identical logic to LayoutRectItem
+        if event.button() == Qt.MouseButton.LeftButton and not self.is_locked:
+            pos = event.pos()
+            handle_size = RESIZE_HANDLE_SIZE
+            left_edge = abs(pos.x() - self._rect.left()) < handle_size; right_edge = abs(pos.x() - self._rect.right()) < handle_size
+            top_edge = abs(pos.y() - self._rect.top()) < handle_size; bottom_edge = abs(pos.y() - self._rect.bottom()) < handle_size
+            if left_edge and top_edge: self._resize_mode = 'top-left'
+            elif right_edge and bottom_edge: self._resize_mode = 'bottom-right'
+            elif left_edge and bottom_edge: self._resize_mode = 'bottom-left'
+            elif right_edge and top_edge: self._resize_mode = 'top-right'
+            elif left_edge: self._resize_mode = 'left'
+            elif right_edge: self._resize_mode = 'right'
+            elif top_edge: self._resize_mode = 'top'
+            elif bottom_edge: self._resize_mode = 'bottom'
+            else: self._resize_mode = None
+            if self._resize_mode:
+                self._mouse_press_pos = event.scenePos(); self._item_initial_pos_at_drag = self.pos()
+                self._item_initial_rect_at_drag = QRectF(self._rect)
+                self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, False); self.setSelected(True); event.accept()
+            else: super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event): # Identical logic to LayoutRectItem
+        if self._resize_mode and self._mouse_press_pos is not None and not self.is_locked:
+            mouse_delta_scene = event.scenePos() - self._mouse_press_pos
+            new_item_pos_scene = QPointF(self._item_initial_pos_at_drag); new_item_local_rect = QRectF(self._item_initial_rect_at_drag)
+            if 'left' in self._resize_mode: new_item_pos_scene.setX(self._item_initial_pos_at_drag.x() + mouse_delta_scene.x()); new_item_local_rect.setWidth(self._item_initial_rect_at_drag.width() - mouse_delta_scene.x())
+            if 'right' in self._resize_mode: new_item_local_rect.setWidth(self._item_initial_rect_at_drag.width() + mouse_delta_scene.x())
+            if 'top' in self._resize_mode: new_item_pos_scene.setY(self._item_initial_pos_at_drag.y() + mouse_delta_scene.y()); new_item_local_rect.setHeight(self._item_initial_rect_at_drag.height() - mouse_delta_scene.y())
+            if 'bottom' in self._resize_mode: new_item_local_rect.setHeight(self._item_initial_rect_at_drag.height() + mouse_delta_scene.y())
+            min_size = 10.0
+            if new_item_local_rect.width() < min_size:
+                if 'left' in self._resize_mode: new_item_pos_scene.setX(self._item_initial_pos_at_drag.x() + self._item_initial_rect_at_drag.width() - min_size)
+                new_item_local_rect.setWidth(min_size)
+            if new_item_local_rect.height() < min_size:
+                if 'top' in self._resize_mode: new_item_pos_scene.setY(self._item_initial_pos_at_drag.y() + self._item_initial_rect_at_drag.height() - min_size)
+                new_item_local_rect.setHeight(min_size)
+            new_item_local_rect = new_item_local_rect.normalized()
+            if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:
+                prop_x_pc = (new_item_pos_scene.x()/self.scene_width)*100; prop_y_pc = (new_item_pos_scene.y()/self.scene_height)*100
+                prop_w_pc = (new_item_local_rect.width()/self.scene_width)*100; prop_h_pc = (new_item_local_rect.height()/self.scene_height)*100
+                snapped_x_pc=self._snap_value(prop_x_pc,self.SNAP_INCREMENT_PC); snapped_y_pc=self._snap_value(prop_y_pc,self.SNAP_INCREMENT_PC)
+                snapped_w_pc=self._snap_value(prop_w_pc,self.SNAP_INCREMENT_PC); snapped_h_pc=self._snap_value(prop_h_pc,self.SNAP_INCREMENT_PC)
+                new_item_pos_scene=QPointF((snapped_x_pc/100)*self.scene_width, (snapped_y_pc/100)*self.scene_height)
+                new_item_local_rect=QRectF(0,0,(snapped_w_pc/100)*self.scene_width, (snapped_h_pc/100)*self.scene_height)
+            self.prepareGeometryChange(); self.setPos(new_item_pos_scene); self._rect = new_item_local_rect; self.update(); event.accept()
+        else: super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event): # Identical logic to LayoutRectItem
+        if self._resize_mode and not self.is_locked:
+            self._resize_mode = None; self._mouse_press_pos = None; self._item_initial_pos_at_drag = None; self._item_initial_rect_at_drag = None
+            self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, True)
+            final_x_pc=(self.pos().x()/self.scene_width)*100; final_y_pc=(self.pos().y()/self.scene_height)*100
+            final_w_pc=(self._rect.width()/self.scene_width)*100; final_h_pc=(self._rect.height()/self.scene_height)*100
+            self.geometry_changed_pc.emit(self.shape_id, final_x_pc, final_y_pc, final_w_pc, final_h_pc); event.accept()
+        else: super().mouseReleaseEvent(event)
+
+    def itemChange(self, change, value): # Identical logic to LayoutRectItem
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene() and not self._resize_mode and not self.is_locked:
+            new_pos_pixels = value
+            if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:
+                potential_x_pc=(new_pos_pixels.x()/self.scene_width)*100; potential_y_pc=(new_pos_pixels.y()/self.scene_height)*100
+                snapped_x_pc=self._snap_value(potential_x_pc,self.SNAP_INCREMENT_PC); snapped_y_pc=self._snap_value(potential_y_pc,self.SNAP_INCREMENT_PC)
+                snapped_pos_pixels=QPointF((snapped_x_pc/100)*self.scene_width, (snapped_y_pc/100)*self.scene_height)
+                if snapped_pos_pixels != new_pos_pixels: value = snapped_pos_pixels
+        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged and self.scene() and not self._resize_mode and not self.is_locked:
+            current_pos_pixels = self.pos()
+            final_x_pc=(current_pos_pixels.x()/self.scene_width)*100; final_y_pc=(current_pos_pixels.y()/self.scene_height)*100
+            current_w_pc=(self._rect.width()/self.scene_width)*100; current_h_pc=(self._rect.height()/self.scene_height)*100
+            self.geometry_changed_pc.emit(self.shape_id, final_x_pc, final_y_pc, current_w_pc, current_h_pc)
+        elif change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange and self.scene(): self.update()
+        elif change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged and self.scene():
+            if self.isSelected():
+                max_z = 0.0
+                for item in self.scene().items():
+                    if item is not self: max_z = max(max_z, item.zValue())
+                self.setZValue(max_z + 1.0)
+            else: self.setZValue(self._initial_z_value)
+        return super().itemChange(change, value)
+
+    def setLocked(self, locked: bool): # Identical
+        self.is_locked = locked
+        self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, not locked)
+
+    def _snap_value(self, value: float, increment: float) -> float: # Identical
+        if increment <= 0: return value
+        return round(value / increment) * increment
+
+    # --- Property Setters ---
+    def setFillColor(self, color: QColor):
+        if self._fill_color != color:
+            self._fill_color = color
+            self.update()
+            self.properties_changed.emit(self.shape_id)
+
+    def setStrokeColor(self, color: QColor):
+        if self._stroke_color != color:
+            self._stroke_color = color
+            self.update()
+            self.properties_changed.emit(self.shape_id)
+
+    def setStrokeWidth(self, width: int):
+        if self._stroke_width != width:
+            self._stroke_width = max(0, width) # Ensure non-negative
+            self.update()
+            self.properties_changed.emit(self.shape_id)
+
+    def setItemOpacity(self, opacity: float): # Renamed to avoid conflict with QGraphicsObject.setOpacity
+        # QGraphicsObject.setOpacity handles the visual opacity.
+        # This method is for if you need to store the opacity value separately
+        # or trigger additional logic. For now, it just calls the base.
+        super().setOpacity(max(0.0, min(1.0, opacity))) # Clamp between 0 and 1
+        self.properties_changed.emit(self.shape_id)
+
+
+
 class OutlinedGraphicsTextItem(QGraphicsTextItem):
     def __init__(self, text: str = "", parent=None):
         super().__init__(parent)
@@ -584,9 +910,10 @@ class TemplateEditorWindow(QDialog):
     # Signal to indicate that the current templates (styles, etc.) should be saved
     templates_save_requested = Signal(dict)
 
-    def __init__(self, all_templates: dict, parent=None):
+    def __init__(self, all_templates: dict, template_manager_ref: Optional[TemplateManager] = None, parent=None):
         super().__init__(parent)
 
+        self.template_manager_ref = template_manager_ref # Store the reference
         # Load the UI file
         # Assuming the .ui file is in the same directory as this .py file
         script_file_info = QFileInfo(__file__) # Get info about the current script file
@@ -635,6 +962,7 @@ class TemplateEditorWindow(QDialog):
         self.rename_layout_button: QPushButton = self.ui.findChild(QPushButton, "rename_layout_button")
         self.layout_preview_graphics_view: ZoomableGraphicsView = self.ui.findChild(ZoomableGraphicsView, "layout_preview_graphics_view") # Use custom class
         self.add_textbox_to_layout_button: QPushButton = self.ui.findChild(QPushButton, "add_textbox_to_layout_button")
+        self.add_shape_button: QPushButton = self.ui.findChild(QPushButton, "add_shape_button") # New button
         self.remove_selected_textbox_button: QPushButton = self.ui.findChild(QPushButton, "remove_selected_textbox_button")
         self.textbox_properties_group: QGroupBox = self.ui.findChild(QGroupBox, "textbox_properties_group")
         self.selected_textbox_id_edit: QLineEdit = self.ui.findChild(QLineEdit, "selected_textbox_id_edit")
@@ -645,6 +973,21 @@ class TemplateEditorWindow(QDialog):
         self.layout_bg_enable_checkbox: QCheckBox = self.ui.findChild(QCheckBox, "layout_bg_enable_checkbox")
         self.layout_bg_color_button: QPushButton = self.ui.findChild(QPushButton, "layout_bg_color_button")
         self.layout_bg_color_swatch_label: QLabel = self.ui.findChild(QLabel, "layout_bg_color_swatch_label")
+        # Shape Properties Group (if UI was updated)
+        self.shape_properties_group: QGroupBox = self.ui.findChild(QGroupBox, "shape_properties_group")
+        self.selected_shape_id_edit: QLineEdit = self.ui.findChild(QLineEdit, "selected_shape_id_edit")
+        self.selected_shape_fill_color_button: QPushButton = self.ui.findChild(QPushButton, "selected_shape_fill_color_button")
+        self.selected_shape_fill_color_swatch: QLabel = self.ui.findChild(QLabel, "selected_shape_fill_color_swatch")
+        self.selected_shape_stroke_color_button: QPushButton = self.ui.findChild(QPushButton, "selected_shape_stroke_color_button") # Added
+        self.selected_shape_stroke_color_swatch: QLabel = self.ui.findChild(QLabel, "selected_shape_stroke_color_swatch") # Added
+        self.selected_shape_stroke_width_spinbox: QSpinBox = self.ui.findChild(QSpinBox, "selected_shape_stroke_width_spinbox")
+
+
+        # New UI elements for Layout Elements list
+        self.layout_elements_group: QGroupBox = self.ui.findChild(QGroupBox, "layout_elements_group")
+        self.layout_elements_scroll_area: QScrollArea = self.ui.findChild(QScrollArea, "layout_elements_scroll_area")
+        self.layout_elements_list_layout: QVBoxLayout = self.ui.findChild(QVBoxLayout, "layout_elements_list_layout")
+
         self.remove_selected_textbox_button: QPushButton = self.ui.findChild(QPushButton, "remove_selected_textbox_button")
         self.layout_preview_scene = QGraphicsScene(self)
         self.layout_preview_graphics_view.setScene(self.layout_preview_scene)
@@ -686,6 +1029,11 @@ class TemplateEditorWindow(QDialog):
 
         self._currently_editing_style_name: str | None = None
         self._currently_editing_layout_name: str | None = None
+        self._current_shape_stroke_color: Optional[QColor] = None # For shape property panel
+
+        self._current_shape_fill_color: Optional[QColor] = None # For shape property panel
+        self._layout_element_widgets: dict[str, dict] = {} # Stores {'tb_id': {'widget': QWidget, 'lock_button': QPushButton}}
+
         # TODO: Add similar tracking variables for currently editing layout/master template when those tabs are implemented
 
 
@@ -760,6 +1108,14 @@ class TemplateEditorWindow(QDialog):
         self.remove_layout_button.clicked.connect(self.remove_selected_layout_definition)
         self.rename_layout_button.clicked.connect(self.rename_selected_layout_definition)
         self.layout_selector_combo.currentTextChanged.connect(self.on_layout_selected)
+
+        # Setup for Add Shape button
+        self.add_shape_menu = QMenu(self)
+        add_rectangle_action = QAction("Rectangle", self)
+        add_rectangle_action.triggered.connect(self._handle_add_rectangle_shape)
+        self.add_shape_menu.addAction(add_rectangle_action)
+        self.add_shape_button.setMenu(self.add_shape_menu)
+
         self.add_textbox_to_layout_button.clicked.connect(self.add_textbox_to_current_layout)
         self.remove_selected_textbox_button.clicked.connect(self._remove_selected_textbox_from_layout)
         self.selected_textbox_id_edit.editingFinished.connect(self._handle_selected_textbox_id_changed)
@@ -770,6 +1126,16 @@ class TemplateEditorWindow(QDialog):
         self.layout_bg_enable_checkbox.toggled.connect(self._on_layout_bg_enable_toggled)
         self.layout_bg_color_button.clicked.connect(self._choose_layout_bg_color)
         self.layout_preview_scene.selectionChanged.connect(self._update_layout_buttons_state) # Update on selection change
+        # Shape Properties Connections (if UI was updated)
+        if self.selected_shape_fill_color_button:
+            self.selected_shape_fill_color_button.clicked.connect(self._choose_shape_fill_color)
+        if self.selected_shape_stroke_color_button:
+            self.selected_shape_stroke_color_button.clicked.connect(self._choose_shape_stroke_color)
+        if self.selected_shape_stroke_width_spinbox:
+            self.selected_shape_stroke_width_spinbox.valueChanged.connect(self._handle_shape_stroke_width_changed) # Corrected connection
+
+        
+        # Add more connections for stroke, opacity etc. when those controls are added
         self.ui.main_tab_widget.currentChanged.connect(self._on_main_tab_changed) # New connection
 
         if self.style_selector_combo.count() > 0:
@@ -792,10 +1158,13 @@ class TemplateEditorWindow(QDialog):
         else:
             self._clear_layout_preview()
             self._update_layout_buttons_state()
+        self._update_layout_elements_display() # Initial population
             
         # Initial state for detail groups
         self._toggle_shadow_detail_group()
         self._toggle_outline_detail_group()
+        self._update_shape_properties_panel() # Initial state for shape properties
+
         
     @Slot(int)
     def _on_main_tab_changed(self, index: int):
@@ -808,7 +1177,7 @@ class TemplateEditorWindow(QDialog):
         if index == 0: # Switched to the "Layouts" tab
             print("DEBUG: Switched to Layouts tab. Refreshing layout items.")
             if self._currently_editing_layout_name and self.layout_preview_scene:
-                for item in self.layout_preview_scene.items():
+                for item in list(self.layout_preview_scene.items()): # Iterate over a copy
                     if isinstance(item, LayoutRectItem):
                         # Re-apply its current style to refresh appearance
                         # This will pick up any changes made in the Styles tab
@@ -816,6 +1185,8 @@ class TemplateEditorWindow(QDialog):
                         # Also re-apply alignment as style changes might affect text metrics
                         item.assign_horizontal_alignment(item.assigned_h_align)
                         item.assign_vertical_alignment(item.assigned_v_align)
+                    # elif isinstance(item, LayoutShapeItem): # TODO: Refresh shape items if needed
+                    #     pass
 
     # --- Layout Tab Methods ---
     def _populate_layout_selector(self):
@@ -860,6 +1231,7 @@ class TemplateEditorWindow(QDialog):
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                      QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
+            layout_name_to_delete = self._currently_editing_layout_name
             del self.layout_definitions[self._currently_editing_layout_name]
             self._currently_editing_layout_name = None
             self._populate_layout_selector()
@@ -867,6 +1239,11 @@ class TemplateEditorWindow(QDialog):
                 self.layout_selector_combo.setCurrentIndex(0)
             else:
                 self._clear_layout_preview()
+            
+            # Inform the main TemplateManager instance
+            if self.template_manager_ref and layout_name_to_delete:
+                self.template_manager_ref.delete_layout(layout_name_to_delete)
+                print(f"DEBUG: TemplateEditor notified TemplateManager to delete layout: {layout_name_to_delete}")
 
     @Slot()
     def rename_selected_layout_definition(self):
@@ -911,6 +1288,9 @@ class TemplateEditorWindow(QDialog):
             self._clear_layout_preview()
             self._currently_editing_layout_name = None
             self._update_textbox_properties_panel() # Clear/disable panel
+            self._update_shape_properties_panel() # Clear/disable shape panel
+            self._update_layout_elements_display() # Clear elements list
+
             return
 
         self._currently_editing_layout_name = layout_name
@@ -970,12 +1350,43 @@ class TemplateEditorWindow(QDialog):
             # Connect the item's signal to a handler in the editor window
             rect_item.geometry_changed_pc.connect(self._handle_layout_item_geometry_changed)
             self.layout_preview_scene.addItem(rect_item)
+
+        # Draw shapes
+        for shape_props in layout_props.get("shapes", []):
+            if shape_props.get("type") == "rectangle":
+                # Assign z_order if missing (for backward compatibility or new items)
+                if "z_order" not in shape_props:
+                    # Find max existing z_order and add 1, or start at 0
+                    max_z = max((e.get("z_order", -1) for e in layout_props.get("text_boxes", []) + layout_props.get("shapes", [])), default=-1)
+                    shape_props["z_order"] = max_z + 1
+                x_px = scene_width * (shape_props.get("x_pc", 0) / 100.0)
+                y_px = scene_height * (shape_props.get("y_pc", 0) / 100.0)
+                w_px = scene_width * (shape_props.get("width_pc", 10) / 100.0)
+                h_px = scene_height * (shape_props.get("height_pc", 10) / 100.0)
+                
+                shape_item = LayoutShapeItem(
+                    shape_id=shape_props.get("id", "unknown_shape"),
+                    shape_type="rectangle",
+                    x=x_px, y=y_px, w=w_px, h=h_px,
+                    scene_w=scene_width, scene_h=scene_height,
+                    fill_color_hex=shape_props.get("fill_color", "#FF000080"),
+                    stroke_color_hex=shape_props.get("stroke_color", "#000000FF"),
+                    stroke_width=shape_props.get("stroke_width", 1),
+                    opacity=shape_props.get("opacity", 1.0),
+                    z_order=shape_props.get("z_order", 0) # Pass z_order
+                )
+                shape_item.geometry_changed_pc.connect(self._handle_shape_item_geometry_changed)
+                shape_item.properties_changed.connect(self._handle_shape_item_properties_changed)
+                self.layout_preview_scene.addItem(shape_item)
             
-            # Store a reference if needed, e.g., for selecting/editing properties later
-            # self.current_layout_items[tb_props.get("id")] = rect_item 
+            # After all items are added, apply Z-order based on the data model
+        self._apply_z_order_to_scene_items()
         self.layout_preview_graphics_view.fitInView(self.layout_preview_scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
         self._update_layout_buttons_state()
         self._update_textbox_properties_panel() # Update panel based on new selection (likely none initially)
+        self._update_shape_properties_panel() # Update shape panel
+        self._update_layout_elements_display() # Update the list of layout elements
+
 
     @Slot(bool)
     def _on_layout_bg_enable_toggled(self, checked: bool):
@@ -1037,6 +1448,10 @@ class TemplateEditorWindow(QDialog):
         
         layout_props = self.layout_definitions[self._currently_editing_layout_name]
         num_existing_boxes = len(layout_props.get("text_boxes", []))
+        # Determine next z_order
+        all_elements = layout_props.get("text_boxes", []) + layout_props.get("shapes", [])
+        next_z_order = max((e.get("z_order", -1) for e in all_elements), default=-1) + 1
+        
         new_box_id = f"textbox_{num_existing_boxes + 1}"
         
         # Add a new default text box definition
@@ -1046,7 +1461,8 @@ class TemplateEditorWindow(QDialog):
             "width_pc": 30, "height_pc": 15, 
             "h_align": "left", # Default h_align for new boxes
             "v_align": "top",  # Default v_align for new boxes
-            "style_name": None # Default style for new boxes
+            "style_name": None, # Default style for new boxes
+            "z_order": next_z_order
         }
         layout_props.setdefault("text_boxes", []).append(new_box_props)
         
@@ -1055,18 +1471,50 @@ class TemplateEditorWindow(QDialog):
         print(f"DEBUG: Added new text box '{new_box_id}' to layout '{self._currently_editing_layout_name}'")
 
     @Slot()
+    def _handle_add_rectangle_shape(self):
+        if not self._currently_editing_layout_name:
+            QMessageBox.information(self, "No Layout Selected", "Please select or create a layout first.")
+            return
+
+        layout_props = self.layout_definitions[self._currently_editing_layout_name]
+        num_existing_shapes = len(layout_props.get("shapes", []))
+        all_elements = layout_props.get("text_boxes", []) + layout_props.get("shapes", [])
+        next_z_order = max((e.get("z_order", -1) for e in all_elements), default=-1) + 1
+
+        new_shape_id = f"rect_{num_existing_shapes + 1}"
+
+        new_shape_props = {
+            "id": new_shape_id,
+            "type": "rectangle",
+            "x_pc": 10, "y_pc": 10,
+            "width_pc": 25, "height_pc": 15,
+            "fill_color": "#FF000080",  # Semi-transparent red
+            "stroke_color": "#000000FF", # Solid black stroke
+            "opacity": 1.0, # Fully opaque (100%)
+            "stroke_width": 2,
+            "z_order": next_z_order
+        }
+        layout_props.setdefault("shapes", []).append(new_shape_props)
+
+        # Refresh the preview for the current layout
+        self.on_layout_selected(self._currently_editing_layout_name)
+        print(f"DEBUG: Added new rectangle shape '{new_shape_id}' to layout '{self._currently_editing_layout_name}'")
+        # TODO: Add logic to select the newly added shape and open its properties panel if one exists for shapes.
+
+
+    @Slot()
     def _remove_selected_textbox_from_layout(self):
         if not self._currently_editing_layout_name:
             return
 
         selected_items = self.layout_preview_scene.selectedItems()
         if not selected_items:
-            QMessageBox.information(self, "No Selection", "Please select a text box in the preview to remove.")
+            QMessageBox.information(self, "No Selection", "Please select an element in the preview to remove.")
             return
 
         item_to_remove = None
         for item in selected_items:
-            if isinstance(item, LayoutRectItem):
+            if isinstance(item, (LayoutRectItem, LayoutShapeItem)): # Check for either type
                 item_to_remove = item
                 break
         
@@ -1074,11 +1522,17 @@ class TemplateEditorWindow(QDialog):
             layout_props = self.layout_definitions[self._currently_editing_layout_name]
             # Remove from data model
             layout_props["text_boxes"] = [tb for tb in layout_props.get("text_boxes", []) if tb.get("id") != item_to_remove.tb_id]
+            if isinstance(item_to_remove, LayoutShapeItem):
+                layout_props["shapes"] = [sh for sh in layout_props.get("shapes", []) if sh.get("id") != item_to_remove.shape_id]
+                print(f"DEBUG: Removed shape '{item_to_remove.shape_id}' from layout '{self._currently_editing_layout_name}'")
+            elif isinstance(item_to_remove, LayoutRectItem):
+                 layout_props["text_boxes"] = [tb for tb in layout_props.get("text_boxes", []) if tb.get("id") != item_to_remove.tb_id]
+                 print(f"DEBUG: Removed text box '{item_to_remove.tb_id}' from layout '{self._currently_editing_layout_name}'")
+
             # Remove from scene
             self.layout_preview_scene.removeItem(item_to_remove)
-            print(f"DEBUG: Removed text box '{item_to_remove.tb_id}' from layout '{self._currently_editing_layout_name}'")
-            # self.on_layout_selected(self._currently_editing_layout_name) # Optionally refresh everything, or just update button state
-            self._update_layout_buttons_state() # Update button state after removal
+            self._update_layout_buttons_state() 
+            self._update_layout_elements_display() # Refresh the list
 
     def _clear_layout_preview(self):
         self.layout_preview_scene.clear()
@@ -1088,7 +1542,10 @@ class TemplateEditorWindow(QDialog):
         # placeholder_text.setDefaultTextColor(Qt.GlobalColor.lightGray)
         self.layout_preview_graphics_view.fitInView(self.layout_preview_scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
         self._update_textbox_properties_panel() # Clear/disable panel
+        self._update_shape_properties_panel() # Clear/disable shape panel
         self.layout_preview_graphics_view.resetTransform() # Reset zoom/pan
+        self._update_layout_elements_display() # Clear elements list
+
 
     def _update_layout_buttons_state(self):
         can_remove = self.layout_selector_combo.count() > 1 and self._currently_editing_layout_name is not None
@@ -1096,46 +1553,117 @@ class TemplateEditorWindow(QDialog):
         
         layout_selected = self._currently_editing_layout_name is not None
         self.add_textbox_to_layout_button.setEnabled(layout_selected)
+        self.add_shape_button.setEnabled(layout_selected) # Enable/disable Add Shape button
 
         can_remove_textbox = False
         if layout_selected and self.layout_preview_scene.selectedItems():
-            can_remove_textbox = any(isinstance(item, LayoutRectItem) for item in self.layout_preview_scene.selectedItems())
+            # Enable remove if any LayoutRectItem OR LayoutShapeItem is selected
+            can_remove_textbox = any(isinstance(item, (LayoutRectItem, LayoutShapeItem)) for item in self.layout_preview_scene.selectedItems())
         self.remove_selected_textbox_button.setEnabled(can_remove_textbox)
         self._update_textbox_properties_panel() # Also update properties panel based on selection
+        self._update_shape_properties_panel() # Update shape properties panel
+         
 
     @Slot(str, float, float, float, float)
     def _handle_layout_item_geometry_changed(self, item_id: str, new_x_pc: float, new_y_pc: float, new_w_pc: float, new_h_pc: float):
+        # This method updates the layout definition when a LayoutRectItem's geometry changes.
         if not self._currently_editing_layout_name or self._currently_editing_layout_name not in self.layout_definitions:
             return
 
         layout_props = self.layout_definitions[self._currently_editing_layout_name]
         updated = False
-        for tb_props in layout_props.get("text_boxes", []):
+        for tb_props in layout_props.get("text_boxes", []): # Iterate through text_boxes
             if tb_props.get("id") == item_id:
-                tb_props["x_pc"] = round(new_x_pc, 2) # Store with some precision
+                tb_props["x_pc"] = round(new_x_pc, 2)
                 tb_props["y_pc"] = round(new_y_pc, 2)
-                # For now, width and height are not changed by this signal (only position)
-                # tb_props["width_pc"] = round(new_w_pc, 2)
-                # tb_props["height_pc"] = round(new_h_pc, 2)
-                tb_props["width_pc"] = round(new_w_pc, 2) # Now update width/height
+                tb_props["width_pc"] = round(new_w_pc, 2)
                 tb_props["height_pc"] = round(new_h_pc, 2)
                 updated = True
                 break
-        
         if updated:
-            print(f"DEBUG: Layout item '{item_id}' in '{self._currently_editing_layout_name}' updated to X:{new_x_pc:.2f}%, Y:{new_y_pc:.2f}%")
-            # No need to call self.on_layout_selected, as the item itself has moved.
-            # However, if the ID changed, we might need to update the properties panel if it was based on the old ID.
-            # For now, assume ID doesn't change via geometry signal.
+            print(f"DEBUG: Layout item '{item_id}' in '{self._currently_editing_layout_name}' geometry updated.")
+            # Optionally, mark the layout as dirty or trigger other UI updates
 
-    def _get_selected_layout_rect_item(self) -> Optional[LayoutRectItem]:
+    @Slot(str, float, float, float, float)
+    def _handle_shape_item_geometry_changed(self, shape_id: str, new_x_pc: float, new_y_pc: float, new_w_pc: float, new_h_pc: float):
+        if not self._currently_editing_layout_name or self._currently_editing_layout_name not in self.layout_definitions:
+            return
+
+        layout_props = self.layout_definitions[self._currently_editing_layout_name]
+        updated = False
+        for shape_props in layout_props.get("shapes", []):
+            if shape_props.get("id") == shape_id:
+                shape_props["x_pc"] = round(new_x_pc, 2)
+                shape_props["y_pc"] = round(new_y_pc, 2)
+                shape_props["width_pc"] = round(new_w_pc, 2)
+                shape_props["height_pc"] = round(new_h_pc, 2)
+                updated = True
+                break
+        if updated:
+            print(f"DEBUG: Layout shape '{shape_id}' in '{self._currently_editing_layout_name}' geometry updated.")
+
+    @Slot(str)
+    def _handle_shape_item_properties_changed(self, shape_id: str):
+        """Called when LayoutShapeItem's fill, stroke, or opacity changes internally."""
+
+        print(f"DEBUG: Shape '{shape_id}' properties changed. Need to update data model and UI.")
+        if not self._currently_editing_layout_name or self._currently_editing_layout_name not in self.layout_definitions:
+            return
+
+        layout_props = self.layout_definitions[self._currently_editing_layout_name]
+        shape_item = self._get_selected_layout_shape_item() # Assuming it's the selected one
+
+        if shape_item and shape_item.shape_id == shape_id:
+            for shape_def in layout_props.get("shapes", []):
+                if shape_def.get("id") == shape_id:
+                    shape_def["fill_color"] = shape_item._fill_color.name(QColor.NameFormat.HexArgb)
+                    shape_def["stroke_color"] = shape_item._stroke_color.name(QColor.NameFormat.HexArgb)
+                    shape_def["stroke_width"] = shape_item._stroke_width
+                    shape_def["opacity"] = round(shape_item.opacity(), 2) # Get opacity from QGraphicsObject
+                    print(f"DEBUG: Data model for shape '{shape_id}' updated from item properties.")
+                    break
+        # For now, just re-select to refresh the panel (if one exists and is populated)
+        self._update_shape_properties_panel()
+        
+    def _apply_z_order_to_scene_items(self):
+        """Sets the ZValue of scene items based on their 'z_order' in the data model."""
+        if not self._currently_editing_layout_name or self._currently_editing_layout_name not in self.layout_definitions:
+            return
+
+        layout_props = self.layout_definitions[self._currently_editing_layout_name]
+        all_element_defs = layout_props.get("text_boxes", []) + layout_props.get("shapes", [])
+
+        for item in self.layout_preview_scene.items():
+            if isinstance(item, (LayoutRectItem, LayoutShapeItem)):
+                item_id = item.tb_id if isinstance(item, LayoutRectItem) else item.shape_id
+                element_def = next((e for e in all_element_defs if e.get("id") == item_id), None)
+                if element_def:
+                    item.setZValue(float(element_def.get("z_order", 0)))
+
+
+    def _get_selected_layout_item(self) -> Optional[QGraphicsObject]:
+        """Helper to get the currently selected LayoutRectItem or LayoutShapeItem."""
+        selected_items = self.layout_preview_scene.selectedItems()
+        for item in selected_items:
+            if isinstance(item, (LayoutRectItem, LayoutShapeItem)):
+                return item
+        return None
+    
+    def _get_selected_layout_rect_item(self) -> Optional[LayoutRectItem]: # Method was missing
         """Helper to get the currently selected LayoutRectItem, if any."""
         selected_items = self.layout_preview_scene.selectedItems()
         for item in selected_items:
             if isinstance(item, LayoutRectItem):
                 return item
         return None
-
+    
+    def _get_selected_layout_shape_item(self) -> Optional[LayoutShapeItem]:
+        selected_items = self.layout_preview_scene.selectedItems()
+        for item in selected_items:
+            if isinstance(item, LayoutShapeItem):
+                return item
+        return None
+    
     def _update_textbox_properties_panel(self):
         """Updates the 'Selected Text Box Properties' panel based on the current selection."""
         selected_item = self._get_selected_layout_rect_item()
@@ -1201,6 +1729,122 @@ class TemplateEditorWindow(QDialog):
             self.selected_textbox_style_combo.blockSignals(False)
             self.selected_textbox_valign_combo.blockSignals(False) # New
             self.selected_textbox_halign_combo.blockSignals(False) # New
+    
+    def _update_shape_properties_panel(self):
+        if not self.shape_properties_group: # If UI for shape properties doesn't exist yet
+            return
+
+        selected_item = self._get_selected_layout_shape_item()
+        if selected_item and self._currently_editing_layout_name:
+            self.shape_properties_group.setEnabled(True)
+            self.selected_shape_id_edit.blockSignals(True)
+            self.selected_shape_fill_color_button.blockSignals(True)
+            self.selected_shape_stroke_color_button.blockSignals(True)
+
+
+
+            self.selected_shape_id_edit.setText(selected_item.shape_id)
+            
+            self._current_shape_fill_color = selected_item._fill_color
+            self._update_shape_fill_color_swatch()
+            self._current_shape_stroke_color = selected_item._stroke_color
+            self._update_shape_stroke_color_swatch()
+
+            if self.selected_shape_stroke_width_spinbox: self.selected_shape_stroke_width_spinbox.setValue(selected_item._stroke_width)
+
+
+
+
+
+            self.selected_shape_id_edit.blockSignals(False)
+            self.selected_shape_fill_color_button.blockSignals(False)
+            if self.selected_shape_stroke_color_button: self.selected_shape_stroke_color_button.blockSignals(False)
+            if self.selected_shape_stroke_width_spinbox: self.selected_shape_stroke_width_spinbox.blockSignals(False)
+
+
+
+        else:
+            self.shape_properties_group.setEnabled(False)
+            self.selected_shape_id_edit.blockSignals(True)
+            self.selected_shape_fill_color_button.blockSignals(True)
+            if self.selected_shape_stroke_color_button: self.selected_shape_stroke_color_button.blockSignals(True)
+            if self.selected_shape_stroke_width_spinbox: self.selected_shape_stroke_width_spinbox.blockSignals(True)
+            self.selected_shape_id_edit.clear()
+            self._current_shape_fill_color = None
+            self._update_shape_fill_color_swatch()
+            # Clear other shape property controls when added
+            self._current_shape_stroke_color = None
+            self._update_shape_stroke_color_swatch()
+            self.selected_shape_stroke_width_spinbox.setValue(0)
+            self.selected_shape_id_edit.blockSignals(False)
+            self.selected_shape_fill_color_button.blockSignals(False)
+
+    @Slot()
+    def _choose_shape_fill_color(self):
+        selected_item = self._get_selected_layout_shape_item()
+        if not selected_item or not self._currently_editing_layout_name: return
+
+        initial_color = selected_item._fill_color
+        dialog = QColorDialog(initial_color, self)
+        dialog.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+        if dialog.exec():
+            new_color = dialog.currentColor()
+            if new_color.isValid():
+                selected_item.setFillColor(new_color) # This will update item and emit properties_changed
+                # Update data model
+                layout_props = self.layout_definitions[self._currently_editing_layout_name]
+                for shape_def in layout_props.get("shapes", []):
+                    if shape_def.get("id") == selected_item.shape_id:
+                        shape_def["fill_color"] = new_color.name(QColor.NameFormat.HexArgb)
+                        break
+                self._current_shape_fill_color = new_color # Update for swatch
+                self._update_shape_fill_color_swatch()
+
+    def _update_shape_fill_color_swatch(self):
+        if self.selected_shape_fill_color_swatch:
+            if self._current_shape_fill_color and self._current_shape_fill_color.isValid():
+                self.selected_shape_fill_color_swatch.setStyleSheet(f"background-color: {self._current_shape_fill_color.name(QColor.NameFormat.HexArgb)}; border: 1px solid grey;")
+            else:
+                self.selected_shape_fill_color_swatch.setStyleSheet("background-color: transparent; border: 1px dashed grey;")
+    @Slot()
+    def _choose_shape_stroke_color(self):
+        selected_item = self._get_selected_layout_shape_item()
+        if not selected_item or not self._currently_editing_layout_name: return
+
+        initial_color = selected_item._stroke_color
+        dialog = QColorDialog(initial_color, self)
+        dialog.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+        if dialog.exec():
+            new_color = dialog.currentColor()
+            if new_color.isValid():
+                selected_item.setStrokeColor(new_color)
+                layout_props = self.layout_definitions[self._currently_editing_layout_name]
+                for shape_def in layout_props.get("shapes", []):
+                    if shape_def.get("id") == selected_item.shape_id:
+                        shape_def["stroke_color"] = new_color.name(QColor.NameFormat.HexArgb)
+                        break
+                self._current_shape_stroke_color = new_color
+                self._update_shape_stroke_color_swatch()
+
+    def _update_shape_stroke_color_swatch(self):
+        if self.selected_shape_stroke_color_swatch:
+            if self._current_shape_stroke_color and self._current_shape_stroke_color.isValid():
+                self.selected_shape_stroke_color_swatch.setStyleSheet(f"background-color: {self._current_shape_stroke_color.name(QColor.NameFormat.HexArgb)}; border: 1px solid grey;")
+            else:
+                self.selected_shape_stroke_color_swatch.setStyleSheet("background-color: transparent; border: 1px dashed grey;")
+
+    @Slot(int)
+    def _handle_shape_stroke_width_changed(self, value: int):
+        selected_item = self._get_selected_layout_shape_item()
+        if not selected_item or not self._currently_editing_layout_name: return
+
+        selected_item.setStrokeWidth(value)
+        layout_props = self.layout_definitions[self._currently_editing_layout_name]
+        for shape_def in layout_props.get("shapes", []):
+            if shape_def.get("id") == selected_item.shape_id:
+                shape_def["stroke_width"] = value
+
+                break
 
     @Slot()
     def _handle_selected_textbox_id_changed(self):
@@ -1294,7 +1938,166 @@ class TemplateEditorWindow(QDialog):
                 # Now, update the LayoutRectItem's appearance
                 selected_item.assign_vertical_alignment(v_align_value)
                 return
+    def _update_layout_elements_display(self):
+        """Populates the 'Layout Elements' list based on the current layout."""
+        # Clear existing widgets from the layout (except spacers if any)
+        while self.layout_elements_list_layout.count() > 0:
+            item = self.layout_elements_list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._layout_element_widgets.clear()
 
+        if not self._currently_editing_layout_name or \
+           self._currently_editing_layout_name not in self.layout_definitions:
+            self.layout_elements_group.setEnabled(False)
+            return
+
+        self.layout_elements_group.setEnabled(True)
+        layout_props = self.layout_definitions[self._currently_editing_layout_name]
+        elements_to_list = []
+        for tb_def in layout_props.get("text_boxes", []):
+            # Ensure z_order exists, assign if not (backward compatibility)
+            if "z_order" not in tb_def: tb_def["z_order"] = len(elements_to_list) # Simple initial assignment
+            elements_to_list.append({"id": tb_def.get("id"), "type": "TextBox", "item_ref": None, "z_order": tb_def["z_order"]})
+ 
+        for sh_def in layout_props.get("shapes", []):
+            if "z_order" not in sh_def: sh_def["z_order"] = len(elements_to_list)
+            elements_to_list.append({"id": sh_def.get("id"), "type": "Shape", "item_ref": None, "z_order": sh_def["z_order"]})
+
+        # Sort elements by z_order for display
+        elements_to_list.sort(key=lambda x: x.get("z_order", 0))
+
+        # Find corresponding QGraphicsObject items in the scene
+        for element_data in elements_to_list:
+            for scene_item in self.layout_preview_scene.items():
+                if isinstance(scene_item, LayoutRectItem) and scene_item.tb_id == element_data["id"]:
+                    element_data["item_ref"] = scene_item
+                    break
+                elif isinstance(scene_item, LayoutShapeItem) and scene_item.shape_id == element_data["id"]:
+                    element_data["item_ref"] = scene_item
+                    break
+
+        for el_data in elements_to_list:
+            el_id = el_data["id"]
+            el_type_display = el_data["type"]
+            el_type_for_handler = "TextBox" if el_type_display == "TextBox" else "Shape" # For handler
+
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(2, 2, 2, 2) # Compact
+
+            name_label = QLabel(f"{el_id} ({el_type_display})")
+            name_label.setToolTip(f"{el_type_display} ID: {el_id}")
+            row_layout.addWidget(name_label, 1) # Stretch label
+            # Move Up button
+            up_button = QPushButton("↑")
+            up_button.setFixedSize(25, 25)
+            up_button.setToolTip(f"Move '{el_id}' up (decrease Z-order / further back)")
+            up_button.clicked.connect(lambda checked=False, current_el_id=el_id, current_el_type=el_type_for_handler: self._handle_element_item_move_up(current_el_id, current_el_type))
+            row_layout.addWidget(up_button)
+
+            # Move Down button
+            down_button = QPushButton("↓")
+            down_button.setFixedSize(25, 25)
+            down_button.setToolTip(f"Move '{el_id}' down (increase Z-order / further front)")
+            down_button.clicked.connect(lambda checked=False, current_el_id=el_id, current_el_type=el_type_for_handler: self._handle_element_item_move_down(current_el_id, current_el_type))
+            row_layout.addWidget(down_button)
+
+            lock_button = QPushButton("🔓") # Unlock icon
+            lock_button.setCheckable(True)
+            lock_button.setFixedSize(25, 25)
+            lock_button.setToolTip(f"Lock/Unlock '{el_id}' position and size")
+
+            item_ref = el_data.get("item_ref") # This is the QGraphicsItem
+            if item_ref and hasattr(item_ref, 'is_locked'): # LayoutRectItem or LayoutShapeItem
+
+                lock_button.setChecked(item_ref.is_locked)
+                lock_button.setText("🔒" if item_ref.is_locked else "🔓")
+
+            lock_button.toggled.connect(lambda locked, current_el_id=el_id, btn=lock_button: self._handle_element_item_lock_toggled(current_el_id, locked, btn))
+            row_layout.addWidget(lock_button)
+
+            self.layout_elements_list_layout.addWidget(row_widget)
+            self._layout_element_widgets[el_id] = {"widget": row_widget, "lock_button": lock_button, "name_label": name_label}
+
+        # Add a spacer at the end to push items to the top
+        spacer = QSpacerItem(20, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+        self.layout_elements_list_layout.addItem(spacer)
+
+    @Slot(str)
+    def _handle_element_item_select_clicked(self, element_id: str):
+        """Handles clicking the 'Select' action for a layout element."""
+        for item in self.layout_preview_scene.items():
+            item_matches = False
+            if isinstance(item, LayoutRectItem) and item.tb_id == element_id:
+                item_matches = True
+            elif isinstance(item, LayoutShapeItem) and item.shape_id == element_id:
+                item_matches = True
+            
+            if item_matches:
+                self.layout_preview_scene.clearSelection() # Clear previous selection
+                item.setSelected(True)
+                self.layout_preview_graphics_view.ensureVisible(item)
+                self._update_layout_buttons_state() # This will call both property panel updates
+                break
+
+    @Slot(str, bool, QPushButton)
+    def _handle_element_item_lock_toggled(self, element_id: str, locked: bool, button: QPushButton):
+        """Handles toggling the 'Lock' button for a layout element."""
+        for item in self.layout_preview_scene.items():
+            if (isinstance(item, LayoutRectItem) and item.tb_id == element_id) or \
+               (isinstance(item, LayoutShapeItem) and item.shape_id == element_id):
+                item.setLocked(locked); button.setText("🔒" if locked else "🔓"); break
+
+    def _handle_element_item_move_up(self, element_id: str, element_type: str):
+        self._reorder_element(element_id, element_type, direction=-1)
+
+    def _handle_element_item_move_down(self, element_id: str, element_type: str):
+        self._reorder_element(element_id, element_type, direction=1)
+
+    def _reorder_element(self, element_id: str, element_type: str, direction: int):
+        if not self._currently_editing_layout_name: return
+        layout_props = self.layout_definitions[self._currently_editing_layout_name]
+        
+        all_elements_defs = layout_props.get("text_boxes", []) + layout_props.get("shapes", [])
+        # Ensure z_order exists and is unique for sorting, assign if necessary
+        # This also handles cases where z_order might not be contiguous after some operations.
+        # We will re-normalize z_order after the swap.
+        
+        target_idx = -1
+        for i, el_def in enumerate(all_elements_defs):
+            if el_def.get("id") == element_id:
+                # Check type match (important if IDs could be non-unique across types)
+                current_el_type = "TextBox" if "style_name" in el_def else "Shape" # Heuristic
+                if current_el_type == element_type:
+                    target_idx = i
+                    break
+        
+        if target_idx == -1: return
+
+        current_z = all_elements_defs[target_idx].get("z_order", target_idx)
+        
+        # Find element to swap with
+        swap_with_idx = -1
+        if direction == -1: # Move Up (decrease z_order)
+            # Find element with z_order just below current_z
+            candidates = sorted([el for el in all_elements_defs if el.get("z_order", 0) < current_z], key=lambda x: x.get("z_order", 0), reverse=True)
+            if candidates: swap_with_idx = all_elements_defs.index(candidates[0])
+        elif direction == 1: # Move Down (increase z_order)
+            # Find element with z_order just above current_z
+            candidates = sorted([el for el in all_elements_defs if el.get("z_order", 0) > current_z], key=lambda x: x.get("z_order", 0))
+            if candidates: swap_with_idx = all_elements_defs.index(candidates[0])
+
+        if swap_with_idx != -1:
+            # Swap z_order values
+            z_target = all_elements_defs[target_idx].get("z_order")
+            z_swap_with = all_elements_defs[swap_with_idx].get("z_order")
+            all_elements_defs[target_idx]["z_order"] = z_swap_with
+            all_elements_defs[swap_with_idx]["z_order"] = z_target
+
+            self._apply_z_order_to_scene_items()
+            self._update_layout_elements_display()
+            # Mark layout as dirty
 
     # --- Style Tab Methods ---
     def _populate_style_selector(self):
@@ -1346,6 +2149,7 @@ class TemplateEditorWindow(QDialog):
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                      QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
+            style_name_to_delete = self._currently_editing_style_name
             del self.style_definitions[self._currently_editing_style_name]
             self._currently_editing_style_name = None
             self._populate_style_selector()
@@ -1353,6 +2157,11 @@ class TemplateEditorWindow(QDialog):
                 self.style_selector_combo.setCurrentIndex(0)
             else: # Should not happen due to the "last style" check
                 self._clear_style_controls()
+            
+            # Inform the main TemplateManager instance
+            if self.template_manager_ref and style_name_to_delete:
+                self.template_manager_ref.delete_style(style_name_to_delete)
+                print(f"DEBUG: TemplateEditor notified TemplateManager to delete style: {style_name_to_delete}")
 
     @Slot(str)
     def on_style_selected(self, style_name: str):

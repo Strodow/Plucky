@@ -1,6 +1,7 @@
 import sys
 import os
 import logging
+import json
 from typing import Optional, List, Dict, Any
 import uuid # Added for context menu actions
 
@@ -40,6 +41,7 @@ try:
     from core.constants import PLUCKY_SLIDE_MIME_TYPE, BASE_PREVIEW_HEIGHT
     from commands.slide_commands import AddSlideBlockToSectionCommand # Added for context menu
     from core.slide_drag_drop_handler import SlideDragDropHandler
+    from commands.slide_commands import ChangeOverlayLabelCommand, ChangeBannerColorCommand # Import the commands
 except ImportError as e:
     print(f"Warning: A local project file could not be imported in slide_ui_manager. Error: {e}", file=sys.stderr)
     # Add mocks if needed for testing in isolation
@@ -158,19 +160,61 @@ class SlideUIManager(QObject):
         for box in text_boxes:
             box_id = box.get("id")
             content = text_content.get(box_id, "")
-            if box_id and content:
+            if box_id: # Create layer even if content is empty. Renderer will handle not drawing empty text.
                 scene['layers'].append({
                     "id": f"{slide_data.id}_p_{box_id}", "type": "text",
                     "position": {"x_pc": box.get("x_pc", 0), "y_pc": box.get("y_pc", 0), "width_pc": box.get("width_pc", 100), "height_pc": box.get("height_pc", 100)},
                     "properties": {
-                        "content": content, "font_family": box.get("font_family", "Arial"),
-                        "font_size": box.get("font_size", 48), "font_color": box.get("font_color", "#FFFFFF"),
-                        "h_align": box.get("h_align", "center"), "v_align": box.get("v_align", "center"),
-                        "shadow": {"enabled": box.get("shadow_enabled", False), "color": box.get("shadow_color"), "offset_x": box.get("shadow_offset_x"), "offset_y": box.get("shadow_offset_y")},
-                        "outline": {"enabled": box.get("outline_enabled", False), "color": box.get("outline_color"), "width": box.get("outline_width")}
+                        "content": content,
+                        "font_family": box.get("font_family", "Arial"),
+                        "font_size": box.get("font_size", 48),
+                        "font_color": box.get("font_color", "#FFFFFFFF"),
+                        "h_align": box.get("h_align", "center"),
+                        "v_align": box.get("v_align", "center"),
+                        "force_all_caps": box.get("force_all_caps", False),
+                        "shadow": {
+                            "enabled": box.get("shadow_enabled", False),
+                            "color": box.get("shadow_color", "#00000080"),
+                            "offset_x": box.get("shadow_offset_x", 2),
+                            "offset_y": box.get("shadow_offset_y", 2),
+                            "blur": box.get("shadow_blur", 2)
+                        },
+                        "outline": {
+                            "enabled": box.get("outline_enabled", False),
+                            "color": box.get("outline_color", "#000000FF"),
+                            "width": box.get("outline_width", 1)
+                        }
                     }
                 })
+        
+        # Shapes from template_settings (NEW)
+        if slide_data.template_settings:
+            template_shapes = slide_data.template_settings.get("shapes", [])
+            for shape_def in template_shapes:
+                shape_id = shape_def.get("id")
+                if shape_id:
+                    scene['layers'].append({
+                        "id": f"shape_{shape_id}_{slide_data.id}",
+                        "type": "shape",
+                        "position": {"x_pc": shape_def.get("x_pc", 0), "y_pc": shape_def.get("y_pc", 0), "width_pc": shape_def.get("width_pc", 100), "height_pc": shape_def.get("height_pc", 100)},
+                        "properties": {
+                            "shape_type": shape_def.get("type", "rectangle"),
+                            "fill_color": shape_def.get("fill_color", "#000000FF"),
+                            "stroke": {
+                                "enabled": shape_def.get("stroke_width", 0) > 0,
+                                "color": shape_def.get("stroke_color", "#000000FF"),
+                                "width": shape_def.get("stroke_width", 0)
+                            },
+                            "opacity": shape_def.get("opacity", 1.0)
+                        }
+                    }
+                )
+        try:
+            logging.debug(f"SlideUIManager: Built preview scene data for slide '{slide_data.id}': {json.dumps(scene, indent=2)}")
+        except TypeError:
+            logging.debug(f"SlideUIManager: Built preview scene data for slide '{slide_data.id}' (non-serializable): {scene}")
         return scene
+
 
     def refresh_slide_display(self):
         """Rebuilds the entire slide preview area using the new rendering method."""
@@ -232,6 +276,11 @@ class SlideUIManager(QObject):
             if slide_id_str not in self.preview_pixmap_cache:
                 scene_to_render = self._build_scene_for_preview(slide_data)
                 full_res_pixmap = self.renderer.render_scene(scene_to_render)
+                if full_res_pixmap:
+                    logging.debug(f"SlideUIManager.refresh: Rendered full-res pixmap for '{slide_id_str}' - Size: {full_res_pixmap.size()}, isNull: {full_res_pixmap.isNull()}")
+                else:
+                    logging.debug(f"SlideUIManager.refresh: Renderer returned None for full-res pixmap for '{slide_id_str}'.")
+
                 preview_pixmap = full_res_pixmap.scaled(
                     current_dynamic_preview_width, current_dynamic_preview_height,
                     Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
@@ -241,7 +290,16 @@ class SlideUIManager(QObject):
             preview_pixmap = self.preview_pixmap_cache[slide_id_str]
             # --- End New Rendering Logic ---
 
-            button = ScaledSlideButton(slide_id=index, instance_id=slide_id_str, plucky_slide_mime_type=PLUCKY_SLIDE_MIME_TYPE)
+            # Call with positional arguments: (parent, slide_id, instance_id, mime_type)
+            # The parent is the 'container' widget for the current FlowLayout.
+            # Pass custom args positionally, and specify the parent with the 'parent' keyword.
+            # Use keyword arguments for everything to match the new __init__
+            button = ScaledSlideButton(
+                slide_id=index,
+                instance_id=slide_id_str,
+                plucky_slide_mime_type=PLUCKY_SLIDE_MIME_TYPE,
+                parent=container
+            )
             button.set_pixmap(preview_pixmap)
             
             # --- Restore all signal connections ---
@@ -250,10 +308,11 @@ class SlideUIManager(QObject):
             button.edit_requested.connect(self.slide_edit_handler.handle_edit_slide_requested)
             button.delete_requested.connect(self.request_delete_slide)
             button.apply_template_to_slide_requested.connect(self.request_apply_template) # Connect to the new signal
-            button.insert_slide_from_layout_requested.connect(self._handle_insert_slide_from_button_context_menu)
+            button.insert_slide_from_layout_requested.connect(self._handle_insert_slide_from_button_context_menu) # This seems to be a placeholder/WIP connection
             button.insert_new_section_requested.connect(self._handle_insert_new_section_from_button_context_menu)
-            button.center_overlay_label_changed.connect(self.parent_main_window.handle_slide_overlay_label_changed) # Assuming MainWindow has this
-            button.banner_color_change_requested.connect(self.parent_main_window.handle_banner_color_change_requested) # Assuming MainWindow has this
+            # Connect the button's signal to a slot within SlideUIManager_2
+            button.center_overlay_label_changed.connect(self._handle_slide_button_overlay_label_changed) 
+            button.banner_color_change_requested.connect(self._handle_slide_button_banner_color_changed)
 
             # Set button properties
             button.set_is_background_slide(slide_data.is_background_slide)
@@ -356,6 +415,11 @@ class SlideUIManager(QObject):
             try:
                 scene_to_render = self._build_scene_for_preview(slide_data)
                 full_res_pixmap = self.renderer.render_scene(scene_to_render)
+                if full_res_pixmap:
+                    logging.debug(f"SlideUIManager.visual_change: Rendered full-res pixmap for '{slide_id_str}' - Size: {full_res_pixmap.size()}, isNull: {full_res_pixmap.isNull()}")
+                else:
+                    logging.debug(f"SlideUIManager.visual_change: Renderer returned None for full-res pixmap for '{slide_id_str}'.")
+
                 preview_pixmap = full_res_pixmap.scaled(
                     current_dynamic_preview_width, current_dynamic_preview_height,
                     Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
@@ -375,10 +439,57 @@ class SlideUIManager(QObject):
             button.set_center_overlay_label(slide_data.overlay_label, emit_signal_on_change=False)
             button.setToolTip(f"Slide {index + 1}: {slide_data.lyrics.splitlines()[0] if slide_data.lyrics else 'Empty'}")
             button.set_is_background_slide(slide_data.is_background_slide)
-            current_label_for_banner = "BG" if slide_data.is_background_slide else ""
-            button.set_slide_info(number=index + 1, label=current_label_for_banner)
             button.update()
+
+    @Slot(int, str)
+    def _handle_slide_button_overlay_label_changed(self, slide_index: int, new_label: str):
+        """
+        Handles the center_overlay_label_changed signal from a ScaledSlideButton.
+        Updates the SlideData in the PresentationManager.
+        """
+        logging.info(f"SlideUIManager: Overlay label changed for slide index {slide_index} to '{new_label}'.")
+        slides = self.presentation_manager.get_slides()
+        if 0 <= slide_index < len(slides):
+            slide_data = slides[slide_index]
+            # Use slide_data.id which is the instance_id for the command
+            cmd = ChangeOverlayLabelCommand(
+                self.presentation_manager,
+                slide_data.id, # Pass the instance_id
+                slide_data.overlay_label, # Old label
+                new_label # New label
+            )
+            self.presentation_manager.do_command(cmd)
+        else:
+            logging.warning(f"SlideUIManager: Cannot change overlay label for invalid slide index {slide_index}.")
     
+    @Slot(int, QColor) # QColor can be None if resetting to default
+    def _handle_slide_button_banner_color_changed(self, slide_index: int, new_qcolor: Optional[QColor]):
+        """
+        Handles the banner_color_change_requested signal from a ScaledSlideButton.
+        Updates the SlideData in the PresentationManager via a command.
+        """
+        logging.info(f"SlideUIManager: Banner color change requested for slide index {slide_index} to {new_qcolor.name() if new_qcolor else 'None'}.")
+        slides = self.presentation_manager.get_slides()
+        if 0 <= slide_index < len(slides):
+            slide_data = slides[slide_index]
+            instance_id = slide_data.id # Use the unique instance ID for the command
+
+            # Get old color from slide_data.banner_color (which is already a QColor or None)
+            old_qcolor = slide_data.banner_color
+            old_color_hex = old_qcolor.name(QColor.NameFormat.HexArgb) if old_qcolor and old_qcolor.isValid() else None
+            
+            new_color_hex = new_qcolor.name(QColor.NameFormat.HexArgb) if new_qcolor and new_qcolor.isValid() else None
+
+            cmd = ChangeBannerColorCommand(
+                self.presentation_manager,
+                instance_id,
+                old_color_hex,
+                new_color_hex
+            )
+            self.presentation_manager.do_command(cmd)
+        else:
+            logging.warning(f"SlideUIManager: Cannot change banner color for invalid slide index {slide_index}.")
+
     def get_selected_slide_indices(self) -> list[int]:
         return list(self._selected_slide_indices)
 

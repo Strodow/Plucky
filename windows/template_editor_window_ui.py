@@ -18,15 +18,15 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QFontComboBox, QFormLayout,
     QFrame, QGraphicsView, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QSizePolicy,
-    QSpacerItem, QSpinBox, QTabWidget, QVBoxLayout,
-    QWidget)
+    QLabel, QLineEdit, QPushButton, QScrollArea,
+    QSizePolicy, QSpacerItem, QSpinBox, QTabWidget,
+    QVBoxLayout, QWidget)
 
 class Ui_TemplateEditorWindow(object):
     def setupUi(self, TemplateEditorWindow):
         if not TemplateEditorWindow.objectName():
             TemplateEditorWindow.setObjectName(u"TemplateEditorWindow")
-        TemplateEditorWindow.resize(950, 600)
+        TemplateEditorWindow.resize(1300, 600)
         self.main_v_layout = QVBoxLayout(TemplateEditorWindow)
         self.main_v_layout.setObjectName(u"main_v_layout")
         self.main_tab_widget = QTabWidget(TemplateEditorWindow)
@@ -125,6 +125,11 @@ class Ui_TemplateEditorWindow(object):
 
         self.layout_textbox_buttons_layout.addWidget(self.add_textbox_to_layout_button)
 
+        self.add_shape_button = QPushButton(self.widget)
+        self.add_shape_button.setObjectName(u"add_shape_button")
+
+        self.layout_textbox_buttons_layout.addWidget(self.add_shape_button)
+
         self.remove_selected_textbox_button = QPushButton(self.widget)
         self.remove_selected_textbox_button.setObjectName(u"remove_selected_textbox_button")
 
@@ -184,6 +189,108 @@ class Ui_TemplateEditorWindow(object):
 
 
         self.vboxLayout.addWidget(self.textbox_properties_group)
+
+        self.layout_elements_group = QGroupBox(self.widget)
+        self.layout_elements_group.setObjectName(u"layout_elements_group")
+        self.verticalLayout_elements_group = QVBoxLayout(self.layout_elements_group)
+        self.verticalLayout_elements_group.setObjectName(u"verticalLayout_elements_group")
+        self.layout_elements_scroll_area = QScrollArea(self.layout_elements_group)
+        self.layout_elements_scroll_area.setObjectName(u"layout_elements_scroll_area")
+        self.layout_elements_scroll_area.setMinimumSize(QSize(0, 100))
+        self.layout_elements_scroll_area.setWidgetResizable(True)
+        self.layout_elements_scroll_content = QWidget()
+        self.layout_elements_scroll_content.setObjectName(u"layout_elements_scroll_content")
+        self.layout_elements_scroll_content.setGeometry(QRect(0, 0, 301, 96))
+        self.layout_elements_list_layout = QVBoxLayout(self.layout_elements_scroll_content)
+        self.layout_elements_list_layout.setObjectName(u"layout_elements_list_layout")
+        self.layout_elements_scroll_area.setWidget(self.layout_elements_scroll_content)
+
+        self.verticalLayout_elements_group.addWidget(self.layout_elements_scroll_area)
+
+
+        self.vboxLayout.addWidget(self.layout_elements_group)
+
+        self.shape_properties_group = QGroupBox(self.widget)
+        self.shape_properties_group.setObjectName(u"shape_properties_group")
+        self.shape_properties_group.setEnabled(False)
+        self.shape_properties_form_layout = QFormLayout(self.shape_properties_group)
+        self.shape_properties_form_layout.setObjectName(u"shape_properties_form_layout")
+        self.shape_id_label = QLabel(self.shape_properties_group)
+        self.shape_id_label.setObjectName(u"shape_id_label")
+
+        self.shape_properties_form_layout.setWidget(0, QFormLayout.ItemRole.LabelRole, self.shape_id_label)
+
+        self.selected_shape_id_edit = QLineEdit(self.shape_properties_group)
+        self.selected_shape_id_edit.setObjectName(u"selected_shape_id_edit")
+
+        self.shape_properties_form_layout.setWidget(0, QFormLayout.ItemRole.FieldRole, self.selected_shape_id_edit)
+
+        self.shape_fill_color_label = QLabel(self.shape_properties_group)
+        self.shape_fill_color_label.setObjectName(u"shape_fill_color_label")
+
+        self.shape_properties_form_layout.setWidget(1, QFormLayout.ItemRole.LabelRole, self.shape_fill_color_label)
+
+        self.shape_fill_color_layout = QHBoxLayout()
+        self.shape_fill_color_layout.setObjectName(u"shape_fill_color_layout")
+        self.selected_shape_fill_color_button = QPushButton(self.shape_properties_group)
+        self.selected_shape_fill_color_button.setObjectName(u"selected_shape_fill_color_button")
+
+        self.shape_fill_color_layout.addWidget(self.selected_shape_fill_color_button)
+
+        self.selected_shape_fill_color_swatch = QLabel(self.shape_properties_group)
+        self.selected_shape_fill_color_swatch.setObjectName(u"selected_shape_fill_color_swatch")
+        self.selected_shape_fill_color_swatch.setMinimumSize(QSize(24, 24))
+        self.selected_shape_fill_color_swatch.setAutoFillBackground(True)
+        self.selected_shape_fill_color_swatch.setFrameShape(QFrame.StyledPanel)
+
+        self.shape_fill_color_layout.addWidget(self.selected_shape_fill_color_swatch)
+
+        self.shape_fill_color_spacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.shape_fill_color_layout.addItem(self.shape_fill_color_spacer)
+
+
+        self.shape_properties_form_layout.setLayout(1, QFormLayout.ItemRole.FieldRole, self.shape_fill_color_layout)
+
+        self.shape_stroke_color_label = QLabel(self.shape_properties_group)
+        self.shape_stroke_color_label.setObjectName(u"shape_stroke_color_label")
+
+        self.shape_properties_form_layout.setWidget(2, QFormLayout.ItemRole.LabelRole, self.shape_stroke_color_label)
+
+        self.shape_stroke_color_layout = QHBoxLayout()
+        self.shape_stroke_color_layout.setObjectName(u"shape_stroke_color_layout")
+        self.selected_shape_stroke_color_button = QPushButton(self.shape_properties_group)
+        self.selected_shape_stroke_color_button.setObjectName(u"selected_shape_stroke_color_button")
+
+        self.shape_stroke_color_layout.addWidget(self.selected_shape_stroke_color_button)
+
+        self.selected_shape_stroke_color_swatch = QLabel(self.shape_properties_group)
+        self.selected_shape_stroke_color_swatch.setObjectName(u"selected_shape_stroke_color_swatch")
+        self.selected_shape_stroke_color_swatch.setMinimumSize(QSize(24, 24))
+        self.selected_shape_stroke_color_swatch.setAutoFillBackground(True)
+        self.selected_shape_stroke_color_swatch.setFrameShape(QFrame.StyledPanel)
+
+        self.shape_stroke_color_layout.addWidget(self.selected_shape_stroke_color_swatch)
+
+        self.shape_stroke_color_spacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.shape_stroke_color_layout.addItem(self.shape_stroke_color_spacer)
+
+
+        self.shape_properties_form_layout.setLayout(2, QFormLayout.ItemRole.FieldRole, self.shape_stroke_color_layout)
+
+        self.shape_stroke_width_label = QLabel(self.shape_properties_group)
+        self.shape_stroke_width_label.setObjectName(u"shape_stroke_width_label")
+
+        self.shape_properties_form_layout.setWidget(3, QFormLayout.ItemRole.LabelRole, self.shape_stroke_width_label)
+
+        self.selected_shape_stroke_width_spinbox = QSpinBox(self.shape_properties_group)
+        self.selected_shape_stroke_width_spinbox.setObjectName(u"selected_shape_stroke_width_spinbox")
+
+        self.shape_properties_form_layout.setWidget(3, QFormLayout.ItemRole.FieldRole, self.selected_shape_stroke_width_spinbox)
+
+
+        self.vboxLayout.addWidget(self.shape_properties_group)
 
         self.right_panel_vertical_spacer = QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
 
@@ -490,12 +597,21 @@ class Ui_TemplateEditorWindow(object):
         self.layout_bg_enable_checkbox.setText(QCoreApplication.translate("TemplateEditorWindow", u"Enable", None))
         self.layout_bg_color_button.setText(QCoreApplication.translate("TemplateEditorWindow", u"Choose Color...", None))
         self.add_textbox_to_layout_button.setText(QCoreApplication.translate("TemplateEditorWindow", u"Add Text Box", None))
+        self.add_shape_button.setText(QCoreApplication.translate("TemplateEditorWindow", u"Add Shape", None))
         self.remove_selected_textbox_button.setText(QCoreApplication.translate("TemplateEditorWindow", u"Remove Selected Text Box", None))
         self.textbox_properties_group.setTitle(QCoreApplication.translate("TemplateEditorWindow", u"Selected Text Box Properties", None))
         self.textbox_id_label.setText(QCoreApplication.translate("TemplateEditorWindow", u"ID/Name:", None))
         self.textbox_style_label.setText(QCoreApplication.translate("TemplateEditorWindow", u"Style:", None))
         self.label_halign.setText(QCoreApplication.translate("TemplateEditorWindow", u"H. Align:", None))
         self.label_valign.setText(QCoreApplication.translate("TemplateEditorWindow", u"V. Align:", None))
+        self.layout_elements_group.setTitle(QCoreApplication.translate("TemplateEditorWindow", u"Layout Elements", None))
+        self.shape_properties_group.setTitle(QCoreApplication.translate("TemplateEditorWindow", u"Selected Shape Properties", None))
+        self.shape_id_label.setText(QCoreApplication.translate("TemplateEditorWindow", u"ID/Name:", None))
+        self.shape_fill_color_label.setText(QCoreApplication.translate("TemplateEditorWindow", u"Fill Color:", None))
+        self.selected_shape_fill_color_button.setText(QCoreApplication.translate("TemplateEditorWindow", u"Choose...", None))
+        self.shape_stroke_color_label.setText(QCoreApplication.translate("TemplateEditorWindow", u"Stroke Color:", None))
+        self.selected_shape_stroke_color_button.setText(QCoreApplication.translate("TemplateEditorWindow", u"Choose...", None))
+        self.shape_stroke_width_label.setText(QCoreApplication.translate("TemplateEditorWindow", u"Stroke Width:", None))
         self.main_tab_widget.setTabText(self.main_tab_widget.indexOf(self.layouts_tab), QCoreApplication.translate("TemplateEditorWindow", u"Layouts", None))
         self.style_selector_label.setText(QCoreApplication.translate("TemplateEditorWindow", u"Style:", None))
         self.add_style_button.setText(QCoreApplication.translate("TemplateEditorWindow", u"+", None))

@@ -28,7 +28,7 @@ class OutputTarget(QObject):
         self._cached_content_pixmap: Optional[QPixmap] = None # Rendered with its own transparency
 
         self.final_composited_pixmap: QPixmap = QPixmap(target_size)
-        if self.final_composited_pixmap.isNull():
+        if self.final_composited_pixmap.isNull(): # Check if pixmap creation failed
             print(f"OutputTarget '{self.name}': Failed to create final_composited_pixmap of size {target_size}. Using 1x1.")
             self.final_composited_pixmap = QPixmap(1,1) # Fallback
 
@@ -42,7 +42,7 @@ class OutputTarget(QObject):
         
         self._cached_key_matte_pixmap: Optional[QPixmap] = None
         self._key_matte_dirty: bool = True
-        self.final_composited_pixmap.fill(Qt.GlobalColor.black) # Default to black
+        self.final_composited_pixmap.fill(Qt.GlobalColor.transparent) # Default to transparent
     
     def update_slide(self,
                      slide_data: Optional['SlideData'],

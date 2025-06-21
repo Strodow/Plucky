@@ -21,26 +21,23 @@ class OutputWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         # Store the pixmap to be displayed
-        self._pixmap_to_display = QPixmap()
-
+        self._pixmap_to_display = QPixmap(self.size())
+        self._pixmap_to_display.fill(Qt.GlobalColor.transparent) # Start transparent
         # Ensure the window doesn't try to resize based on content
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-
-        # Initialize with a black background until a pixmap is set
-        self._pixmap_to_display = QPixmap(1, 1) # Minimal pixmap
-        self._pixmap_to_display.fill(Qt.GlobalColor.black)
 
     @Slot(QPixmap)
     def set_pixmap(self, pixmap: QPixmap):
         """Sets the pixmap to be displayed and triggers a repaint."""
-        if pixmap.isNull():
-            logging.warning("OutputWindow received a null pixmap. Displaying black.")
-            # Create a default black pixmap of the window's current size
+        if pixmap.isNull(): # If a null pixmap is received (e.g., from clear_program)
+            logging.warning("OutputWindow received a null pixmap. Displaying transparent.")
+            # Create a transparent pixmap of the window's current size
             self._pixmap_to_display = QPixmap(self.size())
-            self._pixmap_to_display.fill(Qt.GlobalColor.black)
+            self._pixmap_to_display.fill(Qt.GlobalColor.transparent) # Ensure it's transparent
         else:
             # Store the received pixmap
             self._pixmap_to_display = pixmap
+        logging.debug(f"OutputWindow.set_pixmap called. Pixmap size: {self._pixmap_to_display.size()}, isNull: {self._pixmap_to_display.isNull()}")
         self.update() # Request a repaint
 
     def paintEvent(self, event):
@@ -52,9 +49,9 @@ class OutputWindow(QWidget):
         if not self._pixmap_to_display.isNull():
             # Draw the provided pixmap, scaled to fit the window
             painter.drawPixmap(self.rect(), self._pixmap_to_display)
-        else:
-            # Fallback: Fill with black if no pixmap is set (shouldn't happen often)
-            painter.fillRect(self.rect(), QColor(Qt.GlobalColor.black))
+        # No 'else' needed here. If _pixmap_to_display is null, it means it's transparent,
+        # and WA_TranslucentBackground will handle the rest.
+
 
         painter.end() # End painting session
 

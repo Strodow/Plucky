@@ -43,6 +43,9 @@ class SlideEditorItemWidget(QWidget):
         self.main_editor_ref = main_editor_ref # Store reference to MainEditorWindow
         self._initial_preview_emitted = False # Flag to track initial signal emission
 
+        self._is_template_missing: bool = False # New: Track if the template is missing
+        self._original_template_name: Optional[str] = None # New: Store original name if missing
+
 
         # Load the UI file
         loader = QUiLoader()
@@ -135,6 +138,10 @@ class SlideEditorItemWidget(QWidget):
             print(f"SlideEditorItemWidget ({self.slide_data.id}): ComboBox or TemplateManager not found.")
             return
         self.templates_combo_box_per_slide.clear()  # Clear default items from .ui file
+
+        # Add a special entry for the "Template Missing" state if the slide is in that state
+        if self.slide_data.template_settings.get('layout_name') == "MISSING_LAYOUT_ERROR":
+            self.templates_combo_box_per_slide.addItem("Template Missing", userData="MISSING_LAYOUT_ERROR")
         
         try:
             available_template_names = self.template_manager.get_layout_names()
@@ -145,11 +152,18 @@ class SlideEditorItemWidget(QWidget):
             print(f"Error getting template names from TemplateManager: {e}")
             available_template_names = ["Error Loading Templates"] # Fallback
 
-        self.templates_combo_box_per_slide.addItems(available_template_names)
+        # Add actual available template names, skipping the error state if it was added
+        for name in available_template_names:
+            if name != "MISSING_LAYOUT_ERROR": # Ensure we don't add this as a selectable option
+                 self.templates_combo_box_per_slide.addItem(name, userData=name)
 
         # Try to set the current template based on self.template_id
         current_layout_name = self.slide_data.template_settings.get('layout_name')
-        if current_layout_name and current_layout_name in available_template_names:
+        if current_layout_name == "MISSING_LAYOUT_ERROR":
+            # If the slide is in the error state, select the special "Template Missing" item
+            self.templates_combo_box_per_slide.setCurrentText("Template Missing")
+            self.templates_combo_box_per_slide.setEnabled(False) # Disable changing template if missing
+        elif current_layout_name and current_layout_name in available_template_names: # Check against available names
             self.templates_combo_box_per_slide.setCurrentText(current_layout_name)
             # print(f"SlideEditorItemWidget ({self.slide_data.id}): Set template to '{current_layout_name}'.")
         elif available_template_names:
@@ -158,18 +172,30 @@ class SlideEditorItemWidget(QWidget):
         else:
             print(f"SlideEditorItemWidget ({self.slide_data.id}): No templates available, and '{current_layout_name}' not found.")
 
-        # After populating and setting, call on_template_selected to set initial visibility
-        self.on_template_selected(self.templates_combo_box_per_slide.currentText(), initial_load=True)
+        # Ensure the combo box is enabled if it wasn't set to "Template Missing"
+        if current_layout_name != "MISSING_LAYOUT_ERROR":
+             self.templates_combo_box_per_slide.setEnabled(True)
 
-        # TODO: Connect self.templates_combo_box.currentTextChanged to a method
-        # that handles template changes for this slide (e.g., updates text box visibility/labels)
+        # After populating and setting, call on_template_selected to set initial visibility
+        # Pass the actual template name or the error state string
+        self.on_template_selected(current_layout_name, initial_load=True)
 
     def on_template_selected(self, template_name: str, initial_load: bool = False):
         """Handles changes in the per-slide template selection."""
         # print(f"Slide '{self.slide_data.id}': Template selected '{template_name}', initial_load={initial_load}")
 
+        # --- Handle "Template Missing" State ---
+        if template_name == "MISSING_LAYOUT_ERROR":
+            self._is_template_missing = True
+            self._original_template_name = self.slide_data.template_settings.get('original_template_name') # Get from stored data
+            self.refresh_ui_appearance() # Update banner etc.
+            self.update_slide_preview() # Preview renderer will draw error
+            self._hide_all_text_box_widgets() # Hide text box controls
+            return # Stop processing here for missing template
+        # --- End Handle "Template Missing" State ---
+
         # More robust: Get template definition from TemplateManager
-        new_template_settings = self.template_manager.resolve_layout_template(template_name)
+        new_template_settings = self.template_manager.resolve_layout_template(template_name) # This should NOT return MISSING_LAYOUT_ERROR
         if not new_template_settings:
             print(f"Error: Could not resolve template '{template_name}' for slide {self.slide_data.id}")
             return
@@ -192,6 +218,10 @@ class SlideEditorItemWidget(QWidget):
                 else:
                     new_text_content[new_tb_id] = "" 
         
+        # Clear any previous error state if a valid template was selected
+        self._is_template_missing = False
+        self._original_template_name = None
+
         new_template_settings["text_content"] = new_text_content
         # Update SlideData directly. This is important.
         self.slide_data.template_settings = new_template_settings
@@ -240,6 +270,15 @@ class SlideEditorItemWidget(QWidget):
                     edit_widget.setVisible(False)
                     edit_widget.clear() # Clear content of hidden boxes
         
+        # Ensure text box containers are visible if there are defined text boxes
+        if defined_text_boxes:
+            if self.text_box_one_edit: self.text_box_one_edit.parentWidget().setVisible(True)
+            if self.text_box_two_edit: self.text_box_two_edit.parentWidget().setVisible(True)
+            if self.text_box_three_edit: self.text_box_three_edit.parentWidget().setVisible(True)
+        else: # No text boxes defined in the template
+            self._hide_all_text_box_widgets()
+
+        self.refresh_ui_appearance() # Update banner etc.
         if not initial_load:
             self.update_slide_preview()
 
@@ -262,6 +301,13 @@ class SlideEditorItemWidget(QWidget):
             self.text_box_two_edit.setPlainText(content["text_box_two"])
         if self.text_box_three_edit and "text_box_three" in content:
             self.text_box_three_edit.setPlainText(content["text_box_three"])
+
+    def _hide_all_text_box_widgets(self):
+        """Hides all text box labels and edits."""
+        text_box_widgets = [self.text_box_one_label, self.text_box_one_edit,
+                            self.text_box_two_label, self.text_box_two_edit,
+                            self.text_box_three_label, self.text_box_three_edit]
+        for widget in text_box_widgets: widget.setVisible(False)
 
     def update_preview(self, image_path: str = None, text: str = None):
         """Updates the slide preview label."""
@@ -482,19 +528,34 @@ class SlideEditorItemWidget(QWidget):
     def refresh_ui_appearance(self):
         """Updates visual elements like banner color based on current slide_data."""
         # Update Banner Color
-        if self.slide_name_banner_label and self.slide_data:
-            # Get the base style from the UI file for the label (font-weight: bold;)
-            base_font_style = "font-weight: bold;" # From UI
-            current_banner_color = self.slide_data.banner_color
-            print(f"DEBUG_ITEM_WIDGET ({self.slide_data.id}): Refreshing banner. SlideData's banner_color: {current_banner_color.name() if current_banner_color and current_banner_color.isValid() else 'None'}") # DEBUG
+        if not self.slide_name_banner_label or not self.slide_data:
+            return
 
-            if current_banner_color and current_banner_color.isValid():
-                self.slide_name_banner_label.setStyleSheet(f"{base_font_style} background-color: {current_banner_color.name()};")
-                self.slide_name_banner_label.setAutoFillBackground(True) # Ensure background is painted
-            else:
-                # Explicitly set background to transparent for "no color"
-                self.slide_name_banner_label.setStyleSheet(f"{base_font_style} background-color: transparent;")
-                self.slide_name_banner_label.setAutoFillBackground(True) # Needs to be true for transparent to work correctly with stylesheets
+        # --- Handle Template Missing Error in Banner ---
+        if self._is_template_missing:
+            original_name = self._original_template_name or 'Unknown'
+            self.slide_name_banner_label.setText(f"ERROR: Template Missing ('{original_name}')")
+            self.slide_name_banner_label.setStyleSheet("font-weight: bold; background-color: red; color: white;")
+            self.slide_name_banner_label.setAutoFillBackground(True)
+            return # Stop here if template is missing
+        # --- End Handle Template Missing Error ---
+
+        # Normal Banner Appearance
+        # self.slide_data.id is now the instance_id. For display, slide_block_id or overlay_label is better.
+        display_id_for_banner = self.slide_data.slide_block_id or self.slide_data.id # Fallback to instance_id if block_id is missing
+        self.slide_name_banner_label.setText(f"Editing: {display_id_for_banner} ({self.slide_data.overlay_label or 'No Label'})")
+
+        # Get the base style from the UI file for the label (font-weight: bold;)
+        base_font_style = "font-weight: bold;" # From UI
+        current_banner_color = self.slide_data.banner_color
+
+        if current_banner_color and current_banner_color.isValid():
+            self.slide_name_banner_label.setStyleSheet(f"{base_font_style} background-color: {current_banner_color.name()};")
+            self.slide_name_banner_label.setAutoFillBackground(True) # Ensure background is painted
+        else:
+            # Explicitly set background to transparent for "no color"
+            self.slide_name_banner_label.setStyleSheet(f"{base_font_style} background-color: transparent;")
+            self.slide_name_banner_label.setAutoFillBackground(True) # Needs to be true for transparent to work correctly with stylesheets
 
     @Slot()
     def _handle_plus_button_clicked(self):

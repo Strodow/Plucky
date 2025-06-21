@@ -4,7 +4,8 @@ import shutil # For copying files in save_presentation_as
 import uuid # For generating unique SlideData IDs
 import os
 import sys # Import the sys module
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, Slot # Added Slot
+import logging # Added logging
 
 from data_models.slide_data import SlideData
 from .presentation_io import PresentationIO # Revert to direct class import
@@ -59,12 +60,28 @@ class PresentationManager(QObject):
 
         self.io_handler = PresentationIO() # Instantiate the class directly
         
+        # This connection is for general UI updates like refreshing template lists in menus.
+        if self.template_manager:
+            self.template_manager.templates_changed.connect(self._handle_templates_globally_changed)
+            # NEW: Connect to specific template modification/deletion signals
+            self.template_manager.template_modified.connect(self._handle_template_modified_globally)
+            self.template_manager.template_deleted.connect(self._handle_template_deleted_globally)
+        else:
+            logging.warning("PresentationManager initialized without a TemplateManager. Global template updates will not work.")
+
+        # Initialize undo/redo stacks and instance map here, so they are always present
         self.undo_stack: deque['Command'] = deque(maxlen=MAX_UNDO_HISTORY)
         self.redo_stack: deque['Command'] = deque(maxlen=MAX_UNDO_HISTORY)
-
-        # Map to quickly find section/arrangement details from a SlideData instance ID
-        # Populated by get_slides()
         self._instance_id_to_arrangement_info_map: Dict[str, Dict[str, Any]] = {}
+
+    @Slot()
+    def _handle_templates_globally_changed(self):
+        """
+        Slot to handle the 'templates_changed' signal from TemplateManager.
+        This is a general signal indicating that the overall collection of templates has changed.
+        """
+        logging.debug("PresentationManager: templates_changed signal received from TemplateManager. Forwarding as presentation_changed.")
+        self.presentation_changed.emit()
 
     def add_slide(self, slide_data: SlideData, at_index: Optional[int] = None, _execute_command: bool = True):
         """
@@ -386,8 +403,8 @@ class PresentationManager(QObject):
 
                 # Create a unique ID for this instance of the slide in the presentation
                 # This helps distinguish if the same slide_block is used multiple times.
-                # Removed UUID to make instance_id deterministic based on structure for stable drag-drop.
-                instance_slide_id = f"{section_id_in_manifest}_{slide_id_ref}_{arr_item_idx}"
+                instance_slide_id = self._generate_slide_instance_id(section_id_in_manifest, slide_id_ref, active_arrangement_name, arr_item_idx)
+
 
                 # --- DEBUG PRINTS for get_slides ---
                 # print(f"DEBUG_PM_GET_SLIDES: For slide_block_id '{slide_block_data.get('slide_id')}', template_id '{slide_block_data.get('template_id')}'")
@@ -815,6 +832,104 @@ class PresentationManager(QObject):
             self.presentation_manifest_is_dirty = True
             self.presentation_changed.emit() # UI needs to re-render slides for this section
         return True # Placeholder
+    
+    @Slot(str)
+    def _handle_template_modified_globally(self, modified_template_name: str):
+        """
+        Slot to handle the 'template_modified' signal from TemplateManager.
+        This method will be responsible for finding all slides using the
+        modified template and triggering necessary updates.
+        The main mechanism is that `presentation_changed` will cause `SlideUIManager`
+        to call `get_slides()`, which in turn calls `TemplateManager.resolve_slide_template_for_block`.
+        This resolution will pick up the modified template definition.
+        This handler primarily ensures sections are marked dirty if their fundamental structure
+        (due to a layout change) might be considered altered, though the template data itself
+        lives in TemplateManager.
+        """
+        logging.info(f"PresentationManager: Global handler triggered for MODIFIED template: '{modified_template_name}'")
+        presentation_was_changed_by_template_mod = False
+
+        for section_id, section_wrapper in self.loaded_sections.items():
+            section_content_data = section_wrapper.get("section_content_data", {})
+            slide_blocks = section_content_data.get("slide_blocks", [])
+            section_potentially_affected = False
+
+            for slide_block in slide_blocks:
+                # Check if the layout template of the block was modified
+                if slide_block.get("template_id") == modified_template_name:
+                    logging.info(f"  Slide block '{slide_block.get('slide_id')}' in section '{section_id}' uses modified layout '{modified_template_name}'.")
+                    section_potentially_affected = True
+                    # No direct change to slide_block data needed for modification if template_id remains the same.
+                    # The change is in the template definition itself.
+
+                # Check if any style used by text boxes within this block was modified.
+                # This is more complex as styles are resolved during SlideData creation.
+                # For now, we rely on the fact that TemplateManager.resolve_layout_template
+                # will fetch the *updated* style definition. If a style change affects
+                # rendering, the broad presentation_changed signal will handle UI refresh.
+
+            if section_potentially_affected:
+                # A template modification doesn't make the section file itself dirty,
+                # unless the template_id *in the slide_block* were to change.
+                # The main effect is the visual update triggered by presentation_changed.
+                presentation_was_changed_by_template_mod = True
+
+        if presentation_was_changed_by_template_mod:
+            self.presentation_changed.emit()
+            logging.info("PresentationManager: Emitted presentation_changed due to template modification potentially affecting slides.")
+        else:
+            # If it was a style modification, it's harder to detect direct impact here.
+            # We still emit presentation_changed to be safe, as UIs (like template selectors)
+            # might need to refresh, or slides using that style need re-rendering.
+            logging.info(f"PresentationManager: Template '{modified_template_name}' (likely a style) modified. Emitting presentation_changed for general refresh.")
+            self.presentation_changed.emit()
+
+    @Slot(str)
+    def _handle_template_deleted_globally(self, deleted_template_name: str):
+        """
+        Slot to handle the 'template_deleted' signal from TemplateManager.
+        This method will find slides using the deleted template and update their state to reflect an error.
+        It directly modifies the `slide_block` data within `loaded_sections`.
+        """
+        logging.error(f"PresentationManager: Global handler triggered for DELETED template: '{deleted_template_name}'")
+        presentation_was_changed_by_template_del = False
+
+        for section_id, section_wrapper in self.loaded_sections.items():
+            section_content_data = section_wrapper.get("section_content_data", {})
+            slide_blocks = section_content_data.get("slide_blocks", [])
+            section_made_dirty_by_deletion = False
+
+            for slide_block in slide_blocks:
+                if slide_block.get("template_id") == deleted_template_name:
+                    logging.error(f"  Slide block '{slide_block.get('slide_id')}' in section '{section_id}' used deleted layout template '{deleted_template_name}'. Marking as MISSING_LAYOUT_ERROR.")
+                    slide_block["template_id"] = "MISSING_LAYOUT_ERROR"
+                    slide_block["original_template_name"] = deleted_template_name
+                    section_made_dirty_by_deletion = True
+
+                # TODO: Handle deleted *style* templates. This is more complex.
+                # If a style is deleted, TemplateManager.resolve_layout_template should handle
+                # the missing style when it's called by get_slides().
+                # SlideData will then reflect this (e.g., a text box might have an error property).
+
+            if section_made_dirty_by_deletion:
+                section_wrapper["is_dirty"] = True # Mark the section file as needing to be saved
+                presentation_was_changed_by_template_del = True
+
+        if presentation_was_changed_by_template_del:
+            self.presentation_manifest_is_dirty = self.is_overall_dirty() # Update overall dirty status
+            self.presentation_changed.emit()
+            logging.info("PresentationManager: Emitted presentation_changed due to template deletion affecting slide blocks.")
+        else:
+            # If only a style was deleted, no slide_blocks might have been directly modified here.
+            # However, the visual representation of slides will change.
+            logging.info(f"PresentationManager: Template '{deleted_template_name}' (possibly a style) deleted. Emitting presentation_changed for general refresh.")
+            self.presentation_changed.emit()
+    
+    def _generate_slide_instance_id(self, section_id_in_manifest: str, slide_block_id: str, arrangement_name: str, index_in_arrangement: int) -> str:
+        """
+        Generates a unique ID for a specific instance of a slide_block within an arrangement.
+        """
+        return f"{section_id_in_manifest}_{slide_block_id}_{arrangement_name}_{index_in_arrangement}"
     
     # --- Helper method to map instance ID back to section/arrangement info ---
     def _get_arrangement_info_from_instance_id(self, instance_id: str) -> Optional[Dict[str, Any]]:
